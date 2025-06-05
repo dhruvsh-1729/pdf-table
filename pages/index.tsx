@@ -1,115 +1,572 @@
-import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+import { useState, useEffect, ChangeEvent, MouseEvent, useMemo } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  ColumnDef,
+  ColumnFiltersState,
+  SortingState,
+  FilterFn,
+  flexRender,
+} from '@tanstack/react-table';
+import { rankItem } from '@tanstack/match-sorter-utils';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+interface Record {
+  id: number;
+  name: string;
+  timestamp: string | null;
+  summary: string | null;
+  pdf_url: string;
+  volume: string | null;
+  number: string | null;
+  title_name: string | null;
+  page_numbers: string | null;
+  authors: string | null;
+  language: string | null;
+}
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const fuzzyFilter: FilterFn<Record> = (row, columnId, value, addMeta) => {
+  const itemRank = rankItem(row.getValue(columnId), value);
+  addMeta({ itemRank });
+  return itemRank.passed;
+}
 
 export default function Home() {
+  const [records, setRecords] = useState<Record[]>([]);
+  const [name, setName] = useState<string>('');
+  const [summary, setSummary] = useState<string>('');
+  const [file, setFile] = useState<File | null>(null);
+  const [volume, setVolume] = useState<string>('');
+  const [number, setNumber] = useState<string>('');
+  const [timestamp, setTimestamp] = useState<string>("");
+  const [titleName, setTitleName] = useState<string>('');
+  const [pageNumbers, setPageNumbers] = useState<string>('');
+  const [authors, setAuthors] = useState<string>('');
+  const [language, setLanguage] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [editingRecord, setEditingRecord] = useState<Record | null>(null);
+
+  // Add new state for table
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = useState('');
+  const [sorting, setSorting] = useState<SortingState>([]);
+
+  useEffect(() => {
+    fetchRecords();
+  }, []);
+
+  const fetchRecords = async (): Promise<void> => {
+    try {
+      const response = await fetch('/api/records');
+      if (!response.ok) throw new Error('Failed to fetch records');
+      const data: Record[] = await response.json();
+      setRecords(data);
+    } catch (err) {
+      console.error('Error:', err);
+      setError('Failed to load records');
+    }
+  };
+
+  // Define columns
+  const columns = useMemo<ColumnDef<Record>[]>(() => [
+    { accessorKey: 'id', header: 'ID', id: 'id' },
+    { accessorKey: 'name', header: 'Name', id: 'name' },
+    { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
+    { accessorKey: 'summary', header: 'Summary', id: 'summary' },
+    { accessorKey: 'volume', header: 'Volume', id: 'volume' },
+    { accessorKey: 'number', header: 'Number', id: 'number' },
+    { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
+    { accessorKey: 'page_numbers', header: 'Page Numbers', id: 'page_numbers' },
+    { accessorKey: 'authors', header: 'Authors', id: 'authors' },
+    { accessorKey: 'language', header: 'Language', id: 'language' },
+    {
+      accessorKey: 'pdf_url',
+      header: 'PDF',
+      id: 'pdf_url',
+      cell: ({ row }) => (
+        <a
+          href={row.original.pdf_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-indigo-600 hover:underline"
+        >
+          View
+        </a>
+      ),
+    },
+    {
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => (
+        <button
+          className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 text-xs"
+          onClick={() => {
+            const record = row.original;
+            setEditingRecord(record);
+            setModalOpen(true);
+            setError(null);
+            setName(record.name || '');
+            setSummary(record.summary || '');
+            setVolume(record.volume || '');
+            setNumber(record.number || '');
+            setTimestamp(record.timestamp || '');
+            setTitleName(record.title_name || '');
+            setPageNumbers(record.page_numbers || '');
+            setAuthors(record.authors || '');
+            setLanguage(record.language || '');
+            setFile(null);
+          }}
+        >
+          Update
+        </button>
+      ),
+    },
+  ], []);
+
+  const exportToCSV = () => {
+    const headers = columns.map(column => column.header).filter(header => typeof header === 'string') as string[];
+    const rows = records.map(record =>
+      headers.map(header => {
+        const column = columns.find(column => column.header === header && 'accessorKey' in column);
+        if (column && column.id) {
+          const key = column.id as keyof Record;
+          return record[key] ?? '';
+        }
+        return '';
+      })
+    );
+
+    const csvContent = [
+      headers.join(','), // Add headers
+      ...rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')), // Add rows
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'records.csv';
+    link.click();
+  };
+
+  // Create table instance
+  const table = useReactTable({
+    data: records,
+    columns,
+    filterFns: {
+      fuzzy: fuzzyFilter,
+    },
+    state: {
+      columnFilters,
+      globalFilter,
+      sorting,
+    },
+    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: setGlobalFilter,
+    onSortingChange: setSorting,
+    globalFilterFn: fuzzyFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  const handleSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    e.preventDefault();
+    if (!name || !summary || (!file && !editingRecord)) {
+      setError('Please provide a name, summary and select a PDF file');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('summary', summary);
+    if (file) formData.append('pdf', file);
+    formData.append('volume', volume);
+    formData.append('number', number);
+    formData.append('title_name', titleName);
+    formData.append('page_numbers', pageNumbers);
+    formData.append('authors', authors);
+    formData.append('language', language);
+    formData.append('timestamp', timestamp);
+
+    // If editing, add ID and existing pdf_url
+    if (editingRecord) {
+      formData.append('id', String(editingRecord.id));
+      if (editingRecord.pdf_url && !file) {
+        formData.append('existing_pdf_url', editingRecord.pdf_url);
+      }
+    }
+
+    try {
+      const url = editingRecord ? '/api/update-record' : '/api/upload';
+      const response = await fetch(url, { method: 'POST', body: formData });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed');
+      }
+      await fetchRecords();
+      setName('');
+      setSummary('');
+      setFile(null);
+      setVolume('');
+      setNumber('');
+      setTitleName('');
+      setPageNumbers('');
+      setAuthors('');
+      setLanguage('');
+      setModalOpen(false);
+      setTimestamp("");
+      setEditingRecord(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    setFile(e.target.files?.[0] || null);
+  };
+
   return (
-    <div
-      className={`${geistSans.className} ${geistMono.className} grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]`}
-    >
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              pages/index.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <div className="min-h-screen bg-gray-50 py-8 px-2 sm:px-2 lg:px-2 w-full">
+      {/* Modal Form Section */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white shadow-lg rounded-lg p-8 w-full max-w-4xl relative">
+            <button
+              onClick={() => setModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+              aria-label="Close form"
+              disabled={loading}
+            >
+              &times;
+            </button>
+            <h1 className="text-2xl font-semibold text-gray-800 mb-6">{editingRecord ? 'Update' : 'Upload New'} Record</h1>
+            {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">Fields marked with <span className="text-red-500">*</span> are required.</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Enter record name"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                    required
+                  />
+                </div>
+                {!editingRecord && <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    PDF File <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleFileChange}
+                    className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border file:border-gray-300 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 disabled:file:bg-gray-200"
+                    disabled={loading}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Only PDF files are accepted.</p>
+                </div>}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Summary <span className="text-red-500">*</span></label>
+                <textarea
+                  value={summary}
+                  onChange={(e) => setSummary(e.target.value)}
+                  placeholder="Enter summary (optional)"
+                  className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                  disabled={loading}
+                  rows={6}
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Volume</label>
+                  <input
+                    type="text"
+                    value={volume}
+                    onChange={(e) => setVolume(e.target.value)}
+                    placeholder="Enter volume (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Number</label>
+                  <input
+                    type="text"
+                    value={number}
+                    onChange={(e) => setNumber(e.target.value)}
+                    placeholder="Enter number (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Timestamp</label>
+                  <input
+                    type="text"
+                    value={timestamp}
+                    onChange={(e) => setTimestamp(e.target.value)}
+                    placeholder="Enter timestamp (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Title Name</label>
+                  <input
+                    type="text"
+                    value={titleName}
+                    onChange={(e) => setTitleName(e.target.value)}
+                    placeholder="Enter title name (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Page Numbers</label>
+                  <input
+                    type="text"
+                    value={pageNumbers}
+                    onChange={(e) => setPageNumbers(e.target.value)}
+                    placeholder="Enter page numbers, e.g., 100-105 (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Authors</label>
+                  <input
+                    type="text"
+                    value={authors}
+                    onChange={(e) => setAuthors(e.target.value)}
+                    placeholder="Enter authors separated by commas (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Language</label>
+                  <input
+                    type="text"
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    placeholder="Enter language (optional)"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                className={`w-full py-2 px-4 rounded-lg shadow-md text-white text-sm font-medium transition-colors ${loading
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : editingRecord
+                    ? 'bg-yellow-500 hover:bg-yellow-600 focus:ring-yellow-500'
+                    : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'
+                  } focus:outline-none focus:ring-2 focus:ring-offset-2`}
+                disabled={loading}
+              >
+                {loading ? (editingRecord ? 'Updating...' : 'Uploading...') : (editingRecord ? 'Update' : 'Upload')}
+              </button>
+            </div>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
+
+      {/* Records Section */}
+      <div className="w-full">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-semibold text-gray-800">Records</h2>
+          <div className="flex gap-4">
+            {/* Global Search Filter */}
+            <button
+              onClick={exportToCSV}
+              className="bg-green-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
+            >
+              Export CSV
+            </button>
+            <input
+              type="text"
+              value={globalFilter}
+              onChange={e => setGlobalFilter(e.target.value)}
+              placeholder="Search all records..."
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <button
+              onClick={() => {
+                setModalOpen(true);
+                setError(null);
+                setName('');
+                setSummary('');
+                setFile(null);
+                setVolume('');
+                setNumber('');
+                setTitleName('');
+                setPageNumbers('');
+                setAuthors('');
+                setLanguage('');
+                setTimestamp("");
+                setEditingRecord(null);
+              }}
+              className="bg-indigo-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+            >
+              + Add Record
+            </button>
+          </div>
+        </div>
+
+        {/* TanStack Table */}
+        <div className="overflow-x-auto w-full shadow rounded-lg border border-gray-200">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-100">
+              {table.getHeaderGroups().map(headerGroup => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map(header => (
+                    <th
+                      key={header.id}
+                      colSpan={header.colSpan}
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      <div
+                        {...{
+                          className: header.column.getCanSort()
+                            ? 'cursor-pointer select-none flex items-center'
+                            : '',
+                          onClick: header.column.getToggleSortingHandler(),
+                        }}
+                      >
+                        {flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                        {{
+                          asc: ' 🔼',
+                          desc: ' 🔽',
+                        }[header.column.getIsSorted() as string] ?? null}
+                      </div>
+
+                      {/* Column Filter */}
+                      {header.column.getCanFilter() && (
+                        <div className="mt-1">
+                          <input
+                            type="text"
+                            value={(header.column.getFilterValue() as string) ?? ''}
+                            onChange={e => header.column.setFilterValue(e.target.value)}
+                            placeholder={`Filter...`}
+                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                          />
+                        </div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              ))}
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {table.getRowModel().rows.length ? (
+                table.getRowModel().rows.map(row => (
+                  <tr key={row.id} className="hover:bg-gray-50">
+                    {row.getVisibleCells().map(cell => (
+                      <td
+                        key={cell.id}
+                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
+                    No records found
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Controls */}
+        <div className="flex items-center justify-between mt-4">
+          <div className="flex items-center gap-2">
+            <button
+              className="border rounded p-1"
+              onClick={() => table.setPageIndex(0)}
+              disabled={!table.getCanPreviousPage()}
+            >
+              {'<<'}
+            </button>
+            <button
+              className="border rounded p-1"
+              onClick={() => table.previousPage()}
+              disabled={!table.getCanPreviousPage()}
+            >
+              {'<'}
+            </button>
+            <button
+              className="border rounded p-1"
+              onClick={() => table.nextPage()}
+              disabled={!table.getCanNextPage()}
+            >
+              {'>'}
+            </button>
+            <button
+              className="border rounded p-1"
+              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+              disabled={!table.getCanNextPage()}
+            >
+              {'>>'}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1 text-sm">
+              <div>Page</div>
+              <strong>
+                {table.getState().pagination.pageIndex + 1} of{' '}
+                {table.getPageCount()}
+              </strong>
+            </span>
+
+            <select
+              value={table.getState().pagination.pageSize}
+              onChange={e => table.setPageSize(Number(e.target.value))}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              {[10, 20, 30, 40, 50].map(pageSize => (
+                <option key={pageSize} value={pageSize}>
+                  Show {pageSize}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
