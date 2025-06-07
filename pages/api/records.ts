@@ -16,7 +16,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const { data: records, error } = await supabase.from('records').select('*');
+        const { email } = req.query;
+        console.log({ email }); // Log the email parameter for debugging
+
+        // Build the query based on the presence of the email parameter
+        let query = supabase.from('records').select('*');
+        if (email && typeof email === 'string' && email.trim() !== '') {
+            query = query.eq('email', '["' + email + '"]'); // Ensure email is formatted as a string
+        }
+
+        const { data: records, error } = await query;
         if (error) {
             console.error('Supabase error:', error.message);
             return res.status(500).json({ error: 'Error fetching records', details: error.message });
@@ -26,22 +35,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const processedRecords = records?.map(record => {
             const formattedRecord: Record<string, any> = {};
             for (const key in record) {
-            let value = record[key];
-            if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
-                value = value[0];
-            }
-            if (typeof value !== 'string') {
-                value = value === null || value === undefined ? '' : String(value);
-            }
-            // Remove surrounding [" and "] from string fields
-            if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
-                value = value.slice(2, -2);
-            }
-            formattedRecord[key] = value;
+                let value = record[key];
+                if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
+                    value = value[0];
+                }
+                if (typeof value !== 'string') {
+                    value = value === null || value === undefined ? '' : String(value);
+                }
+                // Remove surrounding [" and "] from string fields
+                if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
+                    value = value.slice(2, -2);
+                }
+                formattedRecord[key] = value;
             }
             return formattedRecord;
         });
-
 
         return res.status(200).json(processedRecords || []);
     } catch (error) {

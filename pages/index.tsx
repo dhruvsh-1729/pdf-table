@@ -12,8 +12,9 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import { rankItem } from '@tanstack/match-sorter-utils';
+import { useRouter } from 'next/router';
 
-interface Record {
+export interface Record {
   id: number;
   name: string;
   timestamp: string | null;
@@ -25,6 +26,8 @@ interface Record {
   page_numbers: string | null;
   authors: string | null;
   language: string | null;
+  email: string | null;
+  creator_name: string | null;
 }
 
 const fuzzyFilter: FilterFn<Record> = (row, columnId, value, addMeta) => {
@@ -34,6 +37,8 @@ const fuzzyFilter: FilterFn<Record> = (row, columnId, value, addMeta) => {
 }
 
 export default function Home() {
+  const router = useRouter();
+
   const [records, setRecords] = useState<Record[]>([]);
   const [name, setName] = useState<string>('');
   const [summary, setSummary] = useState<string>('');
@@ -49,19 +54,62 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [editingRecord, setEditingRecord] = useState<Record | null>(null);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
 
   // Add new state for table
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
 
+  const [user, setUser] = useState<string | null>(null);
+  const [access, setAccess] = useState<string | null>(null);
+
   useEffect(() => {
-    fetchRecords();
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        if (parsedUser) {
+          setUser(parsedUser);
+          setAccess(parsedUser.access || null);
+        }
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    const user = localStorage.getItem('user');
+    if (user) {
+      try {
+        const parsedUser = JSON.parse(user);
+        if (parsedUser && parsedUser.name && parsedUser.email && parsedUser.access) {
+          fetchEmails();
+          fetchRecords();
+        } else {
+          router.push('/login');
+        }
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+        router.push('/login');
+      }
+    } else {
+      router.push('/login');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedEmail !== null) {
+      fetchRecords();
+    }
+  }, [selectedEmail]);
 
   const fetchRecords = async (): Promise<void> => {
     try {
-      const response = await fetch('/api/records');
+      const queryParam = selectedEmail ? `?email=${encodeURIComponent(selectedEmail)}` : '';
+      const response = await fetch(`/api/records${queryParam}`);
       if (!response.ok) throw new Error('Failed to fetch records');
       const data: Record[] = await response.json();
       setRecords(data);
@@ -71,12 +119,29 @@ export default function Home() {
     }
   };
 
+  const fetchEmails = async (): Promise<void> => {
+    try {
+      const response = await fetch('/api/get-emails');
+      if (!response.ok) throw new Error('Failed to fetch emails');
+      const data = await response.json();
+      console.log('Emails:', data);
+      setFetchedEmails(data);
+    } catch (err) {
+      console.error('Error fetching emails:', err);
+    }
+  };
+
   // Define columns
   const columns = useMemo<ColumnDef<Record>[]>(() => [
-    { accessorKey: 'id', header: 'ID', id: 'id' },
-    { accessorKey: 'name', header: 'Name', id: 'name' },
+    // { accessorKey: 'id', header: 'ID', id: 'id' },
+    { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
-    { accessorKey: 'summary', header: 'Summary', id: 'summary' },
+    {
+      accessorKey: 'summary',
+      header: 'Summary',
+      id: 'summary',
+      size: 500, // Set maximum width for the summary column
+    },
     { accessorKey: 'volume', header: 'Volume', id: 'volume' },
     { accessorKey: 'number', header: 'Number', id: 'number' },
     { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
@@ -103,7 +168,7 @@ export default function Home() {
       header: 'Actions',
       cell: ({ row }) => (
         <button
-          className="bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600 text-xs"
+          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs"
           onClick={() => {
             const record = row.original;
             setEditingRecord(record);
@@ -195,6 +260,21 @@ export default function Home() {
     formData.append('language', language);
     formData.append('timestamp', timestamp);
 
+    // Add creator_name and email from localStorage
+    const user = localStorage.getItem('user');
+    if (user) {
+      try {
+        const parsedUser = JSON.parse(user);
+        if (parsedUser.name) formData.append('creator_name', parsedUser.name);
+        if (parsedUser.email) formData.append('email', parsedUser.email);
+      } catch (error) {
+        console.error('Error parsing user data:', error);
+        setError('Failed to retrieve user information');
+        setLoading(false);
+        return;
+      }
+    }
+
     // If editing, add ID and existing pdf_url
     if (editingRecord) {
       formData.append('id', String(editingRecord.id));
@@ -211,6 +291,7 @@ export default function Home() {
         throw new Error(errorData.error || 'Failed');
       }
       await fetchRecords();
+      await fetchEmails();
       setName('');
       setSummary('');
       setFile(null);
@@ -240,7 +321,7 @@ export default function Home() {
       {/* Modal Form Section */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="bg-white shadow-lg rounded-lg p-8 w-full max-w-4xl relative">
+          <div className="bg-white shadow-lg rounded-lg p-8 w-full max-w-4xl relative h-[90vh] overflow-hidden">
             <button
               onClick={() => setModalOpen(false)}
               className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
@@ -251,7 +332,7 @@ export default function Home() {
             </button>
             <h1 className="text-2xl font-semibold text-gray-800 mb-6">{editingRecord ? 'Update' : 'Upload New'} Record</h1>
             {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto h-[calc(100%-4rem)] pr-4">
               <p className="text-sm text-gray-500">Fields marked with <span className="text-red-500">*</span> are required.</p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -397,9 +478,30 @@ export default function Home() {
       {/* Records Section */}
       <div className="w-full">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-semibold text-gray-800">Records</h2>
+          <h2 className="text-2xl font-semibold text-gray-800">Magazine Summary Records</h2>
           <div className="flex gap-4">
             {/* Global Search Filter */}
+            <button
+              onClick={() => {
+                localStorage.setItem('user', JSON.stringify(null));
+                router.push('/login')
+              }}
+              className="bg-red-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors"
+            >
+              Logout
+            </button>
+            <select
+              value={selectedEmail || ''}
+              onChange={(e) => setSelectedEmail(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value="">Show All</option>
+              {fetchedEmails.map(({ creator_name, email }) => (
+                <option key={email} value={email}>
+                  {`${creator_name} (${email})`}
+                </option>
+              ))}
+            </select>
             <button
               onClick={exportToCSV}
               className="bg-green-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
@@ -413,7 +515,7 @@ export default function Home() {
               placeholder="Search all records..."
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
-            <button
+            {access && access === "records" && <button
               onClick={() => {
                 setModalOpen(true);
                 setError(null);
@@ -432,7 +534,7 @@ export default function Home() {
               className="bg-indigo-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
             >
               + Add Record
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -451,7 +553,7 @@ export default function Home() {
                       <div
                         {...{
                           className: header.column.getCanSort()
-                            ? 'cursor-pointer select-none flex items-center'
+                            ? 'cursor-pointer select-none flex items-center font-bold'
                             : '',
                           onClick: header.column.getToggleSortingHandler(),
                         }}
@@ -488,15 +590,20 @@ export default function Home() {
                 table.getRowModel().rows.map(row => (
                   <tr key={row.id} className="hover:bg-gray-50">
                     {row.getVisibleCells().map(cell => (
-                      <td
+                        <td
                         key={cell.id}
                         className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
-                      >
+                        onClick={(e: any) => {
+                          if (e.target === e.currentTarget) {
+                          window.open(`/history/${row.original.id}`, '_blank');
+                          }
+                        }}
+                        >
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext()
                         )}
-                      </td>
+                        </td>
                     ))}
                   </tr>
                 ))

@@ -33,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 }
             });
         });
-        
+
         const id = fields.id || req.query.id;
         if (!id) return res.status(400).json({ error: 'Missing record ID' });
 
@@ -60,6 +60,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             language: fields.language,
             timestamp: fields.timestamp,
         };
+
+        // Fetch the existing record to compare summaries
+        const { data: existingRecord, error: fetchError } = await supabase
+            .from('records')
+            .select('summary')
+            .eq('id', id)
+            .single();
+
+        if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+        // If the new summary is different from the existing summary, create a new record in the summaries table
+        if (existingRecord && existingRecord.summary !== fields.summary) {
+            const { error: insertError } = await supabase
+                .from('summaries')
+                .insert({
+                    summary: existingRecord.summary,
+                    record_id: Array.isArray(id) ? id[0] : id,
+                    email: fields.email,
+                    name: fields.creator_name,
+                });
+
+            if (insertError) return res.status(500).json({ error: insertError.message });
+        }
 
         const { error } = await supabase
             .from('records')

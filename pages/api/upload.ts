@@ -67,6 +67,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const authors = fields.authors as string;
         const language = fields.language as string;
         const timestamp = fields.timestamp as string;
+        const email = fields.email as string;
+        const creator_name = fields.creator_name as string;
 
         if (!name) {
             return res.status(400).json({ error: 'Name is required' });
@@ -84,7 +86,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 page_numbers,
                 authors,
                 language,
-                timestamp
+                timestamp,
+                email,
+                creator_name,
             }])
             .select();
 
