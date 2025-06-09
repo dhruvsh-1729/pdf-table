@@ -22,12 +22,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Build the query based on the presence of the email parameter
         let query = supabase.from('records').select('*');
         if (email && typeof email === 'string' && email.trim() !== '') {
-            query = query.eq('email', '["' + email + '"]'); // Ensure email is formatted as a string
+            query = query.eq('email', email.trim()); // Use the email string directly for filtering
         }
 
         const { data: records, error } = await query;
         if (error) {
-            console.error('Supabase error:', error.message);
+            console.error('Supabase error:', error);
             return res.status(500).json({ error: 'Error fetching records', details: error.message });
         }
 
@@ -35,25 +35,141 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const processedRecords = records?.map(record => {
             const formattedRecord: Record<string, any> = {};
             for (const key in record) {
-                let value = record[key];
-                if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
-                    value = value[0];
-                }
-                if (typeof value !== 'string') {
-                    value = value === null || value === undefined ? '' : String(value);
-                }
-                // Remove surrounding [" and "] from string fields
-                if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
-                    value = value.slice(2, -2);
-                }
-                formattedRecord[key] = value;
+            let value = record[key];
+            if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
+                value = value[0];
+            }
+            if (typeof value !== 'string') {
+                value = value === null || value === undefined ? '' : String(value);
+            }
+            // Remove surrounding [" and "] from string fields
+            if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
+                value = value.slice(2, -2);
+            }
+            formattedRecord[key] = value;
             }
             return formattedRecord;
         });
 
-        return res.status(200).json(processedRecords || []);
+        // For each record, fetch edit history from summaries table
+        const recordIds = processedRecords?.map(r => r.id) || [];
+        let summariesMap: Record<string, {
+            count: number;
+            editors: string[];
+            editorCounts: Record<string, number>;
+            latest: { name: string; email: string; editedAt: string } | null;
+        }> = {};
+
+        if (recordIds.length > 0) {
+            const { data: summaries, error: summariesError } = await supabase
+            .from('summaries')
+            .select('record_id, email, name, created_at')
+            .in('record_id', recordIds);
+
+            // Strip off [" and "] from string fields in summaries
+            const cleanSummaries = summaries?.map(summary => {
+                const cleaned: any = { ...summary };
+                for (const key of ['record_id', 'email', 'name']) {
+                    let value = cleaned[key];
+                    if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
+                        value = value.slice(2, -2);
+                    }
+                    cleaned[key] = value;
+                }
+                return cleaned;
+            }) || [];
+
+            if (summariesError) {
+            console.error('Supabase summaries error:', summariesError.message);
+            return res.status(500).json({ error: 'Error fetching summaries', details: summariesError.message });
+            }
+
+            // Build a map: record_id -> { count, editors, editorCounts, latest }
+            summariesMap = cleanSummaries?.reduce((acc, summary) => {
+            const rid = summary.record_id;
+            if (!acc[rid]) {
+                acc[rid] = {
+                count: 0,
+                editors: [],
+                editorCounts: {},
+                latest: null
+                };
+            }
+            acc[rid].count += 1;
+            if (summary.email) {
+                if (!acc[rid].editors.includes(summary.email)) {
+                acc[rid].editors.push(summary.email);
+                }
+                acc[rid].editorCounts[summary.email] = (acc[rid].editorCounts[summary.email] || 0) + 1;
+            }
+            // Track latest edit
+            if (summary.created_at) {
+                const prev = acc[rid].latest;
+                if (
+                !prev ||
+                new Date(summary.created_at).getTime() > new Date(prev.editedAt).getTime()
+                ) {
+                acc[rid].latest = {
+                    name: summary.name || '',
+                    email: summary.email || '',
+                    editedAt: summary.created_at
+                };
+                }
+            }
+            return acc;
+            }, {} as Record<string, {
+            count: number;
+            editors: string[];
+            editorCounts: Record<string, number>;
+            latest: { name: string; email: string; editedAt: string } | null;
+            }>) || {};
+        }
+
+        // Helper to get time from now as a string
+        function timeFromNow(dateString: string): string {
+            const now = new Date();
+            const then = new Date(dateString);
+            const diffMs = now.getTime() - then.getTime();
+            const diffSec = Math.floor(diffMs / 1000);
+            if (diffSec < 60) return `${diffSec}s ago`;
+            const diffMin = Math.floor(diffSec / 60);
+            if (diffMin < 60) return `${diffMin}m ago`;
+            const diffHr = Math.floor(diffMin / 60);
+            if (diffHr < 24) return `${diffHr}h ago`;
+            const diffDay = Math.floor(diffHr / 24);
+            return `${diffDay}d ago`;
+        }
+
+        // Attach edit history to each record
+        const recordsWithEditHistory = processedRecords?.map(record => {
+            const summary = summariesMap[record.id] || {
+            count: 0,
+            editors: [],
+            editorCounts: {},
+            latest: null
+            };
+            return {
+            ...record,
+            editHistory: {
+                count: summary.count,
+                editors: summary.editors,
+                editorCounts: summary.editorCounts,
+                latestEditor: summary.latest
+                ? {
+                    name: summary.latest.name,
+                    email: summary.latest.email,
+                    // Use createdAt instead of updatedAt
+                    editedAt: summary.latest.editedAt,
+                    timeFromNow: timeFromNow(summary.latest.editedAt)
+                }
+                : null
+            }
+            };
+        }) || [];
+
+        return res.status(200).json(recordsWithEditHistory || []);
     } catch (error) {
-        console.error('Server error:', (error as Error).message);
-        return res.status(500).json({ error: 'Server error', details: (error as Error).message });
+        console.error('Server error:', error);
+        return res.status(500).json({ error: 'Server error', details: (error instanceof Error ? error.message : String(error)) });
     }
 }

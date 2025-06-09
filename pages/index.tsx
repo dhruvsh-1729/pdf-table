@@ -14,7 +14,19 @@ import {
 import { rankItem } from '@tanstack/match-sorter-utils';
 import { useRouter } from 'next/router';
 
-export interface Record {
+export interface EditHistory {
+  count: number;
+  editors: string[];
+  editorCounts: Record<string, number>;
+  latestEditor: {
+    name: string;
+    email: string;
+    editedAt: string;
+    timeFromNow: string;
+  } | null;
+}
+
+export interface MagazineRecord {
   id: number;
   name: string;
   timestamp: string | null;
@@ -28,9 +40,10 @@ export interface Record {
   language: string | null;
   email: string | null;
   creator_name: string | null;
+  editHistory?: EditHistory;
 }
 
-const fuzzyFilter: FilterFn<Record> = (row, columnId, value, addMeta) => {
+const fuzzyFilter: FilterFn<MagazineRecord> = (row, columnId, value, addMeta) => {
   const itemRank = rankItem(row.getValue(columnId), value);
   addMeta({ itemRank });
   return itemRank.passed;
@@ -39,7 +52,7 @@ const fuzzyFilter: FilterFn<Record> = (row, columnId, value, addMeta) => {
 export default function Home() {
   const router = useRouter();
 
-  const [records, setRecords] = useState<Record[]>([]);
+  const [records, setRecords] = useState<MagazineRecord[]>([]);
   const [name, setName] = useState<string>('');
   const [summary, setSummary] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
@@ -53,7 +66,7 @@ export default function Home() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
-  const [editingRecord, setEditingRecord] = useState<Record | null>(null);
+  const [editingRecord, setEditingRecord] = useState<MagazineRecord | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
 
@@ -111,7 +124,7 @@ export default function Home() {
       const queryParam = selectedEmail ? `?email=${encodeURIComponent(selectedEmail)}` : '';
       const response = await fetch(`/api/records${queryParam}`);
       if (!response.ok) throw new Error('Failed to fetch records');
-      const data: Record[] = await response.json();
+      const data: MagazineRecord[] = await response.json();
       setRecords(data);
     } catch (err) {
       console.error('Error:', err);
@@ -132,7 +145,7 @@ export default function Home() {
   };
 
   // Define columns
-  const columns = useMemo<ColumnDef<Record>[]>(() => [
+  const columns = useMemo<ColumnDef<MagazineRecord>[]>(() => [
     // { accessorKey: 'id', header: 'ID', id: 'id' },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
@@ -162,6 +175,40 @@ export default function Home() {
           View
         </a>
       ),
+    },
+    {
+      id: 'editHistory',
+      header: 'Edit History',
+      cell: ({ row }) => {
+        const editHistory = row.original.editHistory;
+        if (!editHistory) return <span className="text-gray-400 italic">No history</span>;
+        return (
+          <div className="text-xs space-y-0.5">
+            <div>
+              <span className="font-semibold">Edits:</span> {editHistory.count}
+              {editHistory.latestEditor && (
+                <>
+                  {' · '}
+                  <span className="font-semibold">Latest:</span> {editHistory.latestEditor.name}
+                  <span className="text-gray-400"> ({editHistory.latestEditor.timeFromNow})</span>
+                </>
+              )}
+            </div>
+            <div>
+              <span className="font-semibold">Editors:</span>{' '}
+              {editHistory.editors.length
+                ? editHistory.editors.join(', ')
+                : <span className="text-gray-400">-</span>}
+            </div>
+            <div>
+              <span className="font-semibold">By:</span>{' '}
+              {Object.entries(editHistory.editorCounts)
+                .map(([editor, count]) => `${editor}: ${count}`)
+                .join(', ')}
+            </div>
+          </div>
+        );
+      },
     },
     {
       id: 'actions',
@@ -198,7 +245,7 @@ export default function Home() {
       headers.map(header => {
         const column = columns.find(column => column.header === header && 'accessorKey' in column);
         if (column && column.id) {
-          const key = column.id as keyof Record;
+          const key = column.id as keyof MagazineRecord;
           return record[key] ?? '';
         }
         return '';
@@ -590,20 +637,20 @@ export default function Home() {
                 table.getRowModel().rows.map(row => (
                   <tr key={row.id} className="hover:bg-gray-50">
                     {row.getVisibleCells().map(cell => (
-                        <td
+                      <td
                         key={cell.id}
                         className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
                         onClick={(e: any) => {
                           if (e.target === e.currentTarget) {
-                          window.open(`/history/${row.original.id}`, '_blank');
+                            window.open(`/history/${row.original.id}`, '_blank');
                           }
                         }}
-                        >
+                      >
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext()
                         )}
-                        </td>
+                      </td>
                     ))}
                   </tr>
                 ))
