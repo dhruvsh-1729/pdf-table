@@ -97,10 +97,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
             acc[rid].count += 1;
             if (summary.email) {
-                if (!acc[rid].editors.includes(summary.email)) {
-                acc[rid].editors.push(summary.email);
+                if (!acc[rid].editors.includes(summary.name)) {
+                acc[rid].editors.push(summary.name);
                 }
-                acc[rid].editorCounts[summary.email] = (acc[rid].editorCounts[summary.email] || 0) + 1;
+                acc[rid].editorCounts[summary.name] = (acc[rid].editorCounts[summary.name] || 0) + 1;
             }
             // Track latest edit
             if (summary.created_at) {

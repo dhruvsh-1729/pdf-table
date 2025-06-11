@@ -183,7 +183,7 @@ export default function Home() {
         const editHistory = row.original.editHistory;
         if (!editHistory) return <span className="text-gray-400 italic">No history</span>;
         return (
-          <div className="text-xs space-y-0.5">
+          <div className="text-xs w-32 space-y-0.5">
             <div>
               <span className="font-semibold">Edits:</span> {editHistory.count}
               {editHistory.latestEditor && (
