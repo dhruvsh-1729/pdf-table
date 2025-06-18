@@ -17,7 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const form = formidable();
+    const form = formidable({ multiples: true });
     try {
         const [fields, files] = await new Promise<[Record<string, string | string[]>, Record<string, File | File[]>]>((resolve, reject) => {
             form.parse(req, (err, fields, files) => {
@@ -37,15 +37,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const id = fields.id || req.query.id;
         if (!id) return res.status(400).json({ error: 'Missing record ID' });
 
-        let pdfUrl = fields.existing_pdf_url || '';
-        let uploadError;
-        if (files.pdf && (files.pdf as File).filepath) {
-            const fileBuffer = fs.readFileSync((files.pdf as File).filepath);
-            const fileName = `pdf-${Date.now()}.pdf`;
-            const uploadRes = await supabase.storage.from('pdfs').upload(fileName, fileBuffer, { contentType: 'application/pdf' });
-            uploadError = uploadRes.error;
-            if (uploadError) return res.status(500).json({ error: uploadError.message });
-            pdfUrl = supabase.storage.from('pdfs').getPublicUrl(fileName).data.publicUrl;
+        // Fetch existing record to get current pdf_url and summary
+        const { data: existingRecord, error: fetchError } = await supabase
+            .from('records')
+            .select('summary, pdf_url')
+            .eq('id', id)
+            .single();
+
+        if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+        let pdfUrl = existingRecord.pdf_url;
+
+        if (files.pdf) {
+            console.log('i came here');
+            
+            const pdfFile = Array.isArray(files.pdf) ? files.pdf[0] : files.pdf;
+            if (pdfFile && pdfFile.filepath) {
+                const fileBuffer = fs.readFileSync(pdfFile.filepath);
+                const fileName = `pdf-${Date.now()}.pdf`;
+
+                // Upload new PDF
+                const { error: uploadError } = await supabase.storage
+                    .from('pdfs')
+                    .upload(fileName, fileBuffer, { contentType: 'application/pdf' });
+
+                if (uploadError) {
+                    return res.status(500).json({ error: 'Error uploading file', details: uploadError.message });
+                }
+
+                const { data: publicUrlData } = supabase.storage.from('pdfs').getPublicUrl(fileName);
+                pdfUrl = publicUrlData?.publicUrl;
+                if (!pdfUrl) {
+                    return res.status(500).json({ error: 'Error generating public URL' });
+                }
+
+                // Delete old PDF if a new one was uploaded
+                if (existingRecord.pdf_url) {
+                    const oldFileName = existingRecord.pdf_url.split('/').pop();
+                    if (oldFileName) {
+                        const { error: deleteError } = await supabase.storage.from('pdfs').remove([oldFileName]);
+                        if (deleteError) {
+                            console.error('Error deleting old PDF:', deleteError.message);
+                        }
+                    }
+                }
+            }
         }
 
         const updateFields = {
@@ -61,17 +97,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             timestamp: fields.timestamp,
         };
 
-        // Fetch the existing record to compare summaries
-        const { data: existingRecord, error: fetchError } = await supabase
-            .from('records')
-            .select('summary')
-            .eq('id', id)
-            .single();
-
-        if (fetchError) return res.status(500).json({ error: fetchError.message });
-
-        // If the new summary is different from the existing summary, create a new record in the summaries table
-        if (existingRecord && existingRecord.summary !== fields.summary) {
+        // If the new summary is different, insert into summaries table
+        if (existingRecord.summary !== fields.summary) {
             const { error: insertError } = await supabase
                 .from('summaries')
                 .insert({
@@ -90,6 +117,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             .eq('id', id);
 
         if (error) return res.status(500).json({ error: error.message });
+
         res.status(200).json({ id });
     } catch (error) {
         res.status(500).json({ error: (error as Error).message });

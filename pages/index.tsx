@@ -70,7 +70,6 @@ export default function Home() {
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
 
-  // Add new state for table
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -137,24 +136,16 @@ export default function Home() {
       const response = await fetch('/api/get-emails');
       if (!response.ok) throw new Error('Failed to fetch emails');
       const data = await response.json();
-      console.log('Emails:', data);
       setFetchedEmails(data);
     } catch (err) {
       console.error('Error fetching emails:', err);
     }
   };
 
-  // Define columns
   const columns = useMemo<ColumnDef<MagazineRecord>[]>(() => [
-    // { accessorKey: 'id', header: 'ID', id: 'id' },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
-    {
-      accessorKey: 'summary',
-      header: 'Summary',
-      id: 'summary',
-      size: 500, // Set maximum width for the summary column
-    },
+    { accessorKey: 'summary', header: 'Summary', id: 'summary', size: 500 },
     { accessorKey: 'volume', header: 'Volume', id: 'volume' },
     { accessorKey: 'number', header: 'Number', id: 'number' },
     { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
@@ -166,12 +157,7 @@ export default function Home() {
       header: 'PDF',
       id: 'pdf_url',
       cell: ({ row }) => (
-        <a
-          href={row.original.pdf_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-indigo-600 hover:underline"
-        >
+        <a href={row.original.pdf_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
           View
         </a>
       ),
@@ -196,15 +182,11 @@ export default function Home() {
             </div>
             <div>
               <span className="font-semibold">Editors:</span>{' '}
-              {editHistory.editors.length
-                ? editHistory.editors.join(', ')
-                : <span className="text-gray-400">-</span>}
+              {editHistory.editors.length ? editHistory.editors.join(', ') : <span className="text-gray-400">-</span>}
             </div>
             <div>
               <span className="font-semibold">By:</span>{' '}
-              {Object.entries(editHistory.editorCounts)
-                .map(([editor, count]) => `${editor}: ${count}`)
-                .join(', ')}
+              {Object.entries(editHistory.editorCounts).map(([editor, count]) => `${editor}: ${count}`).join(', ')}
             </div>
           </div>
         );
@@ -252,11 +234,7 @@ export default function Home() {
       })
     );
 
-    const csvContent = [
-      headers.join(','), // Add headers
-      ...rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')), // Add rows
-    ].join('\n');
-
+    const csvContent = [headers.join(','), ...rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -264,18 +242,11 @@ export default function Home() {
     link.click();
   };
 
-  // Create table instance
   const table = useReactTable({
     data: records,
     columns,
-    filterFns: {
-      fuzzy: fuzzyFilter,
-    },
-    state: {
-      columnFilters,
-      globalFilter,
-      sorting,
-    },
+    filterFns: { fuzzy: fuzzyFilter },
+    state: { columnFilters, globalFilter, sorting },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     onSortingChange: setSorting,
@@ -307,7 +278,6 @@ export default function Home() {
     formData.append('language', language);
     formData.append('timestamp', timestamp);
 
-    // Add creator_name and email from localStorage
     const user = localStorage.getItem('user');
     if (user) {
       try {
@@ -322,17 +292,17 @@ export default function Home() {
       }
     }
 
-    // If editing, add ID and existing pdf_url
     if (editingRecord) {
       formData.append('id', String(editingRecord.id));
-      if (editingRecord.pdf_url && !file) {
-        formData.append('existing_pdf_url', editingRecord.pdf_url);
-      }
     }
 
     try {
       const url = editingRecord ? '/api/update-record' : '/api/upload';
-      const response = await fetch(url, { method: 'POST', body: formData });
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: { Accept: 'application/json' },
+      });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed');
@@ -358,14 +328,12 @@ export default function Home() {
     }
   };
 
-
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
     setFile(e.target.files?.[0] || null);
   };
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-2 sm:px-2 lg:px-2 w-full">
-      {/* Modal Form Section */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white shadow-lg rounded-lg p-8 w-full max-w-4xl relative h-[90vh] overflow-hidden">
@@ -375,7 +343,7 @@ export default function Home() {
               aria-label="Close form"
               disabled={loading}
             >
-              &times;
+              ×
             </button>
             <h1 className="text-2xl font-semibold text-gray-800 mb-6">{editingRecord ? 'Update' : 'Upload New'} Record</h1>
             {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
@@ -396,9 +364,9 @@ export default function Home() {
                     required
                   />
                 </div>
-                {!editingRecord && <div>
+                <div>
                   <label className="block text-sm font-medium text-gray-700">
-                    PDF File <span className="text-red-500">*</span>
+                    PDF File {editingRecord ? '(optional, to replace existing)' : <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="file"
@@ -408,7 +376,7 @@ export default function Home() {
                     disabled={loading}
                   />
                   <p className="mt-1 text-xs text-gray-500">Only PDF files are accepted.</p>
-                </div>}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Summary <span className="text-red-500">*</span></label>
@@ -522,16 +490,14 @@ export default function Home() {
         </div>
       )}
 
-      {/* Records Section */}
       <div className="w-full">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold text-gray-800">Magazine Summary Records</h2>
           <div className="flex gap-4">
-            {/* Global Search Filter */}
             <button
               onClick={() => {
                 localStorage.setItem('user', JSON.stringify(null));
-                router.push('/login')
+                router.push('/login');
               }}
               className="bg-red-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors"
             >
@@ -562,30 +528,31 @@ export default function Home() {
               placeholder="Search all records..."
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
-            {access && access === "records" && <button
-              onClick={() => {
-                setModalOpen(true);
-                setError(null);
-                setName('');
-                setSummary('');
-                setFile(null);
-                setVolume('');
-                setNumber('');
-                setTitleName('');
-                setPageNumbers('');
-                setAuthors('');
-                setLanguage('');
-                setTimestamp("");
-                setEditingRecord(null);
-              }}
-              className="bg-indigo-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
-            >
-              + Add Record
-            </button>}
+            {access && access === "records" && (
+              <button
+                onClick={() => {
+                  setModalOpen(true);
+                  setError(null);
+                  setName('');
+                  setSummary('');
+                  setFile(null);
+                  setVolume('');
+                  setNumber('');
+                  setTitleName('');
+                  setPageNumbers('');
+                  setAuthors('');
+                  setLanguage('');
+                  setTimestamp("");
+                  setEditingRecord(null);
+                }}
+                className="bg-indigo-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-colors"
+              >
+                + Add Record
+              </button>
+            )}
           </div>
         </div>
 
-        {/* TanStack Table */}
         <div className="overflow-x-auto w-full shadow rounded-lg border border-gray-200">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-100">
@@ -605,17 +572,9 @@ export default function Home() {
                           onClick: header.column.getToggleSortingHandler(),
                         }}
                       >
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                        {{
-                          asc: ' 🔼',
-                          desc: ' 🔽',
-                        }[header.column.getIsSorted() as string] ?? null}
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {{ asc: ' 🔼', desc: ' 🔽' }[header.column.getIsSorted() as string] ?? null}
                       </div>
-
-                      {/* Column Filter */}
                       {header.column.getCanFilter() && (
                         <div className="mt-1">
                           <input
@@ -646,10 +605,7 @@ export default function Home() {
                           }
                         }}
                       >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
                   </tr>
@@ -665,57 +621,33 @@ export default function Home() {
           </table>
         </div>
 
-        {/* Pagination Controls */}
         <div className="flex items-center justify-between mt-4">
           <div className="flex items-center gap-2">
-            <button
-              className="border rounded p-1"
-              onClick={() => table.setPageIndex(0)}
-              disabled={!table.getCanPreviousPage()}
-            >
+            <button className="border rounded p-1" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
               {'<<'}
             </button>
-            <button
-              className="border rounded p-1"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
-            >
+            <button className="border rounded p-1" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
               {'<'}
             </button>
-            <button
-              className="border rounded p-1"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
-            >
+            <button className="border rounded p-1" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
               {'>'}
             </button>
-            <button
-              className="border rounded p-1"
-              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-              disabled={!table.getCanNextPage()}
-            >
+            <button className="border rounded p-1" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
               {'>>'}
             </button>
           </div>
-
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1 text-sm">
               <div>Page</div>
-              <strong>
-                {table.getState().pagination.pageIndex + 1} of{' '}
-                {table.getPageCount()}
-              </strong>
+              <strong>{table.getState().pagination.pageIndex + 1} of {table.getPageCount()}</strong>
             </span>
-
             <select
               value={table.getState().pagination.pageSize}
               onChange={e => table.setPageSize(Number(e.target.value))}
               className="border rounded px-2 py-1 text-sm"
             >
               {[10, 20, 30, 40, 50].map(pageSize => (
-                <option key={pageSize} value={pageSize}>
-                  Show {pageSize}
-                </option>
+                <option key={pageSize} value={pageSize}>Show {pageSize}</option>
               ))}
             </select>
           </div>

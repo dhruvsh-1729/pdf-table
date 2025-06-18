@@ -33,7 +33,15 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 const HistoryPage = ({ history }: { history: any[] }) => {
     return (
         <div className="p-5 max-w-full overflow-x-auto">
-            <h1 className="text-center mb-5 text-2xl font-bold">History Page</h1>
+            <div className="flex justify-center items-center mb-5 gap-5">
+                <h1 className="text-2xl font-bold">History Page</h1>
+                <button
+                    onClick={() => window.location.reload()}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none"
+                >
+                    Reload for Latest History
+                </button>
+            </div>
             <table className="w-full border-collapse text-left">
                 <thead>
                     <tr>
