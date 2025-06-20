@@ -14,6 +14,7 @@ import {
 import { rankItem } from '@tanstack/match-sorter-utils';
 import { useRouter } from 'next/router';
 import BugModal from '@/components/BugModal';
+import CreatableSelect from 'react-select/creatable';
 
 export interface EditHistory {
   count: number;
@@ -356,7 +357,7 @@ export default function Home() {
                   <label className="block text-sm font-medium text-gray-700">
                     Name <span className="text-red-500">*</span>
                   </label>
-                  <input
+                  {/* <input
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
@@ -364,6 +365,35 @@ export default function Home() {
                     className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
                     disabled={loading}
                     required
+                  /> */}
+                  <CreatableSelect
+                    isClearable
+                    value={name ? { label: name, value: name } : null}
+                    onChange={option => setName(option ? option.value : '')}
+                    onCreateOption={inputValue => setName(inputValue)}
+                    options={
+                      Array.from(new Set(records.map(r => r.name).filter(Boolean)))
+                        .map(n => ({ label: n, value: n }))
+                    }
+                    placeholder="Select or enter magazine name"
+                    isDisabled={loading}
+                    classNamePrefix="react-select"
+                    styles={{
+                      control: (base) => ({
+                        ...base,
+                        minHeight: '38px',
+                        borderRadius: '0.5rem',
+                        borderColor: '#d1d5db',
+                        boxShadow: 'none',
+                        fontSize: '0.875rem',
+                        paddingLeft: '0.25rem',
+                        paddingRight: '0.25rem',
+                      }),
+                      menu: (base) => ({
+                        ...base,
+                        zIndex: 9999,
+                      }),
+                    }}
                   />
                 </div>
                 <div>
@@ -585,13 +615,32 @@ export default function Home() {
                       </div>
                       {header.column.getCanFilter() && (
                         <div className="mt-1">
-                          <input
-                            type="text"
-                            value={(header.column.getFilterValue() as string) ?? ''}
-                            onChange={e => header.column.setFilterValue(e.target.value)}
-                            placeholder={`Filter...`}
-                            className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
-                          />
+                          {header.column.id === 'name' ? (
+                            <select
+                              value={(header.column.getFilterValue() as string) ?? ''}
+                              onChange={e => {
+                                header.column.setFilterValue(e.target.value);
+                                setSorting(prev => [...prev, { id: 'volume', desc: false }]);
+                              }
+                              }
+                              className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                            >
+                              <option value="">All</option>
+                              {[...new Set(records.map(r => r.name).filter(Boolean))].map(name => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={(header.column.getFilterValue() as string) ?? ''}
+                              onChange={e => header.column.setFilterValue(e.target.value)}
+                              placeholder={`Filter...`}
+                              className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                            />
+                          )}
                         </div>
                       )}
                     </th>
