@@ -79,6 +79,7 @@ export default function Home() {
   const [user, setUser] = useState<string | null>(null);
   const [access, setAccess] = useState<string | null>(null);
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
+  const [tableLoading, setTableLoading] = useState<boolean>(false);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -123,6 +124,7 @@ export default function Home() {
 
   const fetchRecords = async (): Promise<void> => {
     try {
+      setTableLoading(true);
       const queryParam = selectedEmail ? `?email=${encodeURIComponent(selectedEmail)}` : '';
       const response = await fetch(`/api/records${queryParam}`);
       if (!response.ok) throw new Error('Failed to fetch records');
@@ -131,6 +133,8 @@ export default function Home() {
     } catch (err) {
       console.error('Error:', err);
       setError('Failed to load records');
+    } finally {
+      setTableLoading(false);
     }
   };
 
@@ -592,90 +596,96 @@ export default function Home() {
         </div>
 
         <div className="overflow-x-auto w-full shadow rounded-lg border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-100">
-              {table.getHeaderGroups().map(headerGroup => (
-                <tr key={headerGroup.id}>
-                  {headerGroup.headers.map(header => (
-                    <th
-                      key={header.id}
-                      colSpan={header.colSpan}
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      <div
-                        {...{
-                          className: header.column.getCanSort()
-                            ? 'cursor-pointer select-none flex items-center font-bold'
-                            : '',
-                          onClick: header.column.getToggleSortingHandler(),
-                        }}
+          {tableLoading ?
+            <div className="flex items-center justify-center p-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+              <span className="ml-2 text-gray-700">Loading records, please wait...</span>
+            </div>
+            :
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-100">
+                {table.getHeaderGroups().map(headerGroup => (
+                  <tr key={headerGroup.id}>
+                    {headerGroup.headers.map(header => (
+                      <th
+                        key={header.id}
+                        colSpan={header.colSpan}
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                       >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {{ asc: ' 🔼', desc: ' 🔽' }[header.column.getIsSorted() as string] ?? null}
-                      </div>
-                      {header.column.getCanFilter() && (
-                        <div className="mt-1">
-                          {header.column.id === 'name' ? (
-                            <select
-                              value={(header.column.getFilterValue() as string) ?? ''}
-                              onChange={e => {
-                                header.column.setFilterValue(e.target.value);
-                                setSorting(prev => [...prev, { id: 'volume', desc: false }]);
-                              }
-                              }
-                              className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
-                            >
-                              <option value="">All</option>
-                              {[...new Set(records.map(r => r.name).filter(Boolean))].map(name => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={(header.column.getFilterValue() as string) ?? ''}
-                              onChange={e => header.column.setFilterValue(e.target.value)}
-                              placeholder={`Filter...`}
-                              className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
-                            />
-                          )}
+                        <div
+                          {...{
+                            className: header.column.getCanSort()
+                              ? 'cursor-pointer select-none flex items-center font-bold'
+                              : '',
+                            onClick: header.column.getToggleSortingHandler(),
+                          }}
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          {{ asc: ' 🔼', desc: ' 🔽' }[header.column.getIsSorted() as string] ?? null}
                         </div>
-                      )}
-                    </th>
-                  ))}
-                </tr>
-              ))}
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {table.getRowModel().rows.length ? (
-                table.getRowModel().rows.map(row => (
-                  <tr key={row.id} className="hover:bg-gray-50">
-                    {row.getVisibleCells().map(cell => (
-                      <td
-                        key={cell.id}
-                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
-                        onClick={(e: any) => {
-                          if (e.target === e.currentTarget) {
-                            window.open(`/history/${row.original.id}`, '_blank');
-                          }
-                        }}
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
+                        {header.column.getCanFilter() && (
+                          <div className="mt-1">
+                            {header.column.id === 'name' ? (
+                              <select
+                                value={(header.column.getFilterValue() as string) ?? ''}
+                                onChange={e => {
+                                  header.column.setFilterValue(e.target.value);
+                                  setSorting(prev => [...prev, { id: 'volume', desc: false }]);
+                                }
+                                }
+                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                              >
+                                <option value="">All</option>
+                                {[...new Set(records.map(r => r.name).filter(Boolean))].map(name => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={(header.column.getFilterValue() as string) ?? ''}
+                                onChange={e => header.column.setFilterValue(e.target.value)}
+                                placeholder={`Filter...`}
+                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </th>
                     ))}
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
-                    No records found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                ))}
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {table.getRowModel().rows.length ? (
+                  table.getRowModel().rows.map(row => (
+                    <tr key={row.id} className="hover:bg-gray-50">
+                      {row.getVisibleCells().map(cell => (
+                        <td
+                          key={cell.id}
+                          className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
+                          onClick={(e: any) => {
+                            if (e.target === e.currentTarget) {
+                              window.open(`/history/${row.original.id}`, '_blank');
+                            }
+                          }}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
+                      No records found
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>}
         </div>
 
         <div className="flex items-center justify-between mt-4">
