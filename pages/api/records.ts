@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Build the query based on the presence of the email parameter
         let query = supabase.from('records').select('*');
         if (email && typeof email === 'string' && email.trim() !== '') {
-            query = query.eq('email', email.trim()); // Use the email string directly for filtering
+            query = query.eq('email', '["' + email.trim() + '"]'); // Use the email string directly for filtering
         }
 
         const { data: records, error } = await query;
