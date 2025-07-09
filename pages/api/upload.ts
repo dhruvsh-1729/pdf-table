@@ -6,6 +6,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 export const config = {
     api: {
         bodyParser: false,
+        sizeLimit: '15mb', // Increase this value as needed
     },
 };
 
@@ -42,6 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         const fileBuffer = fs.readFileSync(pdfFile.filepath);
+        console.log('Uploaded file size (bytes):', fileBuffer.length);
         const fileName = `pdf-${Date.now()}.pdf`;
 
         const { error: uploadError } = await supabase.storage
@@ -98,6 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         return res.status(200).json({ id: record[0].id });
     } catch (error) {
+        console.error('Error in upload handler:', error);
         return res.status(500).json({ error: 'Server error', details: (error as Error).message });
     }
 }
