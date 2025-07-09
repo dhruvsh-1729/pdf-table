@@ -80,6 +80,7 @@ export default function Home() {
   const [access, setAccess] = useState<string | null>(null);
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
+  const [showFileSize, setShowFileSize] = useState<boolean>(false);
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -336,7 +337,15 @@ export default function Home() {
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    setFile(e.target.files?.[0] || null);
+    const selectedFile = e.target.files?.[0] || null;
+    if (selectedFile && selectedFile.size > 4 * 1024 * 1024) {
+      setShowFileSize(true);
+      e.target.value = '';
+      setFile(null);
+      return;
+    }
+    setShowFileSize(false);
+    setFile(selectedFile);
   };
 
   return (
@@ -413,6 +422,21 @@ export default function Home() {
                   />
                   <p className="mt-1 text-xs text-gray-500">Only PDF files are accepted.</p>
                 </div>
+                {showFileSize && (
+                  <div className="mt-2 p-2 rounded border border-red-300 bg-red-50 flex items-center gap-2 text-xs text-red-700">
+                    <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01" />
+                    </svg>
+                    <span>
+                      File too large (&gt;4MB). Compress at&nbsp;
+                      <a href="https://www.ilovepdf.com/compress_pdf" target="_blank" rel="noopener noreferrer" className="underline text-indigo-600">
+                        ilovepdf.com
+                      </a>
+                      &nbsp;and re-upload once size is less than 4MB.
+                    </span>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Summary <span className="text-red-500">*</span></label>
