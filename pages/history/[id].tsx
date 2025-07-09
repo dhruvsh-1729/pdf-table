@@ -7,7 +7,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-
     const { id } = context.query;
 
     const { data: rawHistory, error } = await supabase
@@ -36,7 +35,7 @@ const HistoryPage = ({ history }: { history: any[] }) => {
     const [mode, setMode] = useState<'diff' | 'normal'>('normal');
 
     return (
-        <div className="p-5 max-w-full overflow-x-auto">
+        <div className="p-5 w-full max-w-screen overflow-x-hidden">
             <div className="flex justify-center items-center mb-5 gap-5">
                 <h1 className="text-2xl font-bold">History Page</h1>
                 <button
@@ -47,7 +46,7 @@ const HistoryPage = ({ history }: { history: any[] }) => {
                 </button>
             </div>
             <div className="space-y-8">
-                {history.length < 2 ? (
+                {history.length < 1 ? (
                     <div className="text-center text-gray-500">Not enough history to show differences.</div>
                 ) : (
                     history.slice(1).map((record, idx) => {
@@ -124,86 +123,96 @@ const HistoryPage = ({ history }: { history: any[] }) => {
                                         </button>
                                     </div>
                                     {mode === 'normal' ? (
-                                        <table className="min-w-full bg-white border rounded shadow overflow-x-auto">
-                                            <thead>
-                                                <tr>
-                                                    <th className="py-2 px-4 border-b">#</th>
-                                                    <th className="py-2 px-4 border-b">Created At</th>
-                                                    <th className="py-2 px-4 border-b">Summary</th>
-                                                    <th className="py-2 px-4 border-b">By</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {history.map((rec, i) => (
-                                                    <tr key={rec.id}>
-                                                        <td className="py-2 px-4 border-b">{history.length - i}</td>
-                                                        <td className="py-2 px-4 border-b">{rec.created_at}</td>
-                                                        <td className="py-2 px-4 border-b whitespace-pre-line break-words">
-                                                            {Array.isArray(rec.summary)
-                                                                ? rec.summary.join('\n')
-                                                                : (() => {
+                                        <div className="overflow-x-auto w-full max-w-full">
+                                            <table className="min-w-[600px] w-full bg-white border rounded shadow table-fixed">
+                                                <colgroup>
+                                                    <col style={{ width: '5%' }} />
+                                                    <col style={{ width: '18%' }} />
+                                                    <col style={{ width: '57%' }} />
+                                                    <col style={{ width: '20%' }} />
+                                                </colgroup>
+                                                <thead>
+                                                    <tr>
+                                                        <th className="py-2 px-4 border-b">#</th>
+                                                        <th className="py-2 px-4 border-b">Created At</th>
+                                                        <th className="py-2 px-4 border-b">Summary</th>
+                                                        <th className="py-2 px-4 border-b">By</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {history.map((rec, i) => (
+                                                        <tr key={rec.id}>
+                                                            <td className="py-2 px-4 border-b truncate">{history.length - i}</td>
+                                                            <td className="py-2 px-4 border-b truncate">{rec.created_at}</td>
+                                                            <td className="py-2 px-4 border-b whitespace-pre-line break-words truncate">
+                                                                {Array.isArray(rec.summary)
+                                                                    ? rec.summary.join('\n')
+                                                                    : (() => {
+                                                                        try {
+                                                                            return JSON.parse(rec.summary).join('\n');
+                                                                        } catch {
+                                                                            return String(rec.summary);
+                                                                        }
+                                                                    })()
+                                                                }
+                                                            </td>
+                                                            <td className="py-2 px-4 border-b truncate">
+                                                                {(() => {
                                                                     try {
-                                                                        return JSON.parse(rec.summary).join('\n');
+                                                                        return `${JSON.parse(rec.name).join(', ')} (${JSON.parse(rec.email).join(', ')})`;
                                                                     } catch {
-                                                                        return String(rec.summary);
+                                                                        return '';
                                                                     }
-                                                                })()
-                                                            }
-                                                        </td>
-                                                        <td className="py-2 px-4 border-b">
-                                                            {(() => {
+                                                                })()}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : null}
+                                    {mode === 'diff' ? (
+                                        <div className="space-y-6">
+                                            {history.slice(1).map((record, idx) => {
+                                                const prev = history[idx];
+                                                let prevSummary: string[] = [];
+                                                let currSummary: string[] = [];
+                                                try {
+                                                    prevSummary = JSON.parse(prev.summary);
+                                                    currSummary = JSON.parse(record.summary);
+                                                } catch {
+                                                    prevSummary = [String(prev.summary)];
+                                                    currSummary = [String(record.summary)];
+                                                }
+                                                return (
+                                                    <div key={record.id} className="border rounded p-4 bg-white shadow mb-6 max-w-full overflow-x-auto">
+                                                        <div className="mb-2 text-sm text-gray-600">
+                                                            <span className="font-semibold">Change {history.length - (idx + 1)} → {history.length - idx}</span>
+                                                            <span className="ml-4">({prev.created_at} , {record.created_at})</span>
+                                                        </div>
+                                                        <div>
+                                                            <div className="font-semibold mb-1">Summary Difference</div>
+                                                            <pre className="bg-gray-100 p-3 rounded overflow-x-auto text-sm whitespace-pre-wrap break-words max-w-full">
+                                                                {currSummary.map((line, i) => (
+                                                                    <div key={i}>
+                                                                        {diffWords(prevSummary[i] ?? "", line)}
+                                                                    </div>
+                                                                ))}
+                                                            </pre>
+                                                        </div>
+                                                        <div className="mt-2 text-xs text-gray-500">
+                                                            <span>By: {(() => {
                                                                 try {
-                                                                    return `${JSON.parse(rec.name).join(', ')} (${JSON.parse(rec.email).join(', ')})`;
+                                                                    return `${JSON.parse(record.name).join(', ')} (${JSON.parse(record.email).join(', ')})`;
                                                                 } catch {
                                                                     return '';
                                                                 }
-                                                            })()}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    ) : null}
-                                    {mode === 'diff' ? (
-                                        history.slice(1).map((record, idx) => {
-                                            const prev = history[idx];
-                                            let prevSummary: string[] = [];
-                                            let currSummary: string[] = [];
-                                            try {
-                                                prevSummary = JSON.parse(prev.summary);
-                                                currSummary = JSON.parse(record.summary);
-                                            } catch {
-                                                prevSummary = [String(prev.summary)];
-                                                currSummary = [String(record.summary)];
-                                            }
-                                            return (
-                                                <div key={record.id} className="border rounded p-4 bg-white shadow mb-6">
-                                                    <div className="mb-2 text-sm text-gray-600">
-                                                        <span className="font-semibold">Change {history.length - (idx + 1)} → {history.length - idx}</span>
-                                                        <span className="ml-4">({prev.created_at} , {record.created_at})</span>
+                                                            })()}</span>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <div className="font-semibold mb-1">Summary Difference</div>
-                                                        <pre className="bg-gray-100 p-3 rounded overflow-x-auto text-sm whitespace-pre-wrap break-words">
-                                                            {currSummary.map((line, i) => (
-                                                                <div key={i}>
-                                                                    {diffWords(prevSummary[i] ?? "", line)}
-                                                                </div>
-                                                            ))}
-                                                        </pre>
-                                                    </div>
-                                                    <div className="mt-2 text-xs text-gray-500">
-                                                        <span>By: {(() => {
-                                                            try {
-                                                                return `${JSON.parse(record.name).join(', ')} (${JSON.parse(record.email).join(', ')})`;
-                                                            } catch {
-                                                                return '';
-                                                            }
-                                                        })()}</span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
+                                                );
+                                            })}
+                                        </div>
                                     ) : null}
                                 </>
                             );
