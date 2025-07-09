@@ -48,9 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         let pdfUrl = existingRecord.pdf_url;
 
-        if (files.pdf) {
-            console.log('i came here');
-            
+        if (files.pdf) {            
             const pdfFile = Array.isArray(files.pdf) ? files.pdf[0] : files.pdf;
             if (pdfFile && pdfFile.filepath) {
                 const fileBuffer = fs.readFileSync(pdfFile.filepath);
@@ -95,6 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             authors: fields.authors,
             language: fields.language,
             timestamp: fields.timestamp,
+            conclusion: fields.conclusion,
         };
 
         // If the new summary is different, insert into summaries table

@@ -42,6 +42,7 @@ export interface MagazineRecord {
   language: string | null;
   email: string | null;
   creator_name: string | null;
+  conclusion: string | null;
   editHistory?: EditHistory;
 }
 
@@ -57,6 +58,7 @@ export default function Home() {
   const [records, setRecords] = useState<MagazineRecord[]>([]);
   const [name, setName] = useState<string>('');
   const [summary, setSummary] = useState<string>('');
+  const [conclusion, setConclusion] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
   const [volume, setVolume] = useState<string>('');
   const [number, setNumber] = useState<string>('');
@@ -154,6 +156,7 @@ export default function Home() {
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
     { accessorKey: 'summary', header: 'Summary', id: 'summary', size: 500 },
+    { accessorKey: 'conclusion', header: 'Conclusion', id: 'conclusion' },
     { accessorKey: 'volume', header: 'Volume', id: 'volume' },
     { accessorKey: 'number', header: 'Number', id: 'number' },
     { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
@@ -213,6 +216,7 @@ export default function Home() {
             setError(null);
             setName(record.name || '');
             setSummary(record.summary || '');
+            setConclusion(record.conclusion || '');
             setVolume(record.volume || '');
             setNumber(record.number || '');
             setTimestamp(record.timestamp || '');
@@ -285,6 +289,7 @@ export default function Home() {
     formData.append('authors', authors);
     formData.append('language', language);
     formData.append('timestamp', timestamp);
+    formData.append('conclusion', conclusion || '');
 
     const user = localStorage.getItem('user');
     if (user) {
@@ -319,6 +324,7 @@ export default function Home() {
       await fetchEmails();
       setName('');
       setSummary('');
+      setConclusion('');
       setFile(null);
       setVolume('');
       setNumber('');
@@ -443,7 +449,7 @@ export default function Home() {
                 <textarea
                   value={summary}
                   onChange={(e) => setSummary(e.target.value)}
-                  placeholder="Enter summary (optional)"
+                  placeholder="Enter summary"
                   className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
                   disabled={loading}
                   rows={6}
@@ -532,6 +538,17 @@ export default function Home() {
                   />
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Conclusion (by maharaj saheb)</label>
+                <textarea
+                  value={conclusion}
+                  onChange={(e) => setConclusion(e.target.value)}
+                  placeholder="Enter conclusion (optional)"
+                  className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                  disabled={loading}
+                  rows={5}
+                />
+              </div>
               <button
                 type="button"
                 onClick={handleSubmit}
@@ -601,6 +618,7 @@ export default function Home() {
                   setError(null);
                   setName('');
                   setSummary('');
+                  setConclusion('');
                   setFile(null);
                   setVolume('');
                   setNumber('');
