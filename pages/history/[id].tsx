@@ -14,6 +14,42 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         .select('*')
         .eq('record_id', id);
 
+    // Clean up summaries and other fields
+    const processValue = (value: any) => {
+        if (typeof value === 'string') {
+            let parsed = value;
+            try {
+                parsed = JSON.parse(value);
+                if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
+                    parsed = parsed[0];
+                }
+            } catch {
+                parsed = value;
+            }
+            if (typeof parsed === 'string') {
+                parsed = parsed
+                    .replace(/\\r\\n|\\n|\\r/g, '\n')
+                    .replace(/\\"/g, '"')
+                    .replace(/\\'/g, "'")
+                    .replace(/\\\\/g, '\\')
+                    .replace(/^\s+|\s+$/g, '');
+                if (parsed.startsWith('"') && parsed.endsWith('"')) {
+                    parsed = parsed.slice(1, -1);
+                }
+            }
+            return parsed;
+        }
+        return value;
+    };
+
+    const cleanedHistory = rawHistory?.map(record => {
+        const formattedRecord: any = {};
+        for (const key in record) {
+            formattedRecord[key] = processValue(record[key]);
+        }
+        return formattedRecord;
+    });
+
     const history = rawHistory?.map(record => ({
         ...record,
         created_at: new Date(record.created_at).toLocaleString(),

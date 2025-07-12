@@ -35,30 +35,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const processedRecords = records?.map(record => {
             const formattedRecord: Record<string, any> = {};
             for (const key in record) {
-            let value = record[key];
-            if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
-                value = value[0];
-            }
-            if (typeof value !== 'string') {
-                value = value === null || value === undefined ? '' : String(value);
-            }
-            // Remove surrounding [" and "] from string fields
-            if (typeof value === 'string') {
-                // Remove surrounding [" and "]
-                if (value.startsWith('["') && value.endsWith('"]')) {
-                    value = value.slice(2, -2);
+                let value = record[key];
+                if (Array.isArray(value) && value.length === 1 && typeof value[0] === 'string') {
+                    value = value[0];
                 }
-                // Remove starting and ending \" if present
-                if (value.startsWith('\\"') && value.endsWith('\\"')) {
-                    value = value.slice(2, -2);
+                if (typeof value !== 'string') {
+                    value = value === null || value === undefined ? '' : String(value);
                 }
-                // Replace all escaped newlines and quotes
-                value = value
-                    .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
-                    .replace(/\\"/g, '"')              // unescape double quotes
-                    .replace(/\\'/g, "'");             // unescape single quotes
-            }
-            formattedRecord[key] = value;
+                // Remove surrounding [" and "] from string fields
+                if (typeof value === 'string') {
+                    // Try to parse JSON-encoded strings (e.g., '["text"]' or '"text"')
+                    let parsed = value;
+                    try {
+                        parsed = JSON.parse(value);
+                        // If parsed is an array with one string, use that string
+                        if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
+                            parsed = parsed[0];
+                        }
+                    } catch {
+                        // If parsing fails, fallback to manual cleaning
+                        parsed = value;
+                    }
+                    // Now clean up any remaining escape characters
+                    if (typeof parsed === 'string') {
+                        parsed = parsed
+                            .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
+                            .replace(/\\"/g, '"')              // unescape double quotes
+                            .replace(/\\'/g, "'")              // unescape single quotes
+                            .replace(/\\\\/g, '\\')            // unescape backslashes
+                            .replace(/^\s+|\s+$/g, '');        // trim whitespace
+                        // Remove " from start and end if both exist
+                        if (parsed.startsWith('"') && parsed.endsWith('"')) {
+                            parsed = parsed.slice(1, -1);
+                        }
+                    }
+                    value = parsed;
+                }
+                formattedRecord[key] = value;
             }
             return formattedRecord;
         });
@@ -84,19 +97,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 for (const key of ['record_id', 'email', 'name']) {
                     let value = cleaned[key];
                     if (typeof value === 'string') {
-                        // Remove surrounding [" and "]
-                        if (value.startsWith('["') && value.endsWith('"]')) {
-                            value = value.slice(2, -2);
+                        // Try to parse JSON-encoded strings (e.g., '["text"]' or '"text"')
+                        let parsed = value;
+                        try {
+                            parsed = JSON.parse(value);
+                            // If parsed is an array with one string, use that string
+                            if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
+                                parsed = parsed[0];
+                            }
+                        } catch {
+                            // If parsing fails, fallback to manual cleaning
+                            parsed = value;
                         }
-                        // Remove starting and ending \" if present
-                        if (value.startsWith('\\"') && value.endsWith('\\"')) {
-                            value = value.slice(2, -2);
+                        // Now clean up any remaining escape characters
+                        if (typeof parsed === 'string') {
+                            parsed = parsed
+                                .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
+                                .replace(/\\"/g, '"')              // unescape double quotes
+                                .replace(/\\'/g, "'")              // unescape single quotes
+                                .replace(/\\\\/g, '\\')            // unescape backslashes
+                                .replace(/^\s+|\s+$/g, '');        // trim whitespace
+                            // Remove " from start and end if both exist
+                            if (parsed.startsWith('"') && parsed.endsWith('"')) {
+                                parsed = parsed.slice(1, -1);
+                            }
                         }
-                        // Replace all escaped newlines and quotes
-                        value = value
-                            .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
-                            .replace(/\\"/g, '"')              // unescape double quotes
-                            .replace(/\\'/g, "'");             // unescape single quotes
+                        value = parsed;
                     }
                     cleaned[key] = value;
                 }

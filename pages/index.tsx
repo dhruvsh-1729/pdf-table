@@ -134,6 +134,7 @@ export default function Home() {
       if (!response.ok) throw new Error('Failed to fetch records');
       const data: MagazineRecord[] = await response.json();
       setRecords(data);
+      console.log(data.slice(0,10).map(r => { return { summary: r.summary}}))
     } catch (err) {
       console.error('Error:', err);
       setError('Failed to load records');
@@ -158,8 +159,6 @@ export default function Home() {
       cell: ({ row }) => (
         <span className="text-gray-600">{row.original.id}</span>
       ),
-      enableSorting: false,
-      enableColumnFilter: false,
      },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
@@ -837,7 +836,7 @@ export default function Home() {
               onChange={e => table.setPageSize(Number(e.target.value))}
               className="border rounded px-2 py-1 text-sm"
             >
-              {[10, 20, 30, 40, 50].map(pageSize => (
+              {[10, 20, 30, 40, 50, 100, 200].map(pageSize => (
                 <option key={pageSize} value={pageSize}>Show {pageSize}</option>
               ))}
             </select>
