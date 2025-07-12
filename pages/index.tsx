@@ -73,6 +73,7 @@ export default function Home() {
   const [editingRecord, setEditingRecord] = useState<MagazineRecord | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
+  const [expanded, setExpanded] = useState<number>(-1);
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -153,17 +154,86 @@ export default function Home() {
   };
 
   const columns = useMemo<ColumnDef<MagazineRecord>[]>(() => [
+    { accessorKey:'id', header: 'ID', id: 'id',
+      cell: ({ row }) => (
+        <span className="text-gray-600">{row.original.id}</span>
+      ),
+      enableSorting: false,
+      enableColumnFilter: false,
+     },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
-    { accessorKey: 'summary', header: 'Summary', id: 'summary', size: 500 },
-    { accessorKey: 'conclusion', header: 'Conclusion', id: 'conclusion' },
-    { accessorKey: 'volume', header: 'Volume', id: 'volume' },
-    { accessorKey: 'number', header: 'Number', id: 'number' },
-    { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
-    { accessorKey: 'page_numbers', header: 'Page Numbers', id: 'page_numbers' },
-    { accessorKey: 'authors', header: 'Authors', id: 'authors' },
-    { accessorKey: 'language', header: 'Language', id: 'language' },
     {
+      accessorKey: 'summary',
+      header: 'Summary',
+      id: 'summary',
+      size: 500,
+      cell: ({ row }) => {
+        const summary = row.original.summary || '';
+        const isLong = summary.length > 50;
+        const displayText = expanded || !isLong ? summary : summary.slice(0, 50) + '...';
+
+        return (
+          <div>
+            <span>
+              {expanded === row.original.id || !isLong
+                ? summary
+                : summary.slice(0, 50) + '...'}
+            </span>
+            {/* {isLong && (
+              <button
+                type="button"
+                className="ml-2 text-indigo-600 hover:underline text-xs"
+                onClick={e => {
+                  e.stopPropagation();
+                  setExpanded(expanded === row.original.id ? -1 : row.original.id);
+                }}
+              >
+                {expanded === row.original.id ? 'Show Less' : 'Show More'}
+              </button>
+            )} */}
+          </div>
+        );
+      },
+        },
+        {
+      accessorKey: 'conclusion',
+      header: 'Conclusion',
+      id: 'conclusion',
+      size: 500,
+      cell: ({ row }) => {
+        const conclusion = row.original.conclusion || '';
+        const isLong = conclusion.length > 50;
+        return (
+          <div>
+        <span>
+          {expanded === row.original.id
+            ? conclusion
+            : conclusion.slice(0, 50) + '...'}
+        </span>
+        {/* {isLong && (
+          <button
+            type="button"
+            className="ml-2 text-indigo-600 hover:underline text-xs"
+            onClick={e => {
+          e.stopPropagation();
+          setExpanded(expanded === `conclusion-${row.original.id}` ? -1 : `conclusion-${row.original.id}`);
+            }}
+          >
+            {expanded === `conclusion-${row.original.id}` ? 'Show Less' : 'Show More'}
+          </button>
+        )} */}
+          </div>
+        );
+      },
+        },
+        { accessorKey: 'volume', header: 'Volume', id: 'volume' },
+        { accessorKey: 'number', header: 'Number', id: 'number' },
+        { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
+        { accessorKey: 'page_numbers', header: 'Page Numbers', id: 'page_numbers' },
+        { accessorKey: 'authors', header: 'Authors', id: 'authors' },
+        { accessorKey: 'language', header: 'Language', id: 'language' },
+        {
       accessorKey: 'pdf_url',
       header: 'PDF',
       id: 'pdf_url',
@@ -444,17 +514,29 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Summary <span className="text-red-500">*</span></label>
-                <textarea
-                  value={summary}
-                  onChange={(e) => setSummary(e.target.value)}
-                  placeholder="Enter summary"
-                  className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
-                  disabled={loading}
-                  rows={6}
-                />
-              </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">
+                    Summary <span className="text-red-500">*</span>
+                  </label>
+                    <textarea
+                    value={
+                      summary
+                      // Replace escaped newlines with real newlines
+                      .replace(/\\r\\n|\\n|\\r/g, '\n')
+                    }
+                    onChange={e => {
+                      // Convert newlines to escaped newlines for storage
+                      const raw = e.target.value;
+                      // Replace all \n with \\n for storage (to match how summary is stored)
+                      // setSummary(raw.replace(/\r\n|\n|\r/g, '\\n'));
+                      setSummary(raw);
+                    }}
+                    placeholder="Enter summary"
+                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                    disabled={loading}
+                    rows={6}
+                  />
+                </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Volume</label>

@@ -43,8 +43,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 value = value === null || value === undefined ? '' : String(value);
             }
             // Remove surrounding [" and "] from string fields
-            if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
-                value = value.slice(2, -2);
+            if (typeof value === 'string') {
+                // Remove surrounding [" and "]
+                if (value.startsWith('["') && value.endsWith('"]')) {
+                    value = value.slice(2, -2);
+                }
+                // Remove starting and ending \" if present
+                if (value.startsWith('\\"') && value.endsWith('\\"')) {
+                    value = value.slice(2, -2);
+                }
+                // Replace all escaped newlines and quotes
+                value = value
+                    .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
+                    .replace(/\\"/g, '"')              // unescape double quotes
+                    .replace(/\\'/g, "'");             // unescape single quotes
             }
             formattedRecord[key] = value;
             }
@@ -71,8 +83,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const cleaned: any = { ...summary };
                 for (const key of ['record_id', 'email', 'name']) {
                     let value = cleaned[key];
-                    if (typeof value === 'string' && value.startsWith('["') && value.endsWith('"]')) {
-                        value = value.slice(2, -2);
+                    if (typeof value === 'string') {
+                        // Remove surrounding [" and "]
+                        if (value.startsWith('["') && value.endsWith('"]')) {
+                            value = value.slice(2, -2);
+                        }
+                        // Remove starting and ending \" if present
+                        if (value.startsWith('\\"') && value.endsWith('\\"')) {
+                            value = value.slice(2, -2);
+                        }
+                        // Replace all escaped newlines and quotes
+                        value = value
+                            .replace(/\\r\\n|\\n|\\r/g, '\n')  // replace all \r\n or \n or \r with actual newlines
+                            .replace(/\\"/g, '"')              // unescape double quotes
+                            .replace(/\\'/g, "'");             // unescape single quotes
                     }
                     cleaned[key] = value;
                 }
