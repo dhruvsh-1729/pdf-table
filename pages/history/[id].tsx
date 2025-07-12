@@ -17,24 +17,36 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     // Clean up summaries and other fields
     const processValue = (value: any) => {
         if (typeof value === 'string') {
-            let parsed = value;
+            let parsed: any = value;
+            // Attempt to parse JSON-encoded strings
             try {
                 parsed = JSON.parse(value);
+                // If parsed is an array with one string, use that string
                 if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0] === 'string') {
                     parsed = parsed[0];
                 }
             } catch {
                 parsed = value;
             }
+            // Clean up escape characters and trim whitespace
             if (typeof parsed === 'string') {
                 parsed = parsed
-                    .replace(/\\r\\n|\\n|\\r/g, '\n')
-                    .replace(/\\"/g, '"')
-                    .replace(/\\'/g, "'")
-                    .replace(/\\\\/g, '\\')
-                    .replace(/^\s+|\s+$/g, '');
+                    .replace(/\\r\\n|\\n|\\r/g, '\n')   // Replace escaped newlines with actual newlines
+                    .replace(/\\"/g, '"')               // Unescape double quotes
+                    .replace(/\\'/g, "'")               // Unescape single quotes
+                    .replace(/\\\\/g, '\\')             // Unescape backslashes
+                    .trim();                            // Trim whitespace
+                // Remove surrounding quotes if present
                 if (parsed.startsWith('"') && parsed.endsWith('"')) {
                     parsed = parsed.slice(1, -1);
+                }
+                // Remove surrounding brackets if present (e.g., ["text"])
+                if (parsed.startsWith('[') && parsed.endsWith(']')) {
+                    parsed = parsed.slice(1, -1);
+                    // Remove quotes again if present after brackets
+                    if (parsed.startsWith('"') && parsed.endsWith('"')) {
+                        parsed = parsed.slice(1, -1);
+                    }
                 }
             }
             return parsed;

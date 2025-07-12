@@ -70,6 +70,8 @@ export default function Home() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [summaryOpen, setSummaryOpen] = useState<boolean>(false);
+  const [conclusionOpen, setConclusionOpen] = useState<boolean>(false);
   const [editingRecord, setEditingRecord] = useState<MagazineRecord | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
@@ -79,7 +81,7 @@ export default function Home() {
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
 
-  const [user, setUser] = useState<string | null>(null);
+  const [user, setUser] = useState<{ name: string; email: string; access: string } | null>(null);
   const [access, setAccess] = useState<string | null>(null);
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
@@ -161,7 +163,6 @@ export default function Home() {
       ),
      },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
-    { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
     {
       accessorKey: 'summary',
       header: 'Summary',
@@ -226,6 +227,7 @@ export default function Home() {
         );
       },
         },
+        { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
         { accessorKey: 'volume', header: 'Volume', id: 'volume' },
         { accessorKey: 'number', header: 'Number', id: 'number' },
         { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
@@ -276,6 +278,7 @@ export default function Home() {
       id: 'actions',
       header: 'Actions',
       cell: ({ row }) => (
+        <div className='flex flex-col justify-center items-center gap-2'>
         <button
           className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs"
           onClick={() => {
@@ -298,6 +301,29 @@ export default function Home() {
         >
           Update
         </button>
+      {(access && access === "records") && <button
+        className="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-xs"
+        onClick={() => {
+          const record = row.original;
+          setName(record.name || '');
+          setVolume(record.volume || '');
+          setNumber(record.number || '');
+          setTimestamp(record.timestamp || '');
+          setAuthors(record.authors || '');
+          setLanguage(record.language || '');
+          setModalOpen(true);
+          setEditingRecord(null);
+          setError(null);
+          setSummary('');
+          setConclusion('');
+          setFile(null);
+          setTitleName('');
+          setPageNumbers('');
+        }}
+      >
+        Duplicate
+      </button>}
+      </div>
       ),
     },
   ], []);
@@ -408,6 +434,8 @@ export default function Home() {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+      setSummaryOpen(false);
+      setConclusionOpen(false);
     }
   };
 
@@ -436,10 +464,23 @@ export default function Home() {
             >
               ×
             </button>
-            <h1 className="text-2xl font-semibold text-gray-800 mb-6">{editingRecord ? 'Update' : 'Upload New'} Record</h1>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-2">
+              <h1 className="text-2xl font-semibold text-gray-800">
+              {editingRecord ? 'Update' : 'Upload New'} Record
+              </h1>
+              {user && (
+              <div className="text-sm text-gray-600 flex flex-col sm:flex-row sm:items-center gap-2 mr-4">
+                <span className="font-semibold">User Name:</span>{" "}
+                {user?.name || ""}
+                <span className="mx-2 hidden sm:inline">|</span>
+                <span className="font-semibold">Email:</span>{" "}
+                {user?.email || ""}
+              </div>
+              )}
+            </div>
             {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
             <div className="space-y-4 overflow-y-auto h-[calc(100%-4rem)] pr-4">
-              <p className="text-sm text-gray-500">Fields marked with <span className="text-red-500">*</span> are required.</p>
+              {/* <p className="text-sm text-gray-500">Fields marked with <span className="text-red-500">*</span> are required.</p> */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
@@ -648,6 +689,78 @@ export default function Home() {
         </div>
       )}
 
+      {(summaryOpen || conclusionOpen) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white shadow-lg rounded-lg p-8 w-[60vw] h-[80vh] relative flex flex-col scroll-none">
+        <button
+          onClick={() => {
+            setSummaryOpen(false);
+            setConclusionOpen(false);
+          }}
+          className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+          aria-label="Close"
+          disabled={loading}
+        >
+          ×
+        </button>
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+          {summaryOpen ? 'Summary' : 'Conclusion'}
+        </h2>
+        <div className="flex-1 overflow-y-auto pr-2 mb-8">
+          <textarea
+            className="w-full h-[calc(60vh)] min-h-[300px] rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-gray-700 px-3 py-2 text-base resize-none"
+            value={
+              summaryOpen
+                ? summary.replace(/\\r\\n|\\n|\\r/g, '\n')
+                : conclusion.replace(/\\r\\n|\\n|\\r/g, '\n')
+            }
+            onChange={e => {
+              const val = e.target.value;
+              if (summaryOpen) {
+                setSummary(val);
+                setEditingRecord(prev => prev ? { ...prev, summary: val } : prev);
+              } else {
+                setConclusion(val);
+                setEditingRecord(prev => prev ? { ...prev, conclusion: val } : prev);
+              }
+            }}
+            disabled={loading}
+            rows={16}
+          />
+        </div>
+        <div className="flex items-center justify-between absolute left-0 right-0 bottom-8 mx-8">
+          <button
+            type="button"
+            onClick={() => {
+              setSummaryOpen(false);
+              setConclusionOpen(false);
+            }}
+            className="py-2 px-3 rounded shadow text-gray-700 bg-gray-200 hover:bg-gray-300 text-base font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 mr-2"
+            disabled={loading}
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={e => {
+              // Prevent submit if summary is empty
+              if (!summary.trim()) return;
+              handleSubmit(e);
+            }}
+            className={`py-2 px-3 rounded shadow text-white text-base font-medium transition-colors
+              ${loading || !summary.trim()
+          ? 'bg-gray-400 cursor-not-allowed'
+          : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+              } focus:outline-none focus:ring-2 focus:ring-offset-2`}
+            disabled={loading || !summary.trim()}
+          >
+            {loading ? (editingRecord ? 'Updating...' : 'Uploading...') : (editingRecord ? 'Update' : 'Upload')}
+          </button>
+        </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold text-gray-800">Magazine Summary Records</h2>
@@ -685,13 +798,13 @@ export default function Home() {
             >
               Export CSV
             </button>
-            <input
+            {/* <input
               type="text"
               value={globalFilter}
               onChange={e => setGlobalFilter(e.target.value)}
               placeholder="Search all records..."
               className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
+            /> */}
             {access && access === "records" && (
               <button
                 onClick={() => {
@@ -719,111 +832,202 @@ export default function Home() {
         </div>
 
         <div className="overflow-x-auto w-full shadow rounded-lg border border-gray-200">
-          {tableLoading ?
+          {tableLoading ? (
             <div className="flex items-center justify-center p-6">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
               <span className="ml-2 text-gray-700">Loading records, please wait...</span>
             </div>
-            :
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-100">
-                {table.getHeaderGroups().map(headerGroup => (
-                  <tr key={headerGroup.id}>
-                    {headerGroup.headers.map(header => (
-                      <th
-                        key={header.id}
-                        colSpan={header.colSpan}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        <div
-                          {...{
-                            className: header.column.getCanSort()
-                              ? 'cursor-pointer select-none flex items-center font-bold'
-                              : '',
-                            onClick: header.column.getToggleSortingHandler(),
-                          }}
+          ) : (
+            <div className="overflow-auto max-h-[80vh] max-w-screen">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-100 sticky top-0 z-10">
+                  {table.getHeaderGroups().map(headerGroup => (
+                    <tr key={headerGroup.id}>
+                      {headerGroup.headers.map(header => (
+                        <th
+                          key={header.id}
+                          colSpan={header.colSpan}
+                          className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-100"
+                          style={{ position: 'sticky', top: 0, zIndex: 2 }}
                         >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          {{ asc: ' 🔼', desc: ' 🔽' }[header.column.getIsSorted() as string] ?? null}
-                        </div>
-                        {header.column.getCanFilter() && (
-                          <div className="mt-1">
-                            {header.column.id === 'name' ? (
-                              <select
-                                value={(header.column.getFilterValue() as string) ?? ''}
-                                onChange={e => {
-                                  header.column.setFilterValue(e.target.value);
-                                  setSorting(prev => [...prev, { id: 'volume', desc: false }]);
-                                }
-                                }
-                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
-                              >
-                                <option value="">All</option>
-                                {[...new Set(records.map(r => r.name).filter(Boolean))].map(name => (
-                                  <option key={name} value={name}>
-                                    {name}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                type="text"
-                                value={(header.column.getFilterValue() as string) ?? ''}
-                                onChange={e => header.column.setFilterValue(e.target.value)}
-                                placeholder={`Filter...`}
-                                className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
-                              />
-                            )}
+                          <div
+                            {...{
+                              className: header.column.getCanSort()
+                                ? 'cursor-pointer select-none flex items-center font-bold'
+                                : '',
+                              onClick: header.column.getToggleSortingHandler(),
+                            }}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {{ asc: ' 🔼', desc: ' 🔽' }[header.column.getIsSorted() as string] ?? null}
                           </div>
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {table.getRowModel().rows.length ? (
-                  table.getRowModel().rows.map(row => (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      {row.getVisibleCells().map(cell => (
-                        <td
-                          key={cell.id}
-                          className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
-                          onClick={(e: any) => {
-                            if (e.target === e.currentTarget) {
-                              window.open(`/history/${row.original.id}`, '_blank');
-                            }
-                          }}
-                        >
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
+                          {header.column.getCanFilter() && (
+                            <div className="mt-1">
+                              {['name', 'title_name', 'authors'].includes(header.column.id) ? (
+                                header.column.id === 'name' ? (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ''}
+                                    onChange={e => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setSorting([{ id: 'volume', desc: false }, { id: 'number', desc: false}, { id: 'page_numbers', desc: false }]);
+                                    }}
+                                    className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                                  >
+                                    <option value="">All</option>
+                                    {Array.from(new Set(records.map(r => r.name).filter(Boolean))).map(value => (
+                                      <option key={value as string} value={value as string}>
+                                        {value as string}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ''}
+                                    onChange={e => header.column.setFilterValue(e.target.value)}
+                                    className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                                  >
+                                    <option value="">All</option>
+                                    {(() => {
+                                      let filteredRecords = records;
+                                      const nameFilter = table.getState().columnFilters.find(f => f.id === 'name')?.value;
+                                      if (['title_name', 'authors'].includes(header.column.id) && nameFilter) {
+                                        filteredRecords = filteredRecords.filter(
+                                          r => String(r.name ?? '').toLowerCase() === String(nameFilter).toLowerCase()
+                                        );
+                                      }
+                                      const options = [
+                                        ...new Set(
+                                          filteredRecords
+                                            .map(r => r[header.column.id as keyof MagazineRecord])
+                                            .filter(Boolean)
+                                        ),
+                                      ];
+                                      return options.map(value => (
+                                        <option key={value as string} value={value as string}>
+                                          {value as string}
+                                        </option>
+                                      ));
+                                    })()}
+                                  </select>
+                                )
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={(header.column.getFilterValue() as string) ?? ''}
+                                  onChange={e => header.column.setFilterValue(e.target.value)}
+                                  placeholder={`Filter...`}
+                                  className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full max-w-xs"
+                                />
+                              )}
+                            </div>
+                          )}
+                        </th>
                       ))}
                     </tr>
+                  ))}
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {table.getRowModel().rows.length ? (
+                  table.getRowModel().rows.map(row => (
+                    <tr key={row.id} className="hover:bg-gray-50 border-b-black">
+                    {row.getVisibleCells().map(cell => {
+                      // Check if this is the summary or conclusion column
+                      const colId = cell.column.id;
+                      if (colId === 'summary') {
+                      return (
+                        <td
+                        key={cell.id}
+                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setEditingRecord(row.original);
+                          setSummaryOpen(true);
+                          setName(row.original.name || '');
+                          setSummary(row.original.summary || '');
+                          setConclusion(row.original.conclusion || '');
+                          setVolume(row.original.volume || '');
+                          setNumber(row.original.number || '');
+                          setTimestamp(row.original.timestamp || '');
+                          setTitleName(row.original.title_name || '');
+                          setPageNumbers(row.original.page_numbers || '');
+                          setAuthors(row.original.authors || '');
+                          setLanguage(row.original.language || '');
+                          setFile(null);
+                        }}
+                        >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                      }
+                      if (colId === 'conclusion') {
+                      return (
+                        <td
+                        key={cell.id}
+                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setEditingRecord(row.original);
+                          setConclusionOpen(true);
+                          setName(row.original.name || '');
+                          setSummary(row.original.summary || '');
+                          setConclusion(row.original.conclusion || '');
+                          setVolume(row.original.volume || '');
+                          setNumber(row.original.number || '');
+                          setTimestamp(row.original.timestamp || '');
+                          setTitleName(row.original.title_name || '');
+                          setPageNumbers(row.original.page_numbers || '');
+                          setAuthors(row.original.authors || '');
+                          setLanguage(row.original.language || '');
+                          setFile(null);
+                        }}
+                        >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                      }
+                      // Default cell
+                      return (
+                      <td
+                        key={cell.id}
+                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
+                        onClick={(e: any) => {
+                        if (e.target === e.currentTarget) {
+                          window.open(`/history/${row.original.id}`, '_blank');
+                        }
+                        }}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                      );
+                    })}
+                    </tr>
                   ))
-                ) : (
+                  ) : (
                   <tr>
                     <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
-                      No records found
+                    No records found
                     </td>
                   </tr>
-                )}
-              </tbody>
-            </table>}
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between mt-4">
           <div className="flex items-center gap-2">
-            <button className="border rounded p-1" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
-              {'<<'}
+            <button className="border rounded p-1 cursor-pointer" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
+              {'<< First page'}
             </button>
-            <button className="border rounded p-1" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
-              {'<'}
+            <button className="border rounded p-1 cursor-pointer" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+              {'< Previous page'}
             </button>
-            <button className="border rounded p-1" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
-              {'>'}
+            <button className="border rounded p-1 cursor-pointer" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+              {'> Next page'}
             </button>
-            <button className="border rounded p-1" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
-              {'>>'}
+            <button className="border rounded p-1 cursor-pointer" onClick={() => table.setPageIndex(table.getPageCount() - 1)} disabled={!table.getCanNextPage()}>
+              {'>> Last page'}
             </button>
           </div>
           <div className="flex items-center gap-4">
