@@ -217,7 +217,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             };
         }) || [];
 
-        return res.status(200).json(recordsWithEditHistory.reverse() || []);
+        // Sort records by id:number in descending order
+        const sortedRecords = (recordsWithEditHistory || []).sort((a:any, b:any) => Number(b.id) - Number(a.id));
+        return res.status(200).json(sortedRecords);
     } catch (error) {
         console.error('Server error:', error);
         return res.status(500).json({ error: 'Server error', details: (error instanceof Error ? error.message : String(error)) });

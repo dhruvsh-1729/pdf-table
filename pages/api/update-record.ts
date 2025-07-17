@@ -40,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Fetch existing record to get current pdf_url and summary
         const { data: existingRecord, error: fetchError } = await supabase
             .from('records')
-            .select('summary, pdf_url')
+            .select('summary, pdf_url, conclusion')
             .eq('id', id)
             .single();
 
@@ -99,15 +99,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // If the new summary is different, insert into summaries table
         if (existingRecord.summary !== fields.summary) {
             const { error: insertError } = await supabase
-                .from('summaries')
-                .insert({
-                    summary: existingRecord.summary,
-                    record_id: Array.isArray(id) ? id[0] : id,
-                    email: fields.email,
-                    name: fields.creator_name,
-                });
+            .from('summaries')
+            .insert({
+                summary: existingRecord.summary,
+                record_id: Array.isArray(id) ? id[0] : id,
+                email: fields.email,
+                name: fields.creator_name,
+            });
 
             if (insertError) return res.status(500).json({ error: insertError.message });
+        }
+
+        // If the new conclusion is different, insert into conclusions table
+        if (existingRecord.conclusion !== fields.conclusion) {
+            const { error: insertConclusionError } = await supabase
+            .from('conclusions')
+            .insert({
+                conclusion: existingRecord.conclusion,
+                record_id: Array.isArray(id) ? id[0] : id,
+                email: fields.email,
+                name: fields.creator_name,
+            });
+
+            if (insertConclusionError) return res.status(500).json({ error: insertConclusionError.message });
         }
 
         const { error } = await supabase

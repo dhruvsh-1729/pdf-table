@@ -15,6 +15,7 @@ import { rankItem } from '@tanstack/match-sorter-utils';
 import { useRouter } from 'next/router';
 import BugModal from '@/components/BugModal';
 import CreatableSelect from 'react-select/creatable';
+import { PencilCircleIcon } from '@phosphor-icons/react';
 
 export interface EditHistory {
   count: number;
@@ -75,7 +76,6 @@ export default function Home() {
   const [editingRecord, setEditingRecord] = useState<MagazineRecord | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
-  const [expanded, setExpanded] = useState<number>(-1);
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -171,27 +171,18 @@ export default function Home() {
       cell: ({ row }) => {
         const summary = row.original.summary || '';
         const isLong = summary.length > 50;
-        const displayText = expanded || !isLong ? summary : summary.slice(0, 50) + '...';
 
         return (
-          <div>
-            <span>
-              {expanded === row.original.id || !isLong
-                ? summary
-                : summary.slice(0, 50) + '...'}
-            </span>
-            {/* {isLong && (
-              <button
-                type="button"
-                className="ml-2 text-indigo-600 hover:underline text-xs"
-                onClick={e => {
-                  e.stopPropagation();
-                  setExpanded(expanded === row.original.id ? -1 : row.original.id);
-                }}
-              >
-                {expanded === row.original.id ? 'Show Less' : 'Show More'}
-              </button>
-            )} */}
+          <div className='flex flex-col gap-2'>
+            {summary ? (
+              <span className="flex flex-col gap-1">
+                {isLong ? summary.slice(0, 50) + '...' : summary}
+              </span>
+            ) : null}
+            <span className='flex items-center justify-center gap-2 p-2 bg-zinc-100 rounded-lg'>
+                  <PencilCircleIcon />
+                  Edit here
+                </span>
           </div>
         );
       },
@@ -205,24 +196,16 @@ export default function Home() {
         const conclusion = row.original.conclusion || '';
         const isLong = conclusion.length > 50;
         return (
-          <div>
-        <span>
-          {expanded === row.original.id
-            ? conclusion
-            : conclusion.slice(0, 50) + '...'}
-        </span>
-        {/* {isLong && (
-          <button
-            type="button"
-            className="ml-2 text-indigo-600 hover:underline text-xs"
-            onClick={e => {
-          e.stopPropagation();
-          setExpanded(expanded === `conclusion-${row.original.id}` ? -1 : `conclusion-${row.original.id}`);
-            }}
-          >
-            {expanded === `conclusion-${row.original.id}` ? 'Show Less' : 'Show More'}
-          </button>
-        )} */}
+          <div className='flex flex-col gap-1'>
+        {conclusion ? (
+              <span className="flex flex-col gap-1">
+                {isLong ? conclusion.slice(0, 50) + '...' : conclusion}
+              </span>
+            ) : null}
+            <span className='flex items-center justify-center gap-2 p-2 bg-zinc-300 rounded-lg'>
+                  <PencilCircleIcon />
+                  Edit here
+                </span>
           </div>
         );
       },
@@ -239,9 +222,22 @@ export default function Home() {
       header: 'PDF',
       id: 'pdf_url',
       cell: ({ row }) => (
-        <a href={row.original.pdf_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
-          View
-        </a>
+      <div>
+      <button
+        className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-xs font-medium cursor-pointer"
+        onClick={e => {
+          e.stopPropagation();
+          window.open(row.original.pdf_url, '_blank', 'noopener,noreferrer');
+        }}
+      >
+        View PDF
+      </button>
+      <div className="flex flex-col items-start gap-0.5 mt-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
+        <span title={row.original.creator_name || ''}>
+          Creator: 👤 {row.original.creator_name || 'N/A'}
+        </span>
+      </div>
+      </div>
       ),
     },
     {
@@ -255,11 +251,11 @@ export default function Home() {
             <div>
               <span className="font-semibold">Edits:</span> {editHistory.count}
               {editHistory.latestEditor && (
-                <>
-                  {' · '}
-                  <span className="font-semibold">Latest:</span> {editHistory.latestEditor.name}
-                  <span className="text-gray-400"> ({editHistory.latestEditor.timeFromNow})</span>
-                </>
+              <>
+                {' · '}
+                <span className="font-semibold">Latest:</span> {editHistory.latestEditor.name}
+                <span className="text-gray-400"> ({editHistory.latestEditor.timeFromNow})</span>
+              </>
               )}
             </div>
             <div>
@@ -269,6 +265,24 @@ export default function Home() {
             <div>
               <span className="font-semibold">By:</span>{' '}
               {Object.entries(editHistory.editorCounts).map(([editor, count]) => `${editor}: ${count}`).join(', ')}
+            </div>
+            <div className="flex flex-col gap-2 mt-2">
+              <a
+              href={`/summary/${row.original.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium hover:bg-blue-200"
+              >
+              Summary history
+              </a>
+              <a
+              href={`/conclusion/${row.original.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-medium hover:bg-purple-200"
+              >
+              Conclusion history
+              </a>
             </div>
           </div>
         );
@@ -280,7 +294,7 @@ export default function Home() {
       cell: ({ row }) => (
         <div className='flex flex-col justify-center items-center gap-2'>
         <button
-          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs"
+          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs cursor-pointer"
           onClick={() => {
             const record = row.original;
             setEditingRecord(record);
@@ -302,7 +316,7 @@ export default function Home() {
           Update
         </button>
       {(access && access === "records") && <button
-        className="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-xs"
+        className="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-xs cursor-pointer"
         onClick={() => {
           const record = row.original;
           setName(record.name || '');
@@ -990,11 +1004,6 @@ export default function Home() {
                       <td
                         key={cell.id}
                         className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
-                        onClick={(e: any) => {
-                        if (e.target === e.currentTarget) {
-                          window.open(`/history/${row.original.id}`, '_blank');
-                        }
-                        }}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

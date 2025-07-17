@@ -1,10 +1,11 @@
 import { useRouter } from "next/router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const Login = () => {
     const [selectedOption, setSelectedOption] = useState<"records" | "verifier" | null>(null);
     const [userDetails, setUserDetails] = useState({ name: "", email: "" });
     const [isFormVisible, setIsFormVisible] = useState(false);
+    const [allUsers, setAllUsers] = useState<{ name: string; email: string }[]>([]);
     const router = useRouter();
 
     const handleOptionClick = (option: "records" | "verifier") => {
@@ -20,7 +21,24 @@ const Login = () => {
         }));
     };
 
+    const [error, setError] = useState<string | null>(null);
+
     const handleSubmit = () => {
+        const matchedUser = allUsers.find(
+            (user) =>
+                user.name.trim().toLowerCase() === userDetails.name.trim().toLowerCase() &&
+                user.email.trim().toLowerCase() === userDetails.email.trim().toLowerCase()
+        );
+
+        if (!matchedUser) {
+            setError(
+                "Either the name or email is incorrect, please enter the proper credentials. If you feel something is wrong then please contact admin at dhruvsh2003@gmail.com."
+            );
+            return;
+        }
+
+        setError(null);
+
         const user = {
             ...userDetails,
             access: selectedOption,
@@ -28,16 +46,39 @@ const Login = () => {
 
         localStorage.setItem("user", JSON.stringify(user));
 
-        if (selectedOption === "verifier") {
-            router.push("/");
-        } else {
-            router.push("/");
-        }
+        router.push("/");
     };
+
+    useEffect(() => {
+        const fetchUsers = async () => {
+            try {
+                const response = await fetch("/api/all-email");
+                if (!response.ok) throw new Error("Failed to fetch users");
+                const data = await response.json();
+                setAllUsers(data);
+            } catch (error) {
+                console.error("Error fetching users:", error);
+            }
+        }
+        fetchUsers();
+    },[])
 
     return (
         <div className="text-center mt-12">
             <h1 className="text-3xl font-bold">Welcome</h1>
+            {(error || (!selectedOption && !isFormVisible)) && (
+                <div className="mt-4 text-red-600 max-w-xl mx-auto">
+                    <p>
+                        {error && (
+                            <>
+                                {error}
+                                <br />
+                            </>
+                        )}
+                        If you are new to the application, please contact admin at <a href="mailto:dhruvsh2003@gmail.com" className="underline text-blue-700">dhruvsh2003@gmail.com</a> for access, providing the name and email you will use.
+                    </p>
+                </div>
+            )}
             {!selectedOption && !isFormVisible && (
                 <>
                     <p className="mt-4 text-lg">What are you here for?</p>
