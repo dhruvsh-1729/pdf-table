@@ -779,6 +779,14 @@ export default function Home() {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold text-gray-800">Magazine Summary Records</h2>
           <div className="flex gap-4">
+            {user?.email && (user.email === 'dharmasasanwork99@gmail.com' || user.email === 'dhruvshdarshansh@gmail.com') && (
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="bg-blue-600 text-white py-2 px-4 rounded-md shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+              >
+                Go to Dashboard
+              </button>
+            )}
             <button
               onClick={() => {
                 localStorage.setItem('user', JSON.stringify(null));
