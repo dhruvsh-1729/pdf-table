@@ -1530,7 +1530,7 @@ export default function Home() {
                       table.getRowModel().rows.map((row, index) => (
                         <tr
                           key={row.id}
-                          className={`hover:bg-indigo-50/50 transition-all duration-200 ${
+                          className={`hover:bg-indigo-50/50 transition-all duration-200 border-black border-t-2 border-b-2 ${
                             index % 2 === 0 ? "bg-slate-50/30" : "bg-white/50"
                           }`}
                         >
