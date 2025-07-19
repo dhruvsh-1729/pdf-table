@@ -15,7 +15,7 @@ import { rankItem } from '@tanstack/match-sorter-utils';
 import { useRouter } from 'next/router';
 import BugModal from '@/components/BugModal';
 import CreatableSelect from 'react-select/creatable';
-import { PencilCircleIcon } from '@phosphor-icons/react';
+import { PencilCircleIcon, TagIcon } from '@phosphor-icons/react';
 
 export interface EditHistory {
   count: number;
@@ -27,6 +27,11 @@ export interface EditHistory {
     editedAt: string;
     timeFromNow: string;
   } | null;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
 }
 
 export interface MagazineRecord {
@@ -45,6 +50,7 @@ export interface MagazineRecord {
   creator_name: string | null;
   conclusion: string | null;
   editHistory?: EditHistory;
+  tags?: Tag[];
 }
 
 const fuzzyFilter: FilterFn<MagazineRecord> = (row, columnId, value, addMeta) => {
@@ -71,11 +77,14 @@ export default function Home() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [tagsModalOpen, setTagsModalOpen] = useState<boolean>(false);
   const [summaryOpen, setSummaryOpen] = useState<boolean>(false);
   const [conclusionOpen, setConclusionOpen] = useState<boolean>(false);
   const [editingRecord, setEditingRecord] = useState<MagazineRecord | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [selectedTags, setSelectedTags] = useState<{ label: string; value: number }[]>([]);
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -110,6 +119,7 @@ export default function Home() {
         if (parsedUser && parsedUser.name && parsedUser.email && parsedUser.access) {
           fetchEmails();
           fetchRecords();
+          fetchAllTags();
         } else {
           router.push('/login');
         }
@@ -128,6 +138,17 @@ export default function Home() {
     }
   }, [selectedEmail]);
 
+  const fetchAllTags = async (): Promise<void> => {
+    try {
+      const response = await fetch('/api/tags');
+      if (!response.ok) throw new Error('Failed to fetch tags');
+      const data: Tag[] = await response.json();
+      setAllTags(data);
+    } catch (err) {
+      console.error('Error fetching tags:', err);
+    }
+  };
+
   const fetchRecords = async (): Promise<void> => {
     try {
       setTableLoading(true);
@@ -136,7 +157,6 @@ export default function Home() {
       if (!response.ok) throw new Error('Failed to fetch records');
       const data: MagazineRecord[] = await response.json();
       setRecords(data);
-      console.log(data.slice(0,10).map(r => { return { summary: r.summary}}))
     } catch (err) {
       console.error('Error:', err);
       setError('Failed to load records');
@@ -156,12 +176,81 @@ export default function Home() {
     }
   };
 
+  const handleTagSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    e.preventDefault();
+    if (!editingRecord) return;
+
+    try {
+      setLoading(true);
+      // Create new tags if they don't exist
+      const newTags = selectedTags.filter(tag => !allTags.some(t => t.name === tag.label));
+      const createdTags = await Promise.all(
+        newTags.map(async tag => {
+          const response = await fetch('/api/tags', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: tag.label }),
+          });
+          if (!response.ok) throw new Error('Failed to create tag');
+          const data = await response.json();
+          return data;
+        })
+      );
+
+      // Update allTags with newly created tags
+      setAllTags([...allTags, ...createdTags]);
+
+      // Get all tag IDs (existing and newly created)
+      const tagIds = selectedTags.map(tag => {
+        const existingTag = allTags.find(t => t.name === tag.label);
+        const newTag = createdTags.find(t => t.name === tag.label);
+        return (existingTag || newTag).id;
+      });
+
+      // Fetch current tags for the record
+      const currentTags = editingRecord.tags || [];
+      const currentTagIds = currentTags.map(t => t.id);
+
+      // Determine tags to add and remove
+      const tagsToAdd = tagIds.filter(id => !currentTagIds.includes(id));
+      const tagsToRemove = currentTagIds.filter(id => !tagIds.includes(id));
+
+      // Add new tags
+      if (tagsToAdd.length > 0) {
+        await fetch('/api/record-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recordId: editingRecord.id, tagIds: tagsToAdd }),
+        });
+      }
+
+      // Remove tags
+      if (tagsToRemove.length > 0) {
+        await fetch('/api/record-tags', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recordId: editingRecord.id, tagIds: tagsToRemove }),
+        });
+      }
+
+      // Refresh records
+      await fetchRecords();
+      setTagsModalOpen(false);
+      setSelectedTags([]);
+      setEditingRecord(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const columns = useMemo<ColumnDef<MagazineRecord>[]>(() => [
-    { accessorKey:'id', header: 'ID', id: 'id',
+    { accessorKey: 'id', header: 'ID', id: 'id',
       cell: ({ row }) => (
         <span className="text-gray-600">{row.original.id}</span>
       ),
-     },
+    },
     { accessorKey: 'name', header: 'Magazine Name', id: 'name' },
     {
       accessorKey: 'summary',
@@ -171,7 +260,6 @@ export default function Home() {
       cell: ({ row }) => {
         const summary = row.original.summary || '';
         const isLong = summary.length > 50;
-
         return (
           <div className='flex flex-col gap-2'>
             {summary ? (
@@ -180,14 +268,14 @@ export default function Home() {
               </span>
             ) : null}
             <span className='flex items-center justify-center gap-2 p-2 bg-zinc-100 rounded-lg'>
-                  <PencilCircleIcon />
-                  Edit here
-                </span>
+              <PencilCircleIcon />
+              Edit here
+            </span>
           </div>
         );
       },
-        },
-        {
+    },
+    {
       accessorKey: 'conclusion',
       header: 'Conclusion',
       id: 'conclusion',
@@ -197,47 +285,74 @@ export default function Home() {
         const isLong = conclusion.length > 50;
         return (
           <div className='flex flex-col gap-1'>
-        {conclusion ? (
+            {conclusion ? (
               <span className="flex flex-col gap-1">
                 {isLong ? conclusion.slice(0, 50) + '...' : conclusion}
               </span>
             ) : null}
             <span className='flex items-center justify-center gap-2 p-2 bg-zinc-300 rounded-lg'>
-                  <PencilCircleIcon />
-                  Edit here
-                </span>
+              <PencilCircleIcon />
+              Edit here
+            </span>
           </div>
         );
       },
-        },
-        { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
-        { accessorKey: 'volume', header: 'Volume', id: 'volume' },
-        { accessorKey: 'number', header: 'Number', id: 'number' },
-        { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
-        { accessorKey: 'page_numbers', header: 'Page Numbers', id: 'page_numbers' },
-        { accessorKey: 'authors', header: 'Authors', id: 'authors' },
-        { accessorKey: 'language', header: 'Language', id: 'language' },
-        {
+    },
+    {
+      accessorKey: 'tags',
+      header: 'Tags',
+      id: 'tags',
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-2">
+          {row.original.tags?.map(tag => (
+            <span
+              key={tag.id}
+              className="bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded"
+            >
+              {tag.name}
+            </span>
+          ))}
+          <button
+            className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
+            onClick={() => {
+              setEditingRecord(row.original);
+              setSelectedTags(row.original.tags?.map(tag => ({ label: tag.name, value: tag.id })) || []);
+              setTagsModalOpen(true);
+            }}
+          >
+            <TagIcon size={16} />
+          </button>
+        </div>
+      ),
+    },
+    { accessorKey: 'timestamp', header: 'Timestamp', id: 'timestamp' },
+    { accessorKey: 'volume', header: 'Volume', id: 'volume' },
+    { accessorKey: 'number', header: 'Number', id: 'number' },
+    { accessorKey: 'title_name', header: 'Title Name', id: 'title_name' },
+    { accessorKey: 'page_numbers', header: 'Page Numbers', id: 'page_numbers' },
+    { accessorKey: 'authors', header: 'Authors', id: 'authors' },
+    { accessorKey: 'language', header: 'Language', id: 'language' },
+    {
       accessorKey: 'pdf_url',
       header: 'PDF',
       id: 'pdf_url',
       cell: ({ row }) => (
-      <div>
-      <button
-        className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-xs font-medium cursor-pointer"
-        onClick={e => {
-          e.stopPropagation();
-          window.open(row.original.pdf_url, '_blank', 'noopener,noreferrer');
-        }}
-      >
-        View PDF
-      </button>
-      <div className="flex flex-col items-start gap-0.5 mt-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
-        <span title={row.original.creator_name || ''}>
-          Creator: 👤 {row.original.creator_name || 'N/A'}
-        </span>
-      </div>
-      </div>
+        <div>
+          <button
+            className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 text-xs font-medium cursor-pointer"
+            onClick={e => {
+              e.stopPropagation();
+              window.open(row.original.pdf_url, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            View PDF
+          </button>
+          <div className="flex flex-col items-start gap-0.5 mt-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
+            <span title={row.original.creator_name || ''}>
+              Creator: 👤 {row.original.creator_name || 'N/A'}
+            </span>
+          </div>
+        </div>
       ),
     },
     {
@@ -251,11 +366,11 @@ export default function Home() {
             <div>
               <span className="font-semibold">Edits:</span> {editHistory.count}
               {editHistory.latestEditor && (
-              <>
-                {' · '}
-                <span className="font-semibold">Latest:</span> {editHistory.latestEditor.name}
-                <span className="text-gray-400"> ({editHistory.latestEditor.timeFromNow})</span>
-              </>
+                <>
+                  {' · '}
+                  <span className="font-semibold">Latest:</span> {editHistory.latestEditor.name}
+                  <span className="text-gray-400"> ({editHistory.latestEditor.timeFromNow})</span>
+                </>
               )}
             </div>
             <div>
@@ -268,20 +383,20 @@ export default function Home() {
             </div>
             <div className="flex flex-col gap-2 mt-2">
               <a
-              href={`/summary/${row.original.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium hover:bg-blue-200"
+                href={`/summary/${row.original.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium hover:bg-blue-200"
               >
-              Summary history
+                Summary history
               </a>
               <a
-              href={`/conclusion/${row.original.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-medium hover:bg-purple-200"
+                href={`/conclusion/${row.original.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bg-purple-100 text-purple-700 px-2 py-1 rounded text-xs font-medium hover:bg-purple-200"
               >
-              Conclusion history
+                Conclusion history
               </a>
             </div>
           </div>
@@ -293,51 +408,53 @@ export default function Home() {
       header: 'Actions',
       cell: ({ row }) => (
         <div className='flex flex-col justify-center items-center gap-2'>
-        <button
-          className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs cursor-pointer"
-          onClick={() => {
-            const record = row.original;
-            setEditingRecord(record);
-            setModalOpen(true);
-            setError(null);
-            setName(record.name || '');
-            setSummary(record.summary || '');
-            setConclusion(record.conclusion || '');
-            setVolume(record.volume || '');
-            setNumber(record.number || '');
-            setTimestamp(record.timestamp || '');
-            setTitleName(record.title_name || '');
-            setPageNumbers(record.page_numbers || '');
-            setAuthors(record.authors || '');
-            setLanguage(record.language || '');
-            setFile(null);
-          }}
-        >
-          Update
-        </button>
-      {(access && access === "records") && <button
-        className="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-xs cursor-pointer"
-        onClick={() => {
-          const record = row.original;
-          setName(record.name || '');
-          setVolume(record.volume || '');
-          setNumber(record.number || '');
-          setTimestamp(record.timestamp || '');
-          setAuthors(record.authors || '');
-          setLanguage(record.language || '');
-          setModalOpen(true);
-          setEditingRecord(null);
-          setError(null);
-          setSummary('');
-          setConclusion('');
-          setFile(null);
-          setTitleName('');
-          setPageNumbers('');
-        }}
-      >
-        Duplicate
-      </button>}
-      </div>
+          <button
+            className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 text-xs cursor-pointer"
+            onClick={() => {
+              const record = row.original;
+              setEditingRecord(record);
+              setModalOpen(true);
+              setError(null);
+              setName(record.name || '');
+              setSummary(record.summary || '');
+              setConclusion(record.conclusion || '');
+              setVolume(record.volume || '');
+              setNumber(record.number || '');
+              setTimestamp(record.timestamp || '');
+              setTitleName(record.title_name || '');
+              setPageNumbers(record.page_numbers || '');
+              setAuthors(record.authors || '');
+              setLanguage(record.language || '');
+              setFile(null);
+            }}
+          >
+            Update
+          </button>
+          {(access && access === "records") && (
+            <button
+              className="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600 text-xs cursor-pointer"
+              onClick={() => {
+                const record = row.original;
+                setName(record.name || '');
+                setVolume(record.volume || '');
+                setNumber(record.number || '');
+                setTimestamp(record.timestamp || '');
+                setAuthors(record.authors || '');
+                setLanguage(record.language || '');
+                setModalOpen(true);
+                setEditingRecord(null);
+                setError(null);
+                setSummary('');
+                setConclusion('');
+                setFile(null);
+                setTitleName('');
+                setPageNumbers('');
+              }}
+            >
+              Duplicate
+            </button>
+          )}
+        </div>
       ),
     },
   ], []);
@@ -349,6 +466,9 @@ export default function Home() {
         const column = columns.find(column => column.header === header && 'accessorKey' in column);
         if (column && column.id) {
           const key = column.id as keyof MagazineRecord;
+          if (key === 'tags') {
+            return record.tags?.map(tag => tag.name).join(', ') ?? '';
+          }
           return record[key] ?? '';
         }
         return '';
@@ -480,35 +600,25 @@ export default function Home() {
             </button>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-2">
               <h1 className="text-2xl font-semibold text-gray-800">
-              {editingRecord ? 'Update' : 'Upload New'} Record
+                {editingRecord ? 'Update' : 'Upload New'} Record
               </h1>
               {user && (
-              <div className="text-sm text-gray-600 flex flex-col sm:flex-row sm:items-center gap-2 mr-4">
-                <span className="font-semibold">User Name:</span>{" "}
-                {user?.name || ""}
-                <span className="mx-2 hidden sm:inline">|</span>
-                <span className="font-semibold">Email:</span>{" "}
-                {user?.email || ""}
-              </div>
+                <div className="text-sm text-gray-600 flex flex-col sm:flex-row sm:items-center gap-2 mr-4">
+                  <span className="font-semibold">User Name:</span>{" "}
+                  {user?.name || ""}
+                  <span className="mx-2 hidden sm:inline">|</span>
+                  <span className="font-semibold">Email:</span>{" "}
+                  {user?.email || ""}
+                </div>
               )}
             </div>
             {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
             <div className="space-y-4 overflow-y-auto h-[calc(100%-4rem)] pr-4">
-              {/* <p className="text-sm text-gray-500">Fields marked with <span className="text-red-500">*</span> are required.</p> */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">
                     Name <span className="text-red-500">*</span>
                   </label>
-                  {/* <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Enter record name"
-                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
-                    disabled={loading}
-                    required
-                  /> */}
                   <CreatableSelect
                     isClearable
                     value={name ? { label: name, value: name } : null}
@@ -559,38 +669,28 @@ export default function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01" />
                     </svg>
                     <span>
-                      File too large (&gt;4MB). Compress at&nbsp;
+                      File too large (&gt;4MB). Compress at
                       <a href="https://www.ilovepdf.com/compress_pdf" target="_blank" rel="noopener noreferrer" className="underline text-indigo-600">
                         ilovepdf.com
                       </a>
-                      &nbsp;and re-upload once size is less than 4MB.
+                      and re-upload once size is less than 4MB.
                     </span>
                   </div>
                 )}
               </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">
-                    Summary <span className="text-red-500">*</span>
-                  </label>
-                    <textarea
-                    value={
-                      summary
-                      // Replace escaped newlines with real newlines
-                      .replace(/\\r\\n|\\n|\\r/g, '\n')
-                    }
-                    onChange={e => {
-                      // Convert newlines to escaped newlines for storage
-                      const raw = e.target.value;
-                      // Replace all \n with \\n for storage (to match how summary is stored)
-                      // setSummary(raw.replace(/\r\n|\n|\r/g, '\\n'));
-                      setSummary(raw);
-                    }}
-                    placeholder="Enter summary"
-                    className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
-                    disabled={loading}
-                    rows={6}
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Summary <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={summary.replace(/\\r\\n|\\n|\\r/g, '\n')}
+                  onChange={e => setSummary(e.target.value)}
+                  placeholder="Enter summary"
+                  className="mt-1 block w-full rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm disabled:bg-gray-100 px-3 py-2"
+                  disabled={loading}
+                  rows={6}
+                />
+              </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Volume</label>
@@ -703,74 +803,133 @@ export default function Home() {
         </div>
       )}
 
+      {tagsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white shadow-lg rounded-lg p-8 w-full max-w-md relative">
+            <button
+              onClick={() => setTagsModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+              aria-label="Close form"
+              disabled={loading}
+            >
+              ×
+            </button>
+            <h2 className="text-2xl font-semibold text-gray-800 mb-6">Manage Tags</h2>
+            {error && <p className="text-red-500 mb-4 text-sm">{error}</p>}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Tags</label>
+                <CreatableSelect
+                  isMulti
+                  value={selectedTags}
+                  onChange={options => setSelectedTags(options as { label: string; value: number }[])}
+                  onCreateOption={inputValue => {
+                    setSelectedTags([...selectedTags, { label: inputValue, value: Date.now() }]);
+                  }}
+                  options={allTags.map(tag => ({ label: tag.name, value: tag.id }))}
+                  placeholder="Select or create tags"
+                  isDisabled={loading}
+                  classNamePrefix="react-select"
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      minHeight: '38px',
+                      borderRadius: '0.5rem',
+                      borderColor: '#d1d5db',
+                      boxShadow: 'none',
+                      fontSize: '0.875rem',
+                      paddingLeft: '0.25rem',
+                      paddingRight: '0.25rem',
+                    }),
+                    menu: (base) => ({
+                      ...base,
+                      zIndex: 9999,
+                    }),
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleTagSubmit}
+                className={`w-full py-2 px-4 rounded-lg shadow-md text-white text-sm font-medium transition-colors ${
+                  loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'
+                } focus:outline-none focus:ring-2 focus:ring-offset-2`}
+                disabled={loading}
+              >
+                {loading ? 'Saving...' : 'Save Tags'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {(summaryOpen || conclusionOpen) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white shadow-lg rounded-lg p-8 w-[60vw] h-[80vh] relative flex flex-col scroll-none">
-        <button
-          onClick={() => {
-            setSummaryOpen(false);
-            setConclusionOpen(false);
-          }}
-          className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
-          aria-label="Close"
-          disabled={loading}
-        >
-          ×
-        </button>
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">
-          {summaryOpen ? 'Summary' : 'Conclusion'}
-        </h2>
-        <div className="flex-1 overflow-y-auto pr-2 mb-8">
-          <textarea
-            className="w-full h-[calc(60vh)] min-h-[300px] rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-gray-700 px-3 py-2 text-base resize-none"
-            value={
-              summaryOpen
-                ? summary.replace(/\\r\\n|\\n|\\r/g, '\n')
-                : conclusion.replace(/\\r\\n|\\n|\\r/g, '\n')
-            }
-            onChange={e => {
-              const val = e.target.value;
-              if (summaryOpen) {
-                setSummary(val);
-                setEditingRecord(prev => prev ? { ...prev, summary: val } : prev);
-              } else {
-                setConclusion(val);
-                setEditingRecord(prev => prev ? { ...prev, conclusion: val } : prev);
-              }
-            }}
-            disabled={loading}
-            rows={16}
-          />
-        </div>
-        <div className="flex items-center justify-between absolute left-0 right-0 bottom-8 mx-8">
-          <button
-            type="button"
-            onClick={() => {
-              setSummaryOpen(false);
-              setConclusionOpen(false);
-            }}
-            className="py-2 px-3 rounded shadow text-gray-700 bg-gray-200 hover:bg-gray-300 text-base font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 mr-2"
-            disabled={loading}
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={e => {
-              // Prevent submit if summary is empty
-              if (!summary.trim()) return;
-              handleSubmit(e);
-            }}
-            className={`py-2 px-3 rounded shadow text-white text-base font-medium transition-colors
-              ${loading || !summary.trim()
-          ? 'bg-gray-400 cursor-not-allowed'
-          : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-              } focus:outline-none focus:ring-2 focus:ring-offset-2`}
-            disabled={loading || !summary.trim()}
-          >
-            {loading ? (editingRecord ? 'Updating...' : 'Uploading...') : (editingRecord ? 'Update' : 'Upload')}
-          </button>
-        </div>
+            <button
+              onClick={() => {
+                setSummaryOpen(false);
+                setConclusionOpen(false);
+              }}
+              className="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+              aria-label="Close"
+              disabled={loading}
+            >
+              ×
+            </button>
+            <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+              {summaryOpen ? 'Summary' : 'Conclusion'}
+            </h2>
+            <div className="flex-1 overflow-y-auto pr-2 mb-8">
+              <textarea
+                className="w-full h-[calc(60vh)] min-h-[300px] rounded-lg border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-gray-700 px-3 py-2 text-base resize-none"
+                value={
+                  summaryOpen
+                    ? summary.replace(/\\r\\n|\\n|\\r/g, '\n')
+                    : conclusion.replace(/\\r\\n|\\n|\\r/g, '\n')
+                }
+                onChange={e => {
+                  const val = e.target.value;
+                  if (summaryOpen) {
+                    setSummary(val);
+                    setEditingRecord(prev => prev ? { ...prev, summary: val } : prev);
+                  } else {
+                    setConclusion(val);
+                    setEditingRecord(prev => prev ? { ...prev, conclusion: val } : prev);
+                  }
+                }}
+                disabled={loading}
+                rows={16}
+              />
+            </div>
+            <div className="flex items-center justify-between absolute left-0 right-0 bottom-8 mx-8">
+              <button
+                type="button"
+                onClick={() => {
+                  setSummaryOpen(false);
+                  setConclusionOpen(false);
+                }}
+                className="py-2 px-3 rounded shadow text-gray-700 bg-gray-200 hover:bg-gray-300 text-base font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 mr-2"
+                disabled={loading}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={e => {
+                  if (!summary.trim()) return;
+                  handleSubmit(e);
+                }}
+                className={`py-2 px-3 rounded shadow text-white text-base font-medium transition-colors
+                  ${loading || !summary.trim()
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+                  } focus:outline-none focus:ring-2 focus:ring-offset-2`}
+                disabled={loading || !summary.trim()}
+              >
+                {loading ? (editingRecord ? 'Updating...' : 'Uploading...') : (editingRecord ? 'Update' : 'Upload')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -820,13 +979,6 @@ export default function Home() {
             >
               Export CSV
             </button>
-            {/* <input
-              type="text"
-              value={globalFilter}
-              onChange={e => setGlobalFilter(e.target.value)}
-              placeholder="Search all records..."
-              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            /> */}
             {access && access === "records" && (
               <button
                 onClick={() => {
@@ -885,7 +1037,7 @@ export default function Home() {
                           </div>
                           {header.column.getCanFilter() && (
                             <div className="mt-1">
-                              {['name', 'title_name', 'authors'].includes(header.column.id) ? (
+                              {['name', 'title_name', 'authors', 'tags'].includes(header.column.id) ? (
                                 header.column.id === 'name' ? (
                                   <select
                                     value={(header.column.getFilterValue() as string) ?? ''}
@@ -912,7 +1064,7 @@ export default function Home() {
                                     {(() => {
                                       let filteredRecords = records;
                                       const nameFilter = table.getState().columnFilters.find(f => f.id === 'name')?.value;
-                                      if (['title_name', 'authors'].includes(header.column.id) && nameFilter) {
+                                      if (['title_name', 'authors', 'tags'].includes(header.column.id) && nameFilter) {
                                         filteredRecords = filteredRecords.filter(
                                           r => String(r.name ?? '').toLowerCase() === String(nameFilter).toLowerCase()
                                         );
@@ -920,7 +1072,7 @@ export default function Home() {
                                       const options = [
                                         ...new Set(
                                           filteredRecords
-                                            .map(r => r[header.column.id as keyof MagazineRecord])
+                                            .map(r => header.column.id === 'tags' ? r.tags?.map(t => t.name).join(', ') : r[header.column.id as keyof MagazineRecord])
                                             .filter(Boolean)
                                         ),
                                       ];
@@ -950,81 +1102,79 @@ export default function Home() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {table.getRowModel().rows.length ? (
-                  table.getRowModel().rows.map(row => (
-                    <tr key={row.id} className="hover:bg-gray-50 border-b-black">
-                    {row.getVisibleCells().map(cell => {
-                      // Check if this is the summary or conclusion column
-                      const colId = cell.column.id;
-                      if (colId === 'summary') {
-                      return (
-                        <td
-                        key={cell.id}
-                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
-                        onClick={e => {
-                          e.stopPropagation();
-                          setEditingRecord(row.original);
-                          setSummaryOpen(true);
-                          setName(row.original.name || '');
-                          setSummary(row.original.summary || '');
-                          setConclusion(row.original.conclusion || '');
-                          setVolume(row.original.volume || '');
-                          setNumber(row.original.number || '');
-                          setTimestamp(row.original.timestamp || '');
-                          setTitleName(row.original.title_name || '');
-                          setPageNumbers(row.original.page_numbers || '');
-                          setAuthors(row.original.authors || '');
-                          setLanguage(row.original.language || '');
-                          setFile(null);
-                        }}
-                        >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      );
-                      }
-                      if (colId === 'conclusion') {
-                      return (
-                        <td
-                        key={cell.id}
-                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
-                        onClick={e => {
-                          e.stopPropagation();
-                          setEditingRecord(row.original);
-                          setConclusionOpen(true);
-                          setName(row.original.name || '');
-                          setSummary(row.original.summary || '');
-                          setConclusion(row.original.conclusion || '');
-                          setVolume(row.original.volume || '');
-                          setNumber(row.original.number || '');
-                          setTimestamp(row.original.timestamp || '');
-                          setTitleName(row.original.title_name || '');
-                          setPageNumbers(row.original.page_numbers || '');
-                          setAuthors(row.original.authors || '');
-                          setLanguage(row.original.language || '');
-                          setFile(null);
-                        }}
-                        >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      );
-                      }
-                      // Default cell
-                      return (
-                      <td
-                        key={cell.id}
-                        className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                      );
-                    })}
-                    </tr>
-                  ))
+                    table.getRowModel().rows.map(row => (
+                      <tr key={row.id} className="hover:bg-gray-50 border-b-black">
+                        {row.getVisibleCells().map(cell => {
+                          const colId = cell.column.id;
+                          if (colId === 'summary') {
+                            return (
+                              <td
+                                key={cell.id}
+                                className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setEditingRecord(row.original);
+                                  setSummaryOpen(true);
+                                  setName(row.original.name || '');
+                                  setSummary(row.original.summary || '');
+                                  setConclusion(row.original.conclusion || '');
+                                  setVolume(row.original.volume || '');
+                                  setNumber(row.original.number || '');
+                                  setTimestamp(row.original.timestamp || '');
+                                  setTitleName(row.original.title_name || '');
+                                  setPageNumbers(row.original.page_numbers || '');
+                                  setAuthors(row.original.authors || '');
+                                  setLanguage(row.original.language || '');
+                                  setFile(null);
+                                }}
+                              >
+                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                              </td>
+                            );
+                          }
+                          if (colId === 'conclusion') {
+                            return (
+                              <td
+                                key={cell.id}
+                                className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words cursor-pointer"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setEditingRecord(row.original);
+                                  setConclusionOpen(true);
+                                  setName(row.original.name || '');
+                                  setSummary(row.original.summary || '');
+                                  setConclusion(row.original.conclusion || '');
+                                  setVolume(row.original.volume || '');
+                                  setNumber(row.original.number || '');
+                                  setTimestamp(row.original.timestamp || '');
+                                  setTitleName(row.original.title_name || '');
+                                  setPageNumbers(row.original.page_numbers || '');
+                                  setAuthors(row.original.authors || '');
+                                  setLanguage(row.original.language || '');
+                                  setFile(null);
+                                }}
+                              >
+                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                              </td>
+                            );
+                          }
+                          return (
+                            <td
+                              key={cell.id}
+                              className="px-6 py-4 whitespace-normal text-sm text-gray-700 max-w-xs break-words"
+                            >
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))
                   ) : (
-                  <tr>
-                    <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
-                    No records found
-                    </td>
-                  </tr>
+                    <tr>
+                      <td colSpan={columns.length} className="px-6 py-4 text-center text-sm text-gray-500">
+                        No records found
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
