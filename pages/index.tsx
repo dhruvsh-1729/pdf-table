@@ -1392,141 +1392,171 @@ export default function Home() {
                   <thead className="bg-gradient-to-r from-slate-50 to-gray-100 sticky top-0 z-20">
                     {table.getHeaderGroups().map((headerGroup) => (
                       <tr key={headerGroup.id}>
-                        {headerGroup.headers.map((header) => (
-                          <th
-                            key={header.id}
-                            colSpan={header.colSpan}
-                            className="px-2 py-4 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-gradient-to-r from-slate-50 to-gray-100 border-b border-slate-200"
-                            style={{
-                              position: "sticky",
-                              top: 0,
-                              zIndex: 21,
-                            }}
-                          >
-                            <div
-                              {...{
-                                className: header.column.getCanSort()
-                                  ? "cursor-pointer select-none flex items-center font-bold hover:text-indigo-600 transition-colors duration-200"
-                                  : "flex items-center font-bold",
-                                onClick: header.column.getToggleSortingHandler(),
+                        {headerGroup.headers.map((header) => {
+                          // Check if a filter is applied to this column
+                          const isFiltered =
+                            !!header.column.getFilterValue() &&
+                            header.column.getFilterValue() !== "" &&
+                            header.column.getCanFilter();
+
+                          return (
+                            <th
+                              key={header.id}
+                              colSpan={header.colSpan}
+                              className={`px-2 py-4 text-left text-xs font-bold uppercase tracking-wider bg-gradient-to-r from-slate-50 to-gray-100 border-b border-slate-200
+                                ${
+                                  isFiltered
+                                    ? "bg-pink-200 text-red-900 font-extrabold shadow-lg ring-2 ring-red-400 ring-offset-2"
+                                    : "text-slate-700"
+                                }
+                              `}
+                              style={{
+                                position: "sticky",
+                                top: 0,
+                                zIndex: 21,
+                                transition: "background 0.3s, color 0.3s, box-shadow 0.3s",
                               }}
                             >
-                              {flexRender(header.column.columnDef.header, header.getContext())}
-                              <span className="ml-2">
-                                {{ asc: "🔼", desc: "🔽" }[header.column.getIsSorted() as string] ?? null}
-                              </span>
-                            </div>
-                            {header.column.getCanFilter() && (
-                              <div className="mt-2">
-                                {["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
-                                  header.column.id === "name" ? (
-                                    <select
-                                      value={(header.column.getFilterValue() as string) ?? ""}
-                                      onChange={(e) => {
-                                        header.column.setFilterValue(e.target.value);
-                                        setSorting([
-                                          {
-                                            id: "volume",
-                                            desc: false,
-                                          },
-                                          {
-                                            id: "number",
-                                            desc: false,
-                                          },
-                                          {
-                                            id: "page_numbers",
-                                            desc: false,
-                                          },
-                                        ]);
-                                      }}
-                                      className="border-2 border-slate-200 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200"
-                                    >
-                                      <option value="">All</option>
-                                      {Array.from(new Set(records.map((r) => r.name).filter(Boolean))).map((value) => (
-                                        <option key={value as string} value={value as string}>
-                                          {value as string}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  ) : header.column.id === "tags" ? (
-                                    <select
-                                      value={(header.column.getFilterValue() as string) ?? ""}
-                                      onChange={(e) => header.column.setFilterValue(e.target.value)}
-                                      className="border-2 border-slate-200 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200"
-                                    >
-                                      <option value="">All</option>
-                                      {(() => {
-                                        let filteredRecords = records;
-                                        const nameFilter = table
-                                          .getState()
-                                          .columnFilters.find((f) => f.id === "name")?.value;
-                                        if (nameFilter) {
-                                          filteredRecords = filteredRecords.filter(
-                                            (r) =>
-                                              String(r.name ?? "").toLowerCase() === String(nameFilter).toLowerCase(),
-                                          );
-                                        }
-                                        // Collect unique tag names
-                                        const tagNames = Array.from(
-                                          new Set(
-                                            filteredRecords
-                                              .flatMap((r) => r.tags?.map((t) => t.name) || [])
-                                              .filter(Boolean),
-                                          ),
-                                        ).sort();
-                                        return tagNames.map((name) => (
-                                          <option key={name} value={name}>
-                                            {name}
-                                          </option>
-                                        ));
-                                      })()}
-                                    </select>
-                                  ) : (
-                                    <select
-                                      value={(header.column.getFilterValue() as string) ?? ""}
-                                      onChange={(e) => header.column.setFilterValue(e.target.value)}
-                                      className="border-2 border-slate-200 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200"
-                                    >
-                                      <option value="">All</option>
-                                      {(() => {
-                                        let filteredRecords = records;
-                                        const nameFilter = table
-                                          .getState()
-                                          .columnFilters.find((f) => f.id === "name")?.value;
-                                        if (["title_name", "authors"].includes(header.column.id) && nameFilter) {
-                                          filteredRecords = filteredRecords.filter(
-                                            (r) =>
-                                              String(r.name ?? "").toLowerCase() === String(nameFilter).toLowerCase(),
-                                          );
-                                        }
-                                        const options = [
-                                          ...new Set(
-                                            filteredRecords
-                                              .map((r) => r[header.column.id as keyof MagazineRecord])
-                                              .filter(Boolean),
-                                          ),
-                                        ];
-                                        return options.map((value) => (
-                                          <option key={value as string} value={value as string}>
-                                            {value as string}
-                                          </option>
-                                        ));
-                                      })()}
-                                    </select>
-                                  )
-                                ) : (
-                                  <input
-                                    type="text"
-                                    value={(header.column.getFilterValue() as string) ?? ""}
-                                    onChange={(e) => header.column.setFilterValue(e.target.value)}
-                                    placeholder={`Filter...`}
-                                    className="border-2 border-slate-200 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200"
-                                  />
+                              <div
+                                {...{
+                                  className: header.column.getCanSort()
+                                    ? "cursor-pointer select-none flex items-center font-bold hover:text-indigo-600 transition-colors duration-200"
+                                    : "flex items-center font-bold",
+                                  onClick: header.column.getToggleSortingHandler(),
+                                }}
+                              >
+                                {flexRender(header.column.columnDef.header, header.getContext())}
+                                <span className="ml-2">
+                                  {{ asc: "🔼", desc: "🔽" }[header.column.getIsSorted() as string] ?? null}
+                                </span>
+                                {isFiltered && (
+                                  <span className="ml-2 px-2 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold animate-pulse border border-red-700 shadow">
+                                    Filter
+                                  </span>
                                 )}
                               </div>
-                            )}
-                          </th>
-                        ))}
+                              {header.column.getCanFilter() && (
+                                <div className="mt-2">
+                                  {["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
+                                    header.column.id === "name" ? (
+                                      <select
+                                        value={(header.column.getFilterValue() as string) ?? ""}
+                                        onChange={(e) => {
+                                          header.column.setFilterValue(e.target.value);
+                                          setSorting([
+                                            {
+                                              id: "volume",
+                                              desc: false,
+                                            },
+                                            {
+                                              id: "number",
+                                              desc: false,
+                                            },
+                                            {
+                                              id: "page_numbers",
+                                              desc: false,
+                                            },
+                                          ]);
+                                        }}
+                                        className={`border-2 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200 ${
+                                          isFiltered ? "border-red-400 ring-2 ring-red-300" : "border-slate-200"
+                                        }`}
+                                      >
+                                        <option value="">All</option>
+                                        {Array.from(new Set(records.map((r) => r.name).filter(Boolean))).map(
+                                          (value) => (
+                                            <option key={value as string} value={value as string}>
+                                              {value as string}
+                                            </option>
+                                          ),
+                                        )}
+                                      </select>
+                                    ) : header.column.id === "tags" ? (
+                                      <select
+                                        value={(header.column.getFilterValue() as string) ?? ""}
+                                        onChange={(e) => header.column.setFilterValue(e.target.value)}
+                                        className={`border-2 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200 ${
+                                          isFiltered ? "border-red-400 ring-2 ring-red-300" : "border-slate-200"
+                                        }`}
+                                      >
+                                        <option value="">All</option>
+                                        {(() => {
+                                          let filteredRecords = records;
+                                          const nameFilter = table
+                                            .getState()
+                                            .columnFilters.find((f) => f.id === "name")?.value;
+                                          if (nameFilter) {
+                                            filteredRecords = filteredRecords.filter(
+                                              (r) =>
+                                                String(r.name ?? "").toLowerCase() === String(nameFilter).toLowerCase(),
+                                            );
+                                          }
+                                          // Collect unique tag names
+                                          const tagNames = Array.from(
+                                            new Set(
+                                              filteredRecords
+                                                .flatMap((r) => r.tags?.map((t) => t.name) || [])
+                                                .filter(Boolean),
+                                            ),
+                                          ).sort();
+                                          return tagNames.map((name) => (
+                                            <option key={name} value={name}>
+                                              {name}
+                                            </option>
+                                          ));
+                                        })()}
+                                      </select>
+                                    ) : (
+                                      <select
+                                        value={(header.column.getFilterValue() as string) ?? ""}
+                                        onChange={(e) => header.column.setFilterValue(e.target.value)}
+                                        className={`border-2 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200 ${
+                                          isFiltered ? "border-red-400 ring-2 ring-red-300" : "border-slate-200"
+                                        }`}
+                                      >
+                                        <option value="">All</option>
+                                        {(() => {
+                                          let filteredRecords = records;
+                                          const nameFilter = table
+                                            .getState()
+                                            .columnFilters.find((f) => f.id === "name")?.value;
+                                          if (["title_name", "authors"].includes(header.column.id) && nameFilter) {
+                                            filteredRecords = filteredRecords.filter(
+                                              (r) =>
+                                                String(r.name ?? "").toLowerCase() === String(nameFilter).toLowerCase(),
+                                            );
+                                          }
+                                          const options = [
+                                            ...new Set(
+                                              filteredRecords
+                                                .map((r) => r[header.column.id as keyof MagazineRecord])
+                                                .filter(Boolean),
+                                            ),
+                                          ];
+                                          return options.map((value) => (
+                                            <option key={value as string} value={value as string}>
+                                              {value as string}
+                                            </option>
+                                          ));
+                                        })()}
+                                      </select>
+                                    )
+                                  ) : (
+                                    <input
+                                      type="text"
+                                      value={(header.column.getFilterValue() as string) ?? ""}
+                                      onChange={(e) => header.column.setFilterValue(e.target.value)}
+                                      placeholder={`Filter...`}
+                                      className={`border-2 rounded-lg px-2 py-1 text-xs w-full bg-white/80 focus:border-indigo-500 focus:ring-0 transition-colors duration-200 ${
+                                        isFiltered ? "border-red-400 ring-2 ring-red-300" : "border-slate-200"
+                                      }`}
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
                       </tr>
                     ))}
                   </thead>
@@ -1685,6 +1715,9 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col sm:flex-row items-center gap-4">
+              <span className="ml-4 flex items-center gap-1 text-base text-zinc-900 font-bold">
+                Showing {table.getFilteredRowModel().rows.length} records
+              </span>
               <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                 <span>Page</span>
                 <span className="inline-flex items-center px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-800 font-bold">
