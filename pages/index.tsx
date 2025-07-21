@@ -334,7 +334,7 @@ export default function Home() {
         },
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-2 items-center">
-            {row.original.tags?.map((tag) => (
+            {row.original.tags?.slice(0, 2).map((tag) => (
               <span
                 key={tag.id}
                 className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-100 to-pink-100 text-purple-800 border border-purple-200"
@@ -342,6 +342,11 @@ export default function Home() {
                 {tag.name}
               </span>
             ))}
+            {row.original.tags && row.original.tags.length > 2 && (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800 border border-gray-300 relative group">
+                +{row.original.tags.length - 2} more
+              </span>
+            )}
             <button
               className="group flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 hover:border-indigo-300 hover:shadow-md transition-all duration-200"
               onClick={() => {
@@ -1250,9 +1255,9 @@ export default function Home() {
             <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-6">
               <div>
                 <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-800 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-                  📚 Magazine Records Dashboard
+                  📚 Magazine Summary Portal
                 </h1>
-                <p className="text-slate-600 text-lg">Manage and organize your magazine collection with ease</p>
+                <p className="text-slate-600 text-lg">Manage and organize your magazine summary collection with ease</p>
               </div>
 
               {/* Action Buttons */}

@@ -5,7 +5,6 @@ const Login = () => {
   const [selectedOption, setSelectedOption] = useState<"records" | "verifier" | null>(null);
   const [userDetails, setUserDetails] = useState({ name: "", email: "" });
   const [isFormVisible, setIsFormVisible] = useState(false);
-  const [allUsers, setAllUsers] = useState<{ name: string; email: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
@@ -23,48 +22,42 @@ const Login = () => {
     }));
   };
 
-  const handleSubmit = () => {
-    const matchedUser = allUsers.find(
-      (user) =>
-        user.name.trim().toLowerCase() === userDetails.name.trim().toLowerCase() &&
-        user.email.trim().toLowerCase() === userDetails.email.trim().toLowerCase(),
-    );
-
-    if (!matchedUser) {
-      setError(
-        "Invalid credentials. Please check your name and email. If you need access, contact admin at dhruvsh2003@gmail.com.",
-      );
-      return;
-    }
-
+  const handleSubmit = async () => {
     setError(null);
 
-    const user = {
-      ...userDetails,
-      access: selectedOption,
-    };
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: userDetails.name,
+          email: userDetails.email,
+          access: selectedOption,
+        }),
+      });
 
-    localStorage.setItem("user", JSON.stringify(user));
-    router.push("/");
-  };
+      const data = await response.json();
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        setIsLoading(true);
-        const response = await fetch("/api/all-email");
-        if (!response.ok) throw new Error("Failed to fetch users");
-        const data = await response.json();
-        setAllUsers(data);
-      } catch (error) {
-        console.error("Error fetching users:", error);
-        setError("Failed to load user data. Please try again later.");
-      } finally {
-        setIsLoading(false);
+      if (!data.success) {
+        setError(
+          "Invalid credentials. Please check your name and email. If you need access, contact admin at dhruvsh2003@gmail.com.",
+        );
+        return;
       }
-    };
-    fetchUsers();
-  }, []);
+
+      const user = {
+        ...userDetails,
+        access: selectedOption,
+      };
+
+      localStorage.setItem("user", JSON.stringify(user));
+      router.push("/");
+    } catch (err) {
+      setError("An error occurred. Please try again later.");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center p-4">
