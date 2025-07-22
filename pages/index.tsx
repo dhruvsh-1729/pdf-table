@@ -16,6 +16,7 @@ import { useRouter } from "next/router";
 import BugModal from "@/components/BugModal";
 import CreatableSelect from "react-select/creatable";
 import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 export interface EditHistory {
   count: number;
@@ -395,7 +396,17 @@ export default function Home() {
         accessorKey: "title_name",
         header: "Title Name",
         id: "title_name",
-        cell: ({ row }) => <span className="text-slate-700 text-sm italic">{row.original.title_name || "—"}</span>,
+        cell: ({ row }) => {
+          const title = row.original.title_name || "—";
+          const formattedTitle =
+            title === "—"
+              ? title
+              : title
+                  .split(" ")
+                  .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                  .join(" ");
+          return <span className="text-slate-700 text-sm italic">{formattedTitle}</span>;
+        },
       },
       {
         accessorKey: "page_numbers",
@@ -681,9 +692,12 @@ export default function Home() {
       setPageNumbers("");
       setAuthors("");
       setLanguage("");
-      setModalOpen(false);
       setTimestamp("");
       setEditingRecord(null);
+      toast(editingRecord ? "Record updated successfully!" : "Record uploaded successfully!", {
+        duration: 2000,
+        description: "Your record has been saved.",
+      });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -710,7 +724,7 @@ export default function Home() {
       {/* Modals remain the same but with updated styling */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-white/95 backdrop-blur-md shadow-2xl rounded-2xl w-screen relative h-[90vh] overflow-hidden border border-white/20">
+          <div className="bg-white/95 backdrop-blur-md shadow-2xl rounded-2xl w-[80vw] p-4 relative h-[80vh] overflow-hidden border border-white/20">
             <button
               onClick={() => setModalOpen(false)}
               className="absolute top-6 right-6 text-slate-400 hover:text-slate-600 text-2xl focus:outline-none focus:ring-2 focus:ring-slate-300 rounded-full w-8 h-8 flex items-center justify-center transition-all duration-200"
@@ -725,7 +739,7 @@ export default function Home() {
               </h1>
               {user && (
                 <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl px-4 py-3">
-                  <div className="text-sm text-slate-600 flex flex-col lg:flex-row lg:items-center gap-2">
+                  <div className="text-sm text-slate-600 flex flex-col lg:flex-row lg:items-center gap-2 mr-12">
                     <div className="flex items-center gap-1">
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                         <path
@@ -982,11 +996,20 @@ export default function Home() {
                   rows={5}
                 />
               </div>
-
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="py-4 px-6 rounded-xl shadow-sm text-slate-700 bg-gradient-to-r from-slate-200 to-gray-300 hover:from-slate-300 hover:to-gray-400 text-sm font-semibold transition-all duration-200 transform focus:outline-none focus:ring-4 focus:ring-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={loading}
+              >
+                Cancel
+              </button>
               <button
                 type="button"
                 onClick={handleSubmit}
-                className={`w-full py-4 px-6 rounded-xl shadow-lg text-white text-sm font-semibold transition-all duration-200 transform ${
+                className={`py-4 px-6 rounded-xl shadow-lg text-white text-sm font-semibold transition-all duration-200 transform ${
                   loading
                     ? "bg-gray-400 cursor-not-allowed"
                     : editingRecord
