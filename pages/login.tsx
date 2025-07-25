@@ -3,15 +3,18 @@ import { useEffect, useState } from "react";
 
 const Login = () => {
   const [selectedOption, setSelectedOption] = useState<"records" | "verifier" | null>(null);
-  const [userDetails, setUserDetails] = useState({ name: "", email: "" });
+  const [userDetails, setUserDetails] = useState({ name: "", email: "", confirmEmail: "" });
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [signupSuccess, setSignupSuccess] = useState(false);
   const router = useRouter();
 
   const handleOptionClick = (option: "records" | "verifier") => {
     setSelectedOption(option);
     setIsFormVisible(true);
+    setSignupSuccess(false);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -22,11 +25,55 @@ const Login = () => {
     }));
   };
 
+  const validateSignupForm = () => {
+    if (!userDetails.name.trim()) {
+      setError("Please enter your full name.");
+      return false;
+    }
+    if (!userDetails.email.trim()) {
+      setError("Please enter your email address.");
+      return false;
+    }
+    if (!userDetails.confirmEmail.trim()) {
+      setError("Please confirm your email address.");
+      return false;
+    }
+    if (userDetails.email !== userDetails.confirmEmail) {
+      setError("Email addresses don't match. Please check and try again.");
+      return false;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(userDetails.email)) {
+      setError("Please enter a valid email address.");
+      return false;
+    }
+    return true;
+  };
+
+  const validateLoginForm = () => {
+    if (!userDetails.name.trim()) {
+      setError("Please enter your full name.");
+      return false;
+    }
+    if (!userDetails.email.trim()) {
+      setError("Please enter your email address.");
+      return false;
+    }
+    return true;
+  };
+
   const handleSubmit = async () => {
     setError(null);
 
+    if (mode === "signup") {
+      if (!validateSignupForm()) return;
+    } else {
+      if (!validateLoginForm()) return;
+    }
+
     try {
-      const response = await fetch("/api/login", {
+      const endpoint = mode === "signup" ? "/api/signup" : "/api/login";
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -40,23 +87,45 @@ const Login = () => {
 
       const data = await response.json();
 
-      if (!data.success) {
-        setError(
-          "Invalid credentials. Please check your name and email. If you need access, contact admin at dhruvsh2003@gmail.com.",
-        );
-        return;
+      if (mode === "signup") {
+        if (data.success) {
+          setSignupSuccess(true);
+        } else {
+          setError(data.error || "Signup failed. Please try again or contact admin at dhruvsh2003@gmail.com.");
+        }
+      } else {
+        if (!data.success) {
+          setError(
+            "Invalid credentials. Please check your name and email. If you feel something's wrong, contact admin at dhruvsh2003@gmail.com.",
+          );
+          return;
+        }
+
+        const user = {
+          ...userDetails,
+          access: selectedOption,
+        };
+
+        localStorage.setItem("user", JSON.stringify(user));
+        router.push("/");
       }
-
-      const user = {
-        ...userDetails,
-        access: selectedOption,
-      };
-
-      localStorage.setItem("user", JSON.stringify(user));
-      router.push("/");
     } catch (err) {
       setError("An error occurred. Please try again later.");
     }
+  };
+
+  const resetForm = () => {
+    setIsFormVisible(false);
+    setSelectedOption(null);
+    setUserDetails({ name: "", email: "", confirmEmail: "" });
+    setError(null);
+    setSignupSuccess(false);
+  };
+
+  const switchMode = () => {
+    setMode(mode === "login" ? "signup" : "login");
+    setError(null);
+    setUserDetails({ name: "", email: "", confirmEmail: "" });
   };
 
   return (
@@ -104,7 +173,38 @@ const Login = () => {
             </div>
           )}
 
-          {!selectedOption && !isFormVisible && (
+          {signupSuccess && (
+            <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
+              <div className="flex items-start">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 text-green-500 mt-0.5 mr-2 flex-shrink-0"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <div>
+                  <p className="text-green-700 font-medium">Registration Submitted Successfully!</p>
+                  <p className="text-green-600 text-sm mt-1">
+                    Your request has been submitted. You will be granted access shortly.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={resetForm}
+                className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+              >
+                Back to Options
+              </button>
+            </div>
+          )}
+
+          {!selectedOption && !isFormVisible && !signupSuccess && (
             <div className="space-y-6">
               <div>
                 <p className="text-gray-600 mb-4">Select your purpose:</p>
@@ -189,25 +289,39 @@ const Login = () => {
                   </button>
                 </div>
               </div>
-
-              <div className="mt-8 text-sm text-gray-500 bg-gray-50 p-4 rounded-lg">
-                <p>
-                  New to the application? Contact admin at{" "}
-                  <a href="mailto:dhruvsh2003@gmail.com" className="text-blue-600 hover:underline font-medium">
-                    dhruvsh2003@gmail.com
-                  </a>{" "}
-                  for access.
-                </p>
-              </div>
             </div>
           )}
 
-          {isFormVisible && (
+          {isFormVisible && !signupSuccess && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-gray-800">Enter Your Details</h2>
+                <h2 className="text-xl font-semibold text-gray-800">
+                  {mode === "login" ? "Enter Your Details" : "Create New Account"}
+                </h2>
                 <div className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full">
                   {selectedOption === "records" ? "Add Records" : "Verify Summaries"}
+                </div>
+              </div>
+
+              {/* Mode Switch */}
+              <div className="flex justify-center">
+                <div className="bg-gray-100 p-1 rounded-lg flex">
+                  <button
+                    onClick={() => setMode("login")}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      mode === "login" ? "bg-white text-blue-600 shadow-sm" : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Login
+                  </button>
+                  <button
+                    onClick={() => setMode("signup")}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      mode === "signup" ? "bg-white text-blue-600 shadow-sm" : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Sign Up
+                  </button>
                 </div>
               </div>
 
@@ -264,14 +378,88 @@ const Login = () => {
                     </div>
                   </div>
                 </div>
+
+                {mode === "signup" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Email Address</label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        name="confirmEmail"
+                        placeholder="john@example.com"
+                        value={userDetails.confirmEmail}
+                        onChange={handleInputChange}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                        {userDetails.email &&
+                          userDetails.confirmEmail &&
+                          (userDetails.email === userDetails.confirmEmail ? (
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-5 w-5 text-green-500"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-5 w-5 text-red-500"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          ))}
+                      </div>
+                    </div>
+                    {userDetails.email &&
+                      userDetails.confirmEmail &&
+                      userDetails.email !== userDetails.confirmEmail && (
+                        <p className="text-red-500 text-xs mt-1">Email addresses don&#39;t match</p>
+                      )}
+                  </div>
+                )}
               </div>
+
+              {mode === "signup" && (
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="flex items-start">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5 text-blue-500 mt-0.5 mr-2 flex-shrink-0"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <div>
+                      <p className="text-blue-700 text-sm font-medium">Account Approval Process</p>
+                      <p className="text-blue-600 text-xs mt-1">
+                        After submitting your registration, your account will be reviewed by our admin team.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-between mt-6">
                 <button
-                  onClick={() => {
-                    setIsFormVisible(false);
-                    setSelectedOption(null);
-                  }}
+                  onClick={resetForm}
                   className="px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors flex items-center"
                 >
                   <svg
@@ -292,7 +480,7 @@ const Login = () => {
                   onClick={handleSubmit}
                   className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg flex items-center"
                 >
-                  Continue
+                  {mode === "login" ? "Continue" : "Create Account"}
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-5 w-5 ml-2"

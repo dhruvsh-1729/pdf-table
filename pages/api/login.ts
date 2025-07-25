@@ -26,6 +26,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .select("*")
     .eq("name", formattedName)
     .eq("email", formattedEmail)
+    .eq("confirmed", true)
     .single();
 
   if (error || !data) {

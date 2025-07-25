@@ -125,7 +125,9 @@ export default function Home() {
         if (parsedUser && parsedUser.name && parsedUser.email && parsedUser.access) {
           fetchEmails();
           fetchRecords();
-          fetchAllTags();
+          setTimeout(() => {
+            fetchAllTags();
+          }, 8000);
         } else {
           router.push("/login");
         }

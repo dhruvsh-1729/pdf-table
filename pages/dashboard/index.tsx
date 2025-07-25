@@ -4,9 +4,6 @@ import { GetServerSideProps } from "next";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, Legend } from "recharts";
 import { useMemo } from "react";
 
-// Initialize Supabase client with service-role key for server-side operations
-const supabaseAdmin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
 // Type definitions for props
 interface DashboardProps {
   totals: {
@@ -77,6 +74,8 @@ export const getServerSideProps: GetServerSideProps<
     creators: string[];
   }
 > = async () => {
+  const supabaseAdmin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
   // Fetch total counts for each table
   const [recordsRes, summariesRes, conclusionsRes, usersRes] = await Promise.all([
     supabaseAdmin.from("records").select("*", { count: "exact" }),
@@ -335,6 +334,27 @@ export const getServerSideProps: GetServerSideProps<
     .sort((a, b) => b.records + b.summaries + b.conclusions - (a.records + a.summaries + a.conclusions))
     .slice(0, 10); // Top 10 users
 
+  const { data: unconfirmedUsersRaw } = await supabaseAdmin
+    .from("users")
+    .select("name, email, confirmed")
+    .eq("confirmed", false);
+
+  const unconfirmedUsers =
+    (unconfirmedUsersRaw ?? []).map((u) => ({
+      name: u.name
+        ? String(u.name)
+            .replace(/^"\[|"?\]?"$/g, "")
+            .replace(/^\[|\]$/g, "")
+            .replace(/^"+|"+$/g, "")
+        : "",
+      email: u.email
+        ? String(u.email)
+            .replace(/^"\[|"?\]?"$/g, "")
+            .replace(/^\[|\]$/g, "")
+            .replace(/^"+|"+$/g, "")
+        : "",
+    })) ?? [];
+
   return {
     props: {
       totals,
@@ -347,6 +367,7 @@ export const getServerSideProps: GetServerSideProps<
       emails,
       titles,
       creators,
+      unconfirmedUsers,
     },
   };
 };
@@ -362,6 +383,7 @@ export default function Dashboard({
   emails,
   titles,
   creators,
+  unconfirmedUsers,
 }: DashboardProps & {
   records: RecordRow[];
   languages: string[];
@@ -369,9 +391,12 @@ export default function Dashboard({
   emails: string[];
   titles: string[];
   creators: string[];
+  unconfirmedUsers: { name: string; email: string }[];
 }) {
   const [filter, setFilter] = useState<FilterState>({ language: "", author: "", email: "", title: "", creator: "" });
   const [showDetails, setShowDetails] = useState<number | null>(null);
+  const [unconfirmedUsersState, setUnconfirmedUsersState] =
+    useState<{ name: string; email: string }[]>(unconfirmedUsers);
 
   type MagazineReport = {
     name: string;
@@ -382,6 +407,27 @@ export default function Dashboard({
     volumes: string[];
     authors: string[];
     languages: string[];
+  };
+
+  // add function here to confirm user
+  const confirmUser = async (name: string, email: string) => {
+    const formattedName = `["${name}"]`;
+    const formattedEmail = `["${email}"]`;
+
+    const response = await fetch("/api/confirm-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: formattedEmail, name: formattedName }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("Error confirming user:", errorData);
+      return;
+    }
+
+    // Update local state
+    setUnconfirmedUsersState((prev) => prev.filter((u) => u.name !== name || u.email !== email));
   };
 
   const magazineReport: MagazineReport[] = useMemo(() => {
@@ -480,6 +526,52 @@ export default function Dashboard({
           Back to Table
         </button>
       </div>
+
+      {/* add section here as a table to show name, email of unconfirmed users and then to confirm them with just a single click */}
+      <section className="mb-8">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <span>Unconfirmed Users</span>
+          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">
+            {unconfirmedUsersState.length}
+          </span>
+        </h2>
+        {unconfirmedUsersState.length > 0 ? (
+          <div className="bg-white rounded-lg shadow border border-gray-100 p-4">
+            <ul className="divide-y divide-gray-100">
+              {unconfirmedUsersState.map((user) => (
+                <li key={user.email} className="flex items-center gap-8 py-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
+                      {user.name ? user.name.charAt(0).toUpperCase() : "?"}
+                    </div>
+                    <div>
+                      <div className="font-medium text-gray-800">
+                        {user.name || <span className="text-gray-400">No Name</span>}
+                      </div>
+                      <div className="text-xs text-gray-500">{user.email}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => confirmUser(user.name, user.email)}
+                    className="inline-flex items-center px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors"
+                    title="Confirm this user"
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Confirm
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="text-xs text-gray-500 mt-2">
+              Click <span className="font-semibold text-green-700">Confirm</span> to approve user access.
+            </div>
+          </div>
+        ) : (
+          <div className="text-gray-500 text-center py-6">All users are confirmed.</div>
+        )}
+      </section>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 gap-6 mb-12 sm:grid-cols-2 lg:grid-cols-4">
