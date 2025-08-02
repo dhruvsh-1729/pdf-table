@@ -163,11 +163,23 @@ export default function Home() {
       const queryParam = selectedEmail ? `?email=${encodeURIComponent(selectedEmail)}` : "";
       const response = await fetch(`/api/records${queryParam}`);
       if (!response.ok) throw new Error("Failed to fetch records");
-      const data: MagazineRecord[] = await response.json();
-      setRecords(data);
+      const data: any = await response.json();
+
+      // Fix: Handle both array and object responses
+      let recordsArray: MagazineRecord[];
+      if (Array.isArray(data)) {
+        recordsArray = data;
+      } else if (data && Array.isArray(data.records)) {
+        recordsArray = data.records;
+      } else {
+        recordsArray = [];
+      }
+
+      setRecords(recordsArray);
     } catch (err) {
       console.error("Error:", err);
       setError("Failed to load records");
+      setRecords([]);
     } finally {
       setTableLoading(false);
     }
