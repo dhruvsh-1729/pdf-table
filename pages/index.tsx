@@ -57,6 +57,11 @@ export default function Home() {
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
   const [showFileSize, setShowFileSize] = useState<boolean>(false);
+  // Add this state alongside your other table states:
+  const [pagination, setPagination] = useState({
+    pageIndex: 0,
+    pageSize: 10,
+  });
 
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
@@ -774,24 +779,11 @@ export default function Home() {
               setFile={setFile}
               access={access}
               setError={setError}
+              // Add these new props:
+              pagination={pagination}
+              setPagination={setPagination}
             />
           </div>
-          <Pagination
-            table={useReactTable({
-              data: records,
-              columns,
-              filterFns: { fuzzy: fuzzyFilter },
-              state: { columnFilters, globalFilter, sorting },
-              onColumnFiltersChange: setColumnFilters,
-              onGlobalFilterChange: setGlobalFilter,
-              onSortingChange: setSorting,
-              globalFilterFn: fuzzyFilter,
-              getCoreRowModel: getCoreRowModel(),
-              getFilteredRowModel: getFilteredRowModel(),
-              getPaginationRowModel: getPaginationRowModel(),
-              getSortedRowModel: getSortedRowModel(),
-            })}
-          />
         </div>
         <BugModal isOpen={bugModalOpen} onClose={() => setBugModalOpen(false)} />
         <style jsx global>{`
