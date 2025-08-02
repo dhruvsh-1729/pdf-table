@@ -225,7 +225,15 @@ export const getServerSideProps: GetServerSideProps<
   // User activity insights
   const userActivityMap = new Map<
     string,
-    { name: string; email: string; records: number; summaries: number; conclusions: number }
+    {
+      name: string;
+      email: string;
+      records: number;
+      summaries: number;
+      conclusions: number;
+      summariesFilled: number;
+      conclusionsFilled: number;
+    }
   >();
 
   // Process records
@@ -238,13 +246,15 @@ export const getServerSideProps: GetServerSideProps<
         records: 0,
         summaries: 0,
         conclusions: 0,
+        summariesFilled: 0,
+        conclusionsFilled: 0,
       };
       entry.records += 1;
       if (r.summary && r.summary.trim() !== "") {
-        entry.summaries += 1;
+        entry.summariesFilled += 1;
       }
       if (r.conclusion && r.conclusion.trim() !== "") {
-        entry.conclusions += 1;
+        entry.conclusionsFilled += 1;
       }
       userActivityMap.set(key, entry);
     }
@@ -260,6 +270,8 @@ export const getServerSideProps: GetServerSideProps<
         records: 0,
         summaries: 0,
         conclusions: 0,
+        summariesFilled: 0,
+        conclusionsFilled: 0,
       };
       entry.summaries += 1;
       userActivityMap.set(key, entry);
@@ -276,54 +288,8 @@ export const getServerSideProps: GetServerSideProps<
         records: 0,
         summaries: 0,
         conclusions: 0,
-      };
-      entry.conclusions += 1;
-      userActivityMap.set(key, entry);
-    }
-  });
-
-  // Process records
-  processedRecords.forEach((r) => {
-    if (r.email && r.creator_name) {
-      const key = `${r.creator_name}|${r.email}`;
-      const entry = userActivityMap.get(key) || {
-        name: r.creator_name,
-        email: r.email,
-        records: 0,
-        summaries: 0,
-        conclusions: 0,
-      };
-      entry.records += 1;
-      userActivityMap.set(key, entry);
-    }
-  });
-
-  // Process summaries
-  processedSummaries.forEach((s) => {
-    if (s.email && s.name) {
-      const key = `${s.name}|${s.email}`;
-      const entry = userActivityMap.get(key) || {
-        name: s.name,
-        email: s.email,
-        records: 0,
-        summaries: 0,
-        conclusions: 0,
-      };
-      entry.summaries += 1;
-      userActivityMap.set(key, entry);
-    }
-  });
-
-  // Process conclusions
-  processedConclusions.forEach((c) => {
-    if (c.email && c.name) {
-      const key = `${c.name}|${c.email}`;
-      const entry = userActivityMap.get(key) || {
-        name: c.name,
-        email: c.email,
-        records: 0,
-        summaries: 0,
-        conclusions: 0,
+        summariesFilled: 0,
+        conclusionsFilled: 0,
       };
       entry.conclusions += 1;
       userActivityMap.set(key, entry);
@@ -706,9 +672,11 @@ export default function Dashboard({
               <YAxis />
               <Tooltip formatter={(value: number, name: string) => [`${value} ${name.toLowerCase()}`, name]} />
               <Legend />
-              <Bar dataKey="records" fill={COLORS[0]} name="Records" />
-              <Bar dataKey="summaries" fill={COLORS[1]} name="Summaries" />
-              <Bar dataKey="conclusions" fill={COLORS[2]} name="Conclusions" />
+              <Bar dataKey="records" fill={COLORS[0]} name="Records created" />
+              <Bar dataKey="summariesFilled" fill={COLORS[3]} name="Summaries Filled" />
+              <Bar dataKey="conclusionsFilled" fill={COLORS[4]} name="Conclusions Filled" />
+              <Bar dataKey="summaries" fill={COLORS[1]} name="Summary Edits" />
+              <Bar dataKey="conclusions" fill={COLORS[2]} name="Conclusion Edits" />
             </BarChart>
           </ResponsiveContainer>
         </div>
