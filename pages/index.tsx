@@ -63,6 +63,12 @@ export default function Home() {
     pageSize: 10,
   });
 
+  const [filteredData, setFilteredData] = useState<MagazineRecord[]>([]);
+
+  const handleFilteredDataChange = (filteredRows: MagazineRecord[]) => {
+    setFilteredData(filteredRows);
+  };
+
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
     if (storedUser) {
@@ -549,7 +555,7 @@ export default function Home() {
 
   const exportToCSV = () => {
     const headers = columns.map((column) => column.header).filter((header) => typeof header === "string") as string[];
-    const rows = records.map((record) =>
+    const rows = filteredData.map((record) =>
       headers.map((header) => {
         const column = columns.find((column) => column.header === header && "accessorKey" in column);
         if (column && column.id) {
@@ -571,6 +577,48 @@ export default function Home() {
     link.href = URL.createObjectURL(blob);
     link.download = "records.csv";
     link.click();
+  };
+
+  const exportToXLSX = () => {
+    try {
+      import("xlsx").then((XLSX) => {
+        const headers = columns
+          .map((column) => column.header)
+          .filter((header) => typeof header === "string") as string[];
+        const data = filteredData.map((record) => {
+          const row: Record<string, any> = {};
+          headers.forEach((header) => {
+            const column = columns.find((column) => column.header === header && "accessorKey" in column);
+            if (column && column.id) {
+              const key = column.id as keyof MagazineRecord;
+              if (key === "tags") {
+                row[header] = record.tags?.map((tag) => tag.name).join(", ") ?? "";
+              } else {
+                row[header] = record[key] ?? "";
+              }
+            }
+          });
+          return row;
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Records");
+        XLSX.writeFile(workbook, "records.xlsx");
+      });
+    } catch (error) {
+      console.error("Error exporting to XLSX:", error);
+      toast.error("Failed to export to Excel. Falling back to CSV...");
+      exportToCSV();
+    }
+  };
+
+  const handleExport = (format: "csv" | "xlsx") => {
+    if (format === "csv") {
+      exportToCSV();
+    } else {
+      exportToXLSX();
+    }
   };
 
   const handleSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
@@ -787,6 +835,7 @@ export default function Home() {
               // Add these new props:
               pagination={pagination}
               setPagination={setPagination}
+              onFilteredDataChange={handleFilteredDataChange}
             />
           </div>
         </div>

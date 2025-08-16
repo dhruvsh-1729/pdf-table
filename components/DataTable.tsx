@@ -11,6 +11,7 @@ import {
 import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { fuzzyFilter } from "../utils/fuzzyFilter";
 import { MagazineRecord } from "../types";
+import { useEffect } from "react";
 
 interface DataTableProps {
   data: MagazineRecord[];
@@ -44,6 +45,7 @@ interface DataTableProps {
   // Add pagination props
   pagination: any;
   setPagination: (pagination: any) => void;
+  onFilteredDataChange?: (filteredRows: MagazineRecord[]) => void;
 }
 
 export default function DataTable({
@@ -77,6 +79,7 @@ export default function DataTable({
   setError,
   pagination,
   setPagination,
+  onFilteredDataChange,
 }: DataTableProps) {
   const table = useReactTable({
     data,
@@ -93,6 +96,15 @@ export default function DataTable({
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
   });
+
+  const filteredRows = table.getFilteredRowModel().rows.map((row) => row.original);
+
+  // Use useEffect to call the callback when filtered data changes
+  useEffect(() => {
+    if (onFilteredDataChange) {
+      onFilteredDataChange(filteredRows);
+    }
+  }, [filteredRows, onFilteredDataChange]);
 
   if (tableLoading) {
     return (
