@@ -33,6 +33,7 @@ export interface MagazineRecord {
   conclusion: string | null;
   editHistory?: EditHistory;
   tags?: Tag[];
+  authors_linked?: Tag[];
 }
 
 export interface User {

@@ -66,16 +66,21 @@ function formatRecords(records: any[]): any[] {
     const record = records[i];
     const formatted: any = {};
 
-    // Handle tags first (most common special case)
+    // tags (existing)
     if (record.record_tags) {
       formatted.tags = record.record_tags.map((rt: any) => rt.tags).filter(Boolean);
+    }
+
+    // authors (NEW, mirrors tags)
+    if (record.record_authors) {
+      formatted.authors_linked = record.record_authors.map((ra: any) => ra.authors).filter(Boolean); // array of { id, name }
     }
 
     // Batch process other fields
     const keys = Object.keys(record);
     for (let j = 0; j < keys.length; j++) {
       const key = keys[j];
-      if (key !== "record_tags") {
+      if (key !== "record_tags" && key !== "record_authors") {
         formatted[key] = formatValue(record[key]);
       }
     }
@@ -188,21 +193,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Branch: No email filter - ultra-optimized approach
     if (!email || typeof email !== "string" || email.trim() === "") {
-      console.log("⚡ Using ultra-optimized all records fetch");
-
-      // Try RPC approach first, fallback if not available
-      const rpcResult = await fetchAllRecordsOptimized();
-
-      if (rpcResult) {
-        console.log("✅ RPC query completed:", rpcResult.length);
-        return res.status(200).json(rpcResult);
-      }
-
       // Fallback: Parallel queries with streaming processing
       const [recordsResult, summariesResult] = await Promise.all([
         supabase
           .from("records")
-          .select(`*, record_tags!left(tags(id, name))`)
+          .select(`*, record_tags!left(tags(id, name)), record_authors!left(authors(id, name))`)
           .order("id", { ascending: false })
           .limit(10000), // Add reasonable limit for very large datasets
         supabase.from("summaries").select("record_id, email, name, created_at").limit(50000), // Summaries usually more numerous
@@ -254,20 +249,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Branch: Email filter - maximum optimization
     const formattedEmail = `["${email.trim()}"]`;
-    console.log("⚡ Using ultra-optimized email filter");
-
-    // Single query approach using CTEs or views if available
-    const { data: filteredResult, error: filteredError } = await supabase.rpc("get_records_by_email", {
-      email_filter: formattedEmail,
-    });
-
-    if (!filteredError && filteredResult) {
-      console.log("✅ RPC email query completed:", filteredResult.length);
-      return res.status(200).json(filteredResult);
-    }
-
-    // Fallback: Optimized parallel approach
-    console.log("📝 Using fallback parallel approach");
 
     // Use UNION query to get all record IDs in one shot
     const { data: allRecordIds, error: unionError } = await supabase.rpc("get_record_ids_by_email", {
@@ -302,7 +283,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const [recordsResult, summariesResult] = await Promise.all([
         supabase
           .from("records")
-          .select(`*, record_tags!left(tags(id, name))`)
+          .select(`*, record_tags!left(tags(id, name)), record_authors!left(authors(id, name))`)
           .in("id", recordIds)
           .order("id", { ascending: false }),
         supabase.from("summaries").select("record_id, email, name, created_at").in("record_id", recordIds),

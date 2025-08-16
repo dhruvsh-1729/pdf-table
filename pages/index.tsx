@@ -377,7 +377,12 @@ export default function Home() {
         accessorKey: "authors",
         header: "Authors",
         id: "authors",
-        cell: ({ row }) => <span className="text-slate-700 text-sm">{row.original.authors || "—"}</span>,
+        // cell: ({ row }) => <span className="text-slate-700 text-sm">{row.original.authors || "—"}</span>,
+        cell: ({ row }) => {
+          const linked = row.original.authors_linked as { id: number; name: string }[] | undefined;
+          const display = linked?.length ? linked.map((a) => a.name).join(", ") : row.original.authors || "—";
+          return <span className="text-slate-700 text-sm">{display}</span>;
+        },
       },
       {
         accessorKey: "language",
