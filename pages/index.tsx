@@ -24,6 +24,7 @@ import RecordFormModal from "../components/RecordFormModal";
 import TagsModal from "../components/TagsModal";
 import EditTextModal from "../components/EditTextModal";
 import AuthorsModal from "@/components/AuthorsModal";
+import ExportColumnsModal from "@/components/ExportColumnsModal";
 
 export default function Home() {
   const router = useRouter();
@@ -65,6 +66,10 @@ export default function Home() {
     pageIndex: 0,
     pageSize: 10,
   });
+
+  // NEW: export modal open state & which columns are selected
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [selectedExportColumnIds, setSelectedExportColumnIds] = useState<string[]>([]);
 
   const [filteredData, setFilteredData] = useState<MagazineRecord[]>([]);
 
@@ -630,25 +635,104 @@ export default function Home() {
     [],
   );
 
+  // NEW: map which columns are “exportable” and give them clean labels
+  const exportableColumns = useMemo(() => {
+    // Only list columns that map to real data fields (exclude UI-only columns)
+    // The 'id' keys here must match the record key/extractor switch below.
+    const candidates: { id: string; label: string }[] = [
+      { id: "id", label: "ID" },
+      { id: "name", label: "Magazine Name" },
+      { id: "summary", label: "Summary" },
+      { id: "conclusion", label: "Conclusion" },
+      { id: "tags", label: "Tags" },
+      { id: "timestamp", label: "Timestamp" },
+      { id: "volume", label: "Volume" },
+      { id: "number", label: "Number" },
+      { id: "title_name", label: "Title Name" },
+      { id: "page_numbers", label: "Page Numbers" },
+      { id: "authors", label: "Authors" }, // derived from authors_linked
+      { id: "language", label: "Language" },
+      { id: "pdf_url", label: "PDF URL" },
+      { id: "creator_name", label: "Creator" }, // present on record
+      // add more if you store them on each record
+    ];
+
+    // Optional: Only include those that actually exist in your current `columns`
+    // or that we know how to extract below.
+    const knownIds = new Set(candidates.map((c) => c.id));
+    const presentIds = new Set<string>();
+    columns.forEach((c: any) => {
+      if (c?.id && knownIds.has(c.id)) presentIds.add(c.id);
+      if (c?.accessorKey && knownIds.has(c.accessorKey)) presentIds.add(c.accessorKey);
+    });
+    // Also include derived fields we handle (authors, tags, creator_name, pdf_url)
+    ["tags", "authors", "creator_name", "pdf_url"].forEach((id) => presentIds.add(id));
+
+    const filtered = candidates.filter((c) => presentIds.has(c.id));
+
+    // Initialize default selection once
+    if (selectedExportColumnIds.length === 0 && filtered.length > 0) {
+      setSelectedExportColumnIds(filtered.map((c) => c.id));
+    }
+
+    return filtered;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns]);
+
+  // NEW: central value extractor for each exportable field
+  const getExportValue = (record: MagazineRecord, key: string) => {
+    switch (key) {
+      case "id":
+        return record.id ?? "";
+      case "name":
+        return record.name ?? "";
+      case "summary":
+        return record.summary ?? "";
+      case "conclusion":
+        return record.conclusion ?? "";
+      case "tags":
+        return record.tags?.map((t) => t.name).join(", ") ?? "";
+      case "timestamp":
+        return record.timestamp ?? "";
+      case "volume":
+        return record.volume ?? "";
+      case "number":
+        return record.number ?? "";
+      case "title_name":
+        return record.title_name ?? "";
+      case "page_numbers":
+        return record.page_numbers ?? "";
+      case "authors":
+        return record.authors_linked?.map((a) => a.name).join(", ") ?? record.authors ?? "";
+      case "language":
+        return record.language ?? "";
+      case "pdf_url":
+        return record.pdf_url ?? "";
+      case "creator_name":
+        return (record as any).creator_name ?? "";
+      default:
+        // If you add custom fields later, handle them here
+        return (record as any)[key] ?? "";
+    }
+  };
+
   const exportToCSV = () => {
-    const headers = columns.map((column) => column.header).filter((header) => typeof header === "string") as string[];
+    const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
+    if (cols.length === 0) return;
+
+    const headers = cols.map((c) => c.label);
     const rows = filteredData.map((record) =>
-      headers.map((header) => {
-        const column = columns.find((column) => column.header === header && "accessorKey" in column);
-        if (column && column.id) {
-          const key = column.id as keyof MagazineRecord;
-          if (key === "tags") {
-            return record.tags?.map((tag) => tag.name).join(", ") ?? "";
-          }
-          return record[key] ?? "";
-        }
-        return "";
+      cols.map((c) => {
+        const raw = getExportValue(record, c.id);
+        return String(raw ?? "");
       }),
     );
+
     const csvContent = [
       headers.join(","),
-      ...rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")),
+      ...rows.map((row) => row.map((value) => `"${value.replace(/"/g, '""')}"`).join(",")),
     ].join("\n");
+
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -656,25 +740,16 @@ export default function Home() {
     link.click();
   };
 
+  // UPDATED: XLSX export uses selected columns from the modal
   const exportToXLSX = () => {
+    const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
+    if (cols.length === 0) return;
+
     try {
       import("xlsx").then((XLSX) => {
-        const headers = columns
-          .map((column) => column.header)
-          .filter((header) => typeof header === "string") as string[];
         const data = filteredData.map((record) => {
           const row: Record<string, any> = {};
-          headers.forEach((header) => {
-            const column = columns.find((column) => column.header === header && "accessorKey" in column);
-            if (column && column.id) {
-              const key = column.id as keyof MagazineRecord;
-              if (key === "tags") {
-                row[header] = record.tags?.map((tag) => tag.name).join(", ") ?? "";
-              } else {
-                row[header] = record[key] ?? "";
-              }
-            }
-          });
+          cols.forEach((c) => (row[c.label] = getExportValue(record, c.id)));
           return row;
         });
 
@@ -689,6 +764,9 @@ export default function Home() {
       exportToCSV();
     }
   };
+
+  // NEW: Convenience to open the modal from Header’s existing prop
+  const openExportModal = () => setExportModalOpen(true);
 
   const handleExport = (format: "csv" | "xlsx") => {
     if (format === "csv") {
@@ -886,7 +964,7 @@ export default function Home() {
             fetchedEmails={fetchedEmails}
             setModalOpen={setModalOpen}
             setBugModalOpen={setBugModalOpen}
-            exportToCSV={exportToCSV}
+            exportToCSV={openExportModal}
           />
           <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
             <DataTable
@@ -926,6 +1004,17 @@ export default function Home() {
           </div>
         </div>
         <BugModal isOpen={bugModalOpen} onClose={() => setBugModalOpen(false)} />
+
+        {/* NEW: Export Modal */}
+        <ExportColumnsModal
+          isOpen={exportModalOpen}
+          onClose={() => setExportModalOpen(false)}
+          exportableColumns={exportableColumns}
+          selectedColumnIds={selectedExportColumnIds}
+          setSelectedColumnIds={setSelectedExportColumnIds}
+          onExportCSV={exportToCSV}
+          onExportXLSX={exportToXLSX}
+        />
         <style jsx global>{`
           .custom-scrollbar::-webkit-scrollbar {
             width: 8px;
