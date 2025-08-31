@@ -23,6 +23,7 @@ import Pagination from "../components/Pagination";
 import RecordFormModal from "../components/RecordFormModal";
 import TagsModal from "../components/TagsModal";
 import EditTextModal from "../components/EditTextModal";
+import AuthorsModal from "@/components/AuthorsModal";
 
 export default function Home() {
   const router = useRouter();
@@ -49,6 +50,8 @@ export default function Home() {
   const [fetchedEmails, setFetchedEmails] = useState<{ creator_name: string; email: string }[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [selectedTags, setSelectedTags] = useState<{ label: string; value: number }[]>([]);
+  const [authorsModalOpen, setAuthorsModalOpen] = useState(false);
+  const [selectedAuthors, setSelectedAuthors] = useState<{ label: string; value: number }[]>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -92,9 +95,6 @@ export default function Home() {
         if (parsedUser && parsedUser.name && parsedUser.email && parsedUser.access) {
           fetchEmails();
           fetchRecords();
-          setTimeout(() => {
-            fetchAllTags();
-          }, 8000);
         } else {
           router.push("/login");
         }
@@ -165,9 +165,15 @@ export default function Home() {
     if (!editingRecord) return;
     try {
       setLoading(true);
-      const newTags = selectedTags.filter((tag) => !allTags.some((t) => t.name === tag.label));
-      const createdTags = await Promise.all(
-        newTags.map(async (tag) => {
+
+      // Resolve selectedTags → DB ids
+      const resolvedTagIds: number[] = [];
+      for (const tag of selectedTags) {
+        if (typeof tag.value === "number") {
+          // Already an existing tag
+          resolvedTagIds.push(tag.value);
+        } else {
+          // New tag → create it in DB
           const response = await fetch("/api/tags", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -175,19 +181,18 @@ export default function Home() {
           });
           if (!response.ok) throw new Error("Failed to create tag");
           const data = await response.json();
-          return data;
-        }),
-      );
-      setAllTags([...allTags, ...createdTags]);
-      const tagIds = selectedTags.map((tag) => {
-        const existingTag = allTags.find((t) => t.name === tag.label);
-        const newTag = createdTags.find((t) => t.name === tag.label);
-        return (existingTag || newTag).id;
-      });
+          resolvedTagIds.push(data.id);
+        }
+      }
+
+      // Current tags from record
       const currentTags = editingRecord.tags || [];
       const currentTagIds = currentTags.map((t) => t.id);
-      const tagsToAdd = tagIds.filter((id) => !currentTagIds.includes(id));
-      const tagsToRemove = currentTagIds.filter((id) => !tagIds.includes(id));
+
+      // Diff to find adds/removes
+      const tagsToAdd = resolvedTagIds.filter((id) => !currentTagIds.includes(id));
+      const tagsToRemove = currentTagIds.filter((id) => !resolvedTagIds.includes(id));
+
       if (tagsToAdd.length > 0) {
         await fetch("/api/record-tags", {
           method: "POST",
@@ -198,6 +203,7 @@ export default function Home() {
           }),
         });
       }
+
       if (tagsToRemove.length > 0) {
         await fetch("/api/record-tags", {
           method: "DELETE",
@@ -208,9 +214,66 @@ export default function Home() {
           }),
         });
       }
+
       await fetchRecords();
       setTagsModalOpen(false);
       setSelectedTags([]);
+      setEditingRecord(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // submit handler (similar to tags)
+  const handleAuthorSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    e.preventDefault();
+    if (!editingRecord) return;
+    try {
+      setLoading(true);
+
+      const resolvedAuthorIds: number[] = [];
+      for (const author of selectedAuthors) {
+        if (typeof author.value === "number") {
+          resolvedAuthorIds.push(author.value);
+        } else {
+          const response = await fetch("/api/authors", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: author.label }),
+          });
+          if (!response.ok) throw new Error("Failed to create author");
+          const data = await response.json();
+          resolvedAuthorIds.push(data.id);
+        }
+      }
+
+      const currentAuthors = editingRecord.authors_linked || [];
+      const currentAuthorIds = currentAuthors.map((a) => a.id);
+
+      const authorsToAdd = resolvedAuthorIds.filter((id) => !currentAuthorIds.includes(id));
+      const authorsToRemove = currentAuthorIds.filter((id) => !resolvedAuthorIds.includes(id));
+
+      if (authorsToAdd.length > 0) {
+        await fetch("/api/record-authors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: editingRecord.id, authorIds: authorsToAdd }),
+        });
+      }
+
+      if (authorsToRemove.length > 0) {
+        await fetch("/api/record-authors", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: editingRecord.id, authorIds: authorsToRemove }),
+        });
+      }
+
+      await fetchRecords();
+      setAuthorsModalOpen(false);
+      setSelectedAuthors([]);
       setEditingRecord(null);
     } catch (err) {
       setError((err as Error).message);
@@ -383,11 +446,25 @@ export default function Home() {
         accessorKey: "authors",
         header: "Authors",
         id: "authors",
-        // cell: ({ row }) => <span className="text-slate-700 text-sm">{row.original.authors || "—"}</span>,
         cell: ({ row }) => {
           const linked = row.original.authors_linked as { id: number; name: string }[] | undefined;
-          const display = linked?.length ? linked.map((a) => a.name).join(", ") : row.original.authors || "—";
-          return <span className="text-slate-700 text-sm">{display}</span>;
+          return (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-slate-700 text-sm">
+                {linked?.length ? linked.map((a) => a.name).join(", ") : "—"}
+              </span>
+              <button
+                className="ml-2 px-2 py-1 text-xs bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
+                onClick={() => {
+                  setEditingRecord(row.original);
+                  setSelectedAuthors(row.original.authors_linked?.map((a) => ({ label: a.name, value: a.id })) || []);
+                  setAuthorsModalOpen(true);
+                }}
+              >
+                Edit
+              </button>
+            </div>
+          );
         },
       },
       {
@@ -766,6 +843,15 @@ export default function Home() {
           setSelectedTags={setSelectedTags}
           allTags={allTags}
           handleTagSubmit={handleTagSubmit}
+        />
+        <AuthorsModal
+          authorsModalOpen={authorsModalOpen}
+          setAuthorsModalOpen={setAuthorsModalOpen}
+          loading={loading}
+          error={error}
+          selectedAuthors={selectedAuthors}
+          setSelectedAuthors={setSelectedAuthors}
+          handleAuthorSubmit={handleAuthorSubmit}
         />
         <EditTextModal
           isOpen={summaryOpen}

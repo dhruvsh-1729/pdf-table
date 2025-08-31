@@ -11,7 +11,7 @@ import {
 import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { fuzzyFilter } from "../utils/fuzzyFilter";
 import { MagazineRecord } from "../types";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 interface DataTableProps {
   data: MagazineRecord[];
@@ -97,14 +97,16 @@ export default function DataTable({
     getSortedRowModel: getSortedRowModel(),
   });
 
-  const filteredRows = table.getFilteredRowModel().rows.map((row) => row.original);
+  const filteredRows = useMemo(
+    () => table.getFilteredRowModel().rows.map((row) => row.original),
+    [table.getFilteredRowModel().rows],
+  );
 
-  // Use useEffect to call the callback when filtered data changes
   useEffect(() => {
     if (onFilteredDataChange) {
       onFilteredDataChange(filteredRows);
     }
-  }, [filteredRows, onFilteredDataChange]);
+  }, [onFilteredDataChange, JSON.stringify(filteredRows)]);
 
   if (tableLoading) {
     return (

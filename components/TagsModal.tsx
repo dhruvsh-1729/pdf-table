@@ -1,6 +1,6 @@
 // components/TagsModal.tsx
 import { MouseEvent } from "react";
-import CreatableSelect from "react-select/creatable";
+import AsyncCreatableSelect from "react-select/async-creatable";
 import { TagIcon } from "@phosphor-icons/react";
 import { Tag } from "../types";
 
@@ -57,43 +57,30 @@ export default function TagsModal({
         <div className="space-y-6">
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">Tags</label>
-            <CreatableSelect
+            <AsyncCreatableSelect
               isMulti
               value={selectedTags}
               onChange={(options) => setSelectedTags(options as { label: string; value: number }[])}
+              loadOptions={async (inputValue: string) => {
+                if (!inputValue) return [];
+                try {
+                  const res = await fetch(`/api/tags?q=${encodeURIComponent(inputValue)}`);
+                  const data = await res.json();
+                  return data.map((tag: { id: number; name: string }) => ({
+                    label: tag.name,
+                    value: tag.id,
+                  }));
+                } catch (err) {
+                  console.error("Error loading tags:", err);
+                  return [];
+                }
+              }}
               onCreateOption={(inputValue) => {
                 setSelectedTags([...selectedTags, { label: inputValue, value: Date.now() }]);
               }}
-              options={allTags.map((tag) => ({
-                label: tag.name,
-                value: tag.id,
-              }))}
-              placeholder="Select or create tags"
+              placeholder="Search or create tags"
               isDisabled={loading}
               classNamePrefix="react-select"
-              styles={{
-                control: (base) => ({
-                  ...base,
-                  minHeight: "44px",
-                  borderRadius: "12px",
-                  borderColor: "#e2e8f0",
-                  borderWidth: "2px",
-                  boxShadow: "none",
-                  fontSize: "14px",
-                  paddingLeft: "8px",
-                  paddingRight: "8px",
-                  background: "linear-gradient(to right, #f8fafc, #f1f5f9)",
-                  "&:hover": {
-                    borderColor: "#8b5cf6",
-                  },
-                }),
-                menu: (base) => ({
-                  ...base,
-                  zIndex: 9999,
-                  borderRadius: "12px",
-                  boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                }),
-              }}
             />
           </div>
           <button

@@ -244,7 +244,7 @@ export default function RecordFormModal({
               rows={6}
             />
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Title Name</label>
               <input
@@ -256,7 +256,7 @@ export default function RecordFormModal({
                 disabled={loading}
               />
             </div>
-            <div>
+            {/* <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Authors</label>
               <input
                 type="text"
@@ -266,7 +266,7 @@ export default function RecordFormModal({
                 className="w-full rounded-xl border-2 border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-0 text-sm disabled:bg-gray-100 px-4 py-3 bg-gradient-to-r from-slate-50 to-gray-50"
                 disabled={loading}
               />
-            </div>
+            </div> */}
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div>
