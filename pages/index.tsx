@@ -174,7 +174,7 @@ export default function Home() {
       // Resolve selectedTags → DB ids
       const resolvedTagIds: number[] = [];
       for (const tag of selectedTags) {
-        if (typeof tag.value === "number") {
+        if (tag.value < 10000000) {
           // Already an existing tag
           resolvedTagIds.push(tag.value);
         } else {
