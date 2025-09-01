@@ -109,6 +109,46 @@ type UserMagazineActivity = {
   totalActivity: number;
 };
 
+// Add below your existing types
+type RecordBrief = {
+  id: number;
+  title?: string | null;
+  number?: string | null;
+  pages?: string | null;
+  timestamp?: string | null;
+  language?: string | null;
+  authors?: string | null;
+  volume?: string | null;
+};
+
+type VolumeBucket = {
+  volume: string | null; // e.g. "Vol. 12" or null
+  count: number; // distinct records in this volume for this action
+  recordIds: number[];
+  titles: string[];
+  numbers: string[];
+  pageNumbers: string[];
+  timestamps: string[];
+  languages: string[];
+  authors: string[];
+  records: RecordBrief[]; // detailed rows for display
+};
+
+type MagazineVolumeGroup = {
+  magazineName: string;
+  totalCount: number; // sum of counts across volumes
+  volumes: VolumeBucket[];
+};
+
+type UserMagazineActivityV2 = {
+  userName: string;
+  userEmail: string;
+  recordsCreated: MagazineVolumeGroup[];
+  summariesEdited: MagazineVolumeGroup[];
+  conclusionsEdited: MagazineVolumeGroup[];
+  totalActivity: number;
+};
+
 /** -----------------------------
  * Constants
  * ------------------------------ */
@@ -572,142 +612,176 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
   }, [records]);
 
   // Build user magazine activities (modal) — filter by admin/non-admin later
-  const userMagazineActivities: UserMagazineActivity[] = useMemo(() => {
-    const map = new Map<string, UserMagazineActivity>();
+  const userMagazineActivities: UserMagazineActivityV2[] = useMemo(() => {
+    // helpers
     const keyOf = (name: string, email: string) => `${name}|${email}`;
 
-    const addUnique = (arr: string[], v?: string | null) => {
-      if (!v) return;
-      if (v && !arr.includes(v)) arr.push(v);
+    const addToMagazineVolumeGroup = (
+      groups: Map<string, MagazineVolumeGroup>,
+      magazineName: string,
+      rec: RecordRow,
+      distinctGuard: Set<number>,
+    ) => {
+      if (!rec) return;
+      if (distinctGuard.has(rec.id)) return; // ensure distinct per action
+      distinctGuard.add(rec.id);
+
+      if (!groups.has(magazineName)) {
+        groups.set(magazineName, { magazineName, totalCount: 0, volumes: [] });
+      }
+      const g = groups.get(magazineName)!;
+
+      const volKey = rec.volume ?? "—";
+      let bucket = g.volumes.find((v) => (v.volume ?? "—") === volKey);
+      if (!bucket) {
+        bucket = {
+          volume: rec.volume ?? null,
+          count: 0,
+          recordIds: [],
+          titles: [],
+          numbers: [],
+          pageNumbers: [],
+          timestamps: [],
+          languages: [],
+          authors: [],
+          records: [],
+        };
+        g.volumes.push(bucket);
+      }
+
+      // increment + push details
+      bucket.count += 1;
+      g.totalCount += 1;
+
+      if (!bucket.recordIds.includes(rec.id)) bucket.recordIds.push(rec.id);
+      if (rec.title_name) bucket.titles.push(rec.title_name);
+      if (rec.number) bucket.numbers.push(rec.number);
+      if (rec.page_numbers) bucket.pageNumbers.push(rec.page_numbers);
+      if (rec.timestamp) bucket.timestamps.push(rec.timestamp);
+      if (rec.language) bucket.languages.push(rec.language);
+      if (rec.authors)
+        bucket.authors.push(
+          ...rec.authors
+            .split(",")
+            .map((a) => a.trim())
+            .filter(Boolean),
+        );
+
+      bucket.records.push({
+        id: rec.id,
+        title: rec.title_name,
+        number: rec.number,
+        pages: rec.page_numbers,
+        timestamp: rec.timestamp,
+        language: rec.language,
+        authors: rec.authors,
+        volume: rec.volume,
+      });
     };
 
-    // Records created
+    type UAEntry = {
+      userName: string;
+      userEmail: string;
+      createdByMag: Map<string, MagazineVolumeGroup>; // magazineName → group
+      summaryEditsByMag: Map<string, MagazineVolumeGroup>;
+      conclusionEditsByMag: Map<string, MagazineVolumeGroup>;
+      distinctCreated: Set<number>;
+      distinctSummary: Set<number>;
+      distinctConclusion: Set<number>;
+    };
+    const users = new Map<string, UAEntry>();
+
+    const getOrInitUA = (name: string, email: string): UAEntry => {
+      const k = keyOf(name, email);
+      if (!users.has(k)) {
+        users.set(k, {
+          userName: name,
+          userEmail: email,
+          createdByMag: new Map(),
+          summaryEditsByMag: new Map(),
+          conclusionEditsByMag: new Map(),
+          distinctCreated: new Set(),
+          distinctSummary: new Set(),
+          distinctConclusion: new Set(),
+        });
+      }
+      return users.get(k)!;
+    };
+
+    // Records Created (by creator_name/email)
     records.forEach((r) => {
-      if (r.creator_name && r.email) {
-        const key = keyOf(r.creator_name, r.email);
-        if (!map.has(key)) {
-          map.set(key, {
-            userName: r.creator_name,
-            userEmail: r.email,
-            recordsCreated: [],
-            summariesEdited: [],
-            conclusionsEdited: [],
-            totalActivity: 0,
-          });
-        }
-        const ua = map.get(key)!;
-        let mag = ua.recordsCreated.find((x) => x.magazineName === r.name);
-        if (!mag) {
-          mag = {
-            magazineName: r.name,
-            count: 0,
-            volumes: [],
-            titles: [],
-            pageNumbers: [],
-            authors: [],
-            languages: [],
-            recordIds: [],
-          };
-          ua.recordsCreated.push(mag);
-        }
-        mag.count++;
-        addUnique(mag.volumes, r.volume);
-        addUnique(mag.titles, r.title_name);
-        addUnique(mag.pageNumbers, r.page_numbers);
-        addUnique(mag.languages, r.language);
-        (r.authors ?? "")
-          .split(",")
-          .map((a) => a.trim())
-          .filter(Boolean)
-          .forEach((a) => addUnique(mag!.authors, a));
-        if (!mag.recordIds.includes(r.id)) mag.recordIds.push(r.id);
-        ua.totalActivity++;
-      }
+      if (!r.creator_name || !r.email) return;
+      const ua = getOrInitUA(r.creator_name, r.email);
+      addToMagazineVolumeGroup(ua.createdByMag, r.name || "Untitled", r, ua.distinctCreated);
     });
 
-    // Summaries edited (distinct recordIds)
+    // Summaries Edited (distinct record_id per (user,email))
     summaries.forEach((s) => {
-      if (s.name && s.email && typeof s.record_id === "number") {
-        const rec = records.find((r) => r.id === s.record_id);
-        if (!rec) return;
-        const key = keyOf(s.name, s.email);
-        if (!map.has(key)) {
-          map.set(key, {
-            userName: s.name,
-            userEmail: s.email,
-            recordsCreated: [],
-            summariesEdited: [],
-            conclusionsEdited: [],
-            totalActivity: 0,
-          });
-        }
-        const ua = map.get(key)!;
-        let mag = ua.summariesEdited.find((x) => x.magazineName === rec.name);
-        if (!mag) {
-          mag = {
-            magazineName: rec.name,
-            count: 0,
-            volumes: [],
-            titles: [],
-            pageNumbers: [],
-            recordIds: [],
-          };
-          ua.summariesEdited.push(mag);
-        }
-        // Only count distinct recordIds
-        if (!mag.recordIds.includes(rec.id)) {
-          mag.count++;
-          mag.recordIds.push(rec.id);
-          addUnique(mag.volumes, rec.volume);
-          addUnique(mag.titles, rec.title_name);
-          addUnique(mag.pageNumbers, rec.page_numbers);
-          ua.totalActivity++;
-        }
-      }
+      if (!s.name || !s.email || typeof s.record_id !== "number") return;
+      const rec = records.find((r) => r.id === s.record_id);
+      if (!rec) return;
+      const ua = getOrInitUA(s.name, s.email);
+      addToMagazineVolumeGroup(ua.summaryEditsByMag, rec.name || "Untitled", rec, ua.distinctSummary);
     });
 
-    // Conclusions edited (distinct recordIds)
+    // Conclusions Edited (distinct record_id per (user,email))
     conclusions.forEach((c) => {
-      if (c.name && c.email && typeof c.record_id === "number") {
-        const rec = records.find((r) => r.id === c.record_id);
-        if (!rec) return;
-        const key = keyOf(c.name, c.email);
-        if (!map.has(key)) {
-          map.set(key, {
-            userName: c.name,
-            userEmail: c.email,
-            recordsCreated: [],
-            summariesEdited: [],
-            conclusionsEdited: [],
-            totalActivity: 0,
-          });
-        }
-        const ua = map.get(key)!;
-        let mag = ua.conclusionsEdited.find((x) => x.magazineName === rec.name);
-        if (!mag) {
-          mag = {
-            magazineName: rec.name,
-            count: 0,
-            volumes: [],
-            titles: [],
-            pageNumbers: [],
-            recordIds: [],
-          };
-          ua.conclusionsEdited.push(mag);
-        }
-        // Only count distinct recordIds
-        if (!mag.recordIds.includes(rec.id)) {
-          mag.count++;
-          mag.recordIds.push(rec.id);
-          addUnique(mag.volumes, rec.volume);
-          addUnique(mag.titles, rec.title_name);
-          addUnique(mag.pageNumbers, rec.page_numbers);
-          ua.totalActivity++;
-        }
-      }
+      if (!c.name || !c.email || typeof c.record_id !== "number") return;
+      const rec = records.find((r) => r.id === c.record_id);
+      if (!rec) return;
+      const ua = getOrInitUA(c.name, c.email);
+      addToMagazineVolumeGroup(ua.conclusionEditsByMag, rec.name || "Untitled", rec, ua.distinctConclusion);
     });
 
-    return Array.from(map.values()).sort((a, b) => b.totalActivity - a.totalActivity);
+    // Materialize + sort
+    const out: UserMagazineActivityV2[] = Array.from(users.values()).map((u) => {
+      const materialize = (m: Map<string, MagazineVolumeGroup>): MagazineVolumeGroup[] =>
+        Array.from(m.values())
+          .map((g) => ({
+            ...g,
+            // sort volumes: named volumes first (alpha), null/— last
+            volumes: g.volumes
+              .map((v) => ({
+                ...v,
+                // dedupe strings a bit for cleaner chips
+                titles: Array.from(new Set(v.titles)).slice(0, 100),
+                numbers: Array.from(new Set(v.numbers)).slice(0, 100),
+                pageNumbers: Array.from(new Set(v.pageNumbers)).slice(0, 100),
+                timestamps: Array.from(new Set(v.timestamps)).slice(0, 100),
+                languages: Array.from(new Set(v.languages)).slice(0, 100),
+                authors: Array.from(new Set(v.authors)).slice(0, 100),
+                records: v.records, // already compact
+              }))
+              .sort((a, b) => {
+                const av = a.volume ?? "~~~";
+                const bv = b.volume ?? "~~~";
+                return av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+              }),
+          }))
+          .sort((a, b) => b.totalCount - a.totalCount);
+
+      const created = materialize(u.createdByMag);
+      const sumEd = materialize(u.summaryEditsByMag);
+      const conEd = materialize(u.conclusionEditsByMag);
+
+      const totalActivity =
+        created.reduce((s, g) => s + g.totalCount, 0) +
+        sumEd.reduce((s, g) => s + g.totalCount, 0) +
+        conEd.reduce((s, g) => s + g.totalCount, 0);
+
+      return {
+        userName: u.userName,
+        userEmail: u.userEmail,
+        recordsCreated: created,
+        summariesEdited: sumEd,
+        conclusionsEdited: conEd,
+        totalActivity,
+      };
+    });
+
+    // sort users by total activity
+    out.sort((a, b) => b.totalActivity - a.totalActivity);
+    return out;
   }, [records, summaries, conclusions]);
 
   const filteredUserMagazineActivities = useMemo(() => {
@@ -923,19 +997,19 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">
-                          {ua.recordsCreated.reduce((sum, m) => sum + m.count, 0)} records
+                          {ua.recordsCreated.reduce((sum, m) => sum + m.totalCount, 0)} records
                         </div>
                         <div className="text-xs text-gray-500">{ua.recordsCreated.length} magazines</div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">
-                          {ua.summariesEdited.reduce((sum, m) => sum + m.count, 0)} records
+                          {ua.summariesEdited.reduce((sum, m) => sum + m.totalCount, 0)} records
                         </div>
                         <div className="text-xs text-gray-500">{ua.summariesEdited.length} magazines</div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">
-                          {ua.conclusionsEdited.reduce((sum, m) => sum + m.count, 0)} records
+                          {ua.conclusionsEdited.reduce((sum, m) => sum + m.totalCount, 0)} records
                         </div>
                         <div className="text-xs text-gray-500">{ua.conclusionsEdited.length} magazines</div>
                       </td>
@@ -984,32 +1058,17 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
             <div className="p-6 space-y-8">
               {/* Records Created */}
               {selectedUserActivity.recordsCreated.length > 0 && (
-                <MagSection
-                  title="Records Created"
-                  color="blue"
-                  items={selectedUserActivity.recordsCreated}
-                  type="created"
-                />
+                <MagSection title="Records Created" color="blue" groups={selectedUserActivity.recordsCreated} />
               )}
 
               {/* Summaries Edited */}
               {selectedUserActivity.summariesEdited.length > 0 && (
-                <MagSection
-                  title="Summaries Edited"
-                  color="green"
-                  items={selectedUserActivity.summariesEdited}
-                  type="edited"
-                />
+                <MagSection title="Summaries Edited" color="green" groups={selectedUserActivity.summariesEdited} />
               )}
 
               {/* Conclusions Edited */}
               {selectedUserActivity.conclusionsEdited.length > 0 && (
-                <MagSection
-                  title="Conclusions Edited"
-                  color="purple"
-                  items={selectedUserActivity.conclusionsEdited}
-                  type="edited"
-                />
+                <MagSection title="Conclusions Edited" color="purple" groups={selectedUserActivity.conclusionsEdited} />
               )}
 
               {selectedUserActivity.recordsCreated.length === 0 &&
@@ -1291,16 +1350,11 @@ function Select({
 function MagSection({
   title,
   color,
-  items,
-  type,
+  groups,
 }: {
   title: string;
   color: "blue" | "green" | "purple";
-  items:
-    | UserMagazineActivity["recordsCreated"]
-    | UserMagazineActivity["summariesEdited"]
-    | UserMagazineActivity["conclusionsEdited"];
-  type: "created" | "edited";
+  groups: MagazineVolumeGroup[];
 }) {
   const colorMap = {
     blue: { bg: "bg-blue-50", border: "border-blue-200", tag: "bg-blue-600" },
@@ -1308,7 +1362,7 @@ function MagSection({
     purple: { bg: "bg-purple-50", border: "border-purple-200", tag: "bg-purple-600" },
   }[color];
 
-  const total = items.reduce((s, m) => s + m.count, 0);
+  const total = groups.reduce((s, g) => s + g.totalCount, 0);
 
   return (
     <div>
@@ -1316,42 +1370,111 @@ function MagSection({
         <span className={`w-3 h-3 ${colorMap.tag} rounded-full mr-3`}></span>
         {title} ({total})
       </h4>
-      <div className="grid gap-4">
-        {items.map((mag: any, idx: number) => (
-          <div key={idx} className={`${colorMap.bg} rounded-lg p-4 border ${colorMap.border}`}>
-            <div className="flex justify-between items-start mb-3">
-              <h5 className="font-semibold text-gray-900">{mag.magazineName}</h5>
-              <span className={`${colorMap.tag} text-white px-2 py-1 rounded text-sm font-medium`}>
-                {mag.count} {type === "created" ? "records" : "records"}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
-              {"volumes" in mag && (
-                <SmallBadges label="Volumes" items={mag.volumes} colorClass="border-gray-300 text-gray-800" />
-              )}
-              {"titles" in mag && (
-                <SmallBadges label="Titles" items={mag.titles} colorClass="border-gray-300 text-gray-800" limit={3} />
-              )}
-              {"pageNumbers" in mag && (
-                <SmallBadges
-                  label="Pages"
-                  items={mag.pageNumbers}
-                  colorClass="border-gray-300 text-gray-800"
-                  limit={3}
-                />
-              )}
-              {"languages" in mag && (
-                <SmallBadges label="Languages" items={mag.languages} colorClass="border-gray-300 text-gray-800" />
-              )}
-            </div>
-            {"authors" in mag && mag.authors?.length > 0 && (
-              <SmallBadges label="Authors" items={mag.authors} colorClass="border-gray-300 text-gray-800" limit={5} />
-            )}
-            {"recordIds" in mag && (
-              <div className="mt-3 text-xs text-gray-600">
-                <span className="font-medium">Record IDs:</span> {mag.recordIds.join(", ")}
+
+      <div className="grid gap-6">
+        {groups.map((mag, idx) => (
+          <div key={idx} className="bg-white rounded-xl border border-gray-200 shadow-sm">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold">
+                  {mag.magazineName.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-semibold text-gray-900">{mag.magazineName}</div>
+                  <div className="text-xs text-gray-500">{mag.totalCount} record(s)</div>
+                </div>
               </div>
-            )}
+            </div>
+
+            {/* Per-volume cards */}
+            <div className="p-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {mag.volumes.map((v, vi) => (
+                <div key={vi} className={`${colorMap.bg} rounded-lg p-4 border ${colorMap.border}`}>
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex gap-3 flex-wrap">
+                      {v.timestamps?.length > 0 && (
+                        <div>
+                          <div className="text-sm text-gray-500">Timestamps</div>
+                          <div className="font-semibold text-gray-900">
+                            {v.timestamps.slice(0, 3).join(", ")}
+                            {v.timestamps.length > 3 && ` +${v.timestamps.length - 3}`}
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm text-gray-500">Volume</div>
+                        <div className="font-semibold text-gray-900">{v.volume ?? "—"}</div>
+                      </div>
+                      {v.numbers?.length > 0 && (
+                        <div>
+                          <div className="text-sm text-gray-500">Numbers</div>
+                          <div className="font-semibold text-gray-900">
+                            {v.numbers.slice(0, 3).join(", ")}
+                            {v.numbers.length > 3 && ` +${v.numbers.length - 3}`}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <span className={`${colorMap.tag} text-white px-2 py-1 rounded text-sm font-medium`}>
+                      {v.count} {v.count === 1 ? "record" : "records"}
+                    </span>
+                  </div>
+
+                  {/* Chips */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                    <SmallBadges label="Titles" items={v.titles} colorClass="border-gray-300 text-gray-800" limit={4} />
+                    <SmallBadges
+                      label="Languages"
+                      items={v.languages}
+                      colorClass="border-gray-300 text-gray-800"
+                      limit={3}
+                    />
+                  </div>
+
+                  {v.authors?.length > 0 && (
+                    <div className="mt-3">
+                      <SmallBadges
+                        label="Authors"
+                        items={v.authors}
+                        colorClass="border-gray-300 text-gray-800"
+                        limit={6}
+                      />
+                    </div>
+                  )}
+
+                  {/* IDs + detailed lines */}
+                  <div className="mt-3 text-xs text-gray-600">
+                    <span className="font-medium">Record IDs:</span> {[...v.recordIds].sort((a, b) => a - b).join(", ")}
+                  </div>
+
+                  {/* <div className="mt-3">
+                    <div className="text-xs text-gray-500 mb-1">Details</div>
+                    <ul className="space-y-1 text-sm">
+                      {v.records.slice(0, 10).map((r) => (
+                        <li key={r.id} className="border-b last:border-0 border-gray-200 pb-1">
+                          <span className="font-medium text-gray-900">#{r.id}</span>
+                          {r.title ? (
+                            <>
+                              {" "}
+                              — <span>{r.title}</span>
+                            </>
+                          ) : null}
+                          {r.number ? <> • No: {r.number}</> : null}
+                          {r.pages ? <> • Pages: {r.pages}</> : null}
+                          {r.timestamp ? <> • {r.timestamp}</> : null}
+                          {r.language ? <> • {r.language}</> : null}
+                        </li>
+                      ))}
+                      {v.records.length > 10 && (
+                        <li className="text-xs text-gray-500">+{v.records.length - 10} more</li>
+                      )}
+                    </ul>
+                  </div> */}
+                </div>
+              ))}
+
+              {mag.volumes.length === 0 && <div className="text-gray-500 text-sm p-4">No volume data.</div>}
+            </div>
           </div>
         ))}
       </div>
