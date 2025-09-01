@@ -88,6 +88,7 @@ type UserMagazineActivity = {
     pageNumbers: string[];
     authors: string[];
     languages: string[];
+    recordIds: number[];
   }[];
   summariesEdited: {
     magazineName: string;
@@ -441,75 +442,79 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
 
   // Build top user activity rows (chart)
   const userActivityRows: UserActivityRow[] = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        name: string;
-        email: string;
-        records: number;
-        summaries: number;
-        conclusions: number;
-        summariesFilled: number;
-        conclusionsFilled: number;
-      }
-    >();
+    type Entry = {
+      name: string;
+      email: string;
+      records: number; // created by user (from records table)
+      summaries: number; // DISTINCT record_id edited by this email
+      conclusions: number; // DISTINCT record_id edited by this email
+      summariesFilled: number; // records table has non-empty summary
+      conclusionsFilled: number; // records table has non-empty conclusion
+      _summaryRecordIds: Set<number>;
+      _conclusionRecordIds: Set<number>;
+    };
 
-    records.forEach((r) => {
-      if (r.email && r.creator_name) {
-        const key = `${r.creator_name}|${r.email}`;
-        const entry = map.get(key) || {
-          name: r.creator_name,
-          email: r.email,
+    const map = new Map<string, Entry>();
+    const keyOf = (name: string, email: string) => `${name}|${email}`;
+
+    const getOrCreate = (name: string, email: string): Entry => {
+      const key = keyOf(name, email);
+      if (!map.has(key)) {
+        map.set(key, {
+          name,
+          email,
           records: 0,
           summaries: 0,
           conclusions: 0,
           summariesFilled: 0,
           conclusionsFilled: 0,
-        };
+          _summaryRecordIds: new Set<number>(),
+          _conclusionRecordIds: new Set<number>(),
+        });
+      }
+      return map.get(key)!;
+    };
+
+    // Records created + filled counts (by creator)
+    records.forEach((r) => {
+      if (r.email && r.creator_name) {
+        const entry = getOrCreate(r.creator_name, r.email);
         entry.records += 1;
         if (r.summary && r.summary.trim() !== "") entry.summariesFilled += 1;
         if (r.conclusion && r.conclusion.trim() !== "") entry.conclusionsFilled += 1;
-        map.set(key, entry);
       }
     });
 
+    // Summaries: DISTINCT record_id per editor email
     summaries.forEach((s) => {
-      if (s.email && s.name) {
-        const key = `${s.name}|${s.email}`;
-        const entry = map.get(key) || {
-          name: s.name,
-          email: s.email,
-          records: 0,
-          summaries: 0,
-          conclusions: 0,
-          summariesFilled: 0,
-          conclusionsFilled: 0,
-        };
-        entry.summaries += 1;
-        map.set(key, entry);
+      if (s.email && s.name && typeof s.record_id === "number") {
+        const entry = getOrCreate(s.name, s.email);
+        entry._summaryRecordIds.add(s.record_id);
       }
     });
 
+    // Conclusions: DISTINCT record_id per editor email
     conclusions.forEach((c) => {
-      if (c.email && c.name) {
-        const key = `${c.name}|${c.email}`;
-        const entry = map.get(key) || {
-          name: c.name,
-          email: c.email,
-          records: 0,
-          summaries: 0,
-          conclusions: 0,
-          summariesFilled: 0,
-          conclusionsFilled: 0,
-        };
-        entry.conclusions += 1;
-        map.set(key, entry);
+      if (c.email && c.name && typeof c.record_id === "number") {
+        const entry = getOrCreate(c.name, c.email);
+        entry._conclusionRecordIds.add(c.record_id);
       }
     });
 
-    const all = Array.from(map.values()).sort(
-      (a, b) => b.records + b.summaries + b.conclusions - (a.records + a.summaries + a.conclusions),
-    );
+    // Finalize distinct counts
+    const all = Array.from(map.values()).map((e) => ({
+      name: e.name,
+      email: e.email,
+      records: e.records,
+      summariesFilled: e.summariesFilled,
+      conclusionsFilled: e.conclusionsFilled,
+      summaries: e._summaryRecordIds.size,
+      conclusions: e._conclusionRecordIds.size,
+    }));
+
+    // Sort by total activity (same as before)
+    all.sort((a, b) => b.records + b.summaries + b.conclusions - (a.records + a.summaries + a.conclusions));
+
     return all.slice(0, 10);
   }, [records, summaries, conclusions]);
 
@@ -601,6 +606,7 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
             pageNumbers: [],
             authors: [],
             languages: [],
+            recordIds: [],
           };
           ua.recordsCreated.push(mag);
         }
@@ -614,13 +620,14 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
           .map((a) => a.trim())
           .filter(Boolean)
           .forEach((a) => addUnique(mag!.authors, a));
+        if (!mag.recordIds.includes(r.id)) mag.recordIds.push(r.id);
         ua.totalActivity++;
       }
     });
 
-    // Summaries edited
+    // Summaries edited (distinct recordIds)
     summaries.forEach((s) => {
-      if (s.name && s.email && s.record_id) {
+      if (s.name && s.email && typeof s.record_id === "number") {
         const rec = records.find((r) => r.id === s.record_id);
         if (!rec) return;
         const key = keyOf(s.name, s.email);
@@ -647,18 +654,21 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
           };
           ua.summariesEdited.push(mag);
         }
-        mag.count++;
-        addUnique(mag.volumes, rec.volume);
-        addUnique(mag.titles, rec.title_name);
-        addUnique(mag.pageNumbers, rec.page_numbers);
-        if (!mag.recordIds.includes(rec.id)) mag.recordIds.push(rec.id);
-        ua.totalActivity++;
+        // Only count distinct recordIds
+        if (!mag.recordIds.includes(rec.id)) {
+          mag.count++;
+          mag.recordIds.push(rec.id);
+          addUnique(mag.volumes, rec.volume);
+          addUnique(mag.titles, rec.title_name);
+          addUnique(mag.pageNumbers, rec.page_numbers);
+          ua.totalActivity++;
+        }
       }
     });
 
-    // Conclusions edited
+    // Conclusions edited (distinct recordIds)
     conclusions.forEach((c) => {
-      if (c.name && c.email && c.record_id) {
+      if (c.name && c.email && typeof c.record_id === "number") {
         const rec = records.find((r) => r.id === c.record_id);
         if (!rec) return;
         const key = keyOf(c.name, c.email);
@@ -685,12 +695,15 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
           };
           ua.conclusionsEdited.push(mag);
         }
-        mag.count++;
-        addUnique(mag.volumes, rec.volume);
-        addUnique(mag.titles, rec.title_name);
-        addUnique(mag.pageNumbers, rec.page_numbers);
-        if (!mag.recordIds.includes(rec.id)) mag.recordIds.push(rec.id);
-        ua.totalActivity++;
+        // Only count distinct recordIds
+        if (!mag.recordIds.includes(rec.id)) {
+          mag.count++;
+          mag.recordIds.push(rec.id);
+          addUnique(mag.volumes, rec.volume);
+          addUnique(mag.titles, rec.title_name);
+          addUnique(mag.pageNumbers, rec.page_numbers);
+          ua.totalActivity++;
+        }
       }
     });
 
@@ -916,13 +929,13 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">
-                          {ua.summariesEdited.reduce((sum, m) => sum + m.count, 0)} edits
+                          {ua.summariesEdited.reduce((sum, m) => sum + m.count, 0)} records
                         </div>
                         <div className="text-xs text-gray-500">{ua.summariesEdited.length} magazines</div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm text-gray-900">
-                          {ua.conclusionsEdited.reduce((sum, m) => sum + m.count, 0)} edits
+                          {ua.conclusionsEdited.reduce((sum, m) => sum + m.count, 0)} records
                         </div>
                         <div className="text-xs text-gray-500">{ua.conclusionsEdited.length} magazines</div>
                       </td>
@@ -1309,7 +1322,7 @@ function MagSection({
             <div className="flex justify-between items-start mb-3">
               <h5 className="font-semibold text-gray-900">{mag.magazineName}</h5>
               <span className={`${colorMap.tag} text-white px-2 py-1 rounded text-sm font-medium`}>
-                {mag.count} {type === "created" ? "records" : "edits"}
+                {mag.count} {type === "created" ? "records" : "records"}
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
