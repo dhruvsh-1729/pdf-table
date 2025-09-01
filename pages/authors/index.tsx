@@ -20,6 +20,7 @@ interface Author {
   description: string | null;
   cover_url: string | null;
   created_at: string;
+  national: "national" | "international" | null; // <-- add
 }
 
 interface AuthorRecord {
@@ -42,6 +43,7 @@ interface AuthorsPageProps {
     sortOrder: string;
     dateFrom: string;
     dateTo: string;
+    national?: "national" | "international" | "null" | ""; // <-- add
   };
 }
 
@@ -138,6 +140,22 @@ const AuthorDetailsModal = ({
               })}
             </p> */}
           </div>
+          {typeof author.national !== "undefined" && (
+            <div className="mt-1">
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded text-xs
+      ${
+        author.national === "national"
+          ? "bg-green-100 text-green-800"
+          : author.national === "international"
+            ? "bg-purple-100 text-purple-800"
+            : "bg-gray-100 text-gray-600"
+      }`}
+              >
+                {author.national ?? "Unassigned"}
+              </span>
+            </div>
+          )}
           <div className="flex space-x-2">
             <button
               onClick={onEdit}
@@ -327,6 +345,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
       sortOrder: "desc",
       dateFrom: "",
       dateTo: "",
+      national: "",
     };
     setLocalFilters(clearedFilters);
     onFiltersChange(clearedFilters);
@@ -422,6 +441,21 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 onChange={(e) => handleFilterChange("dateTo", e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            {/* National / International */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Allotment</label>
+              <select
+                value={localFilters.national || ""}
+                onChange={(e) => handleFilterChange("national", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="national">National</option>
+                <option value="international">International</option>
+                <option value="null">Unassigned (null)</option>
+              </select>
             </div>
           </div>
         </div>
@@ -851,6 +885,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     sortOrder: (context.query.sortOrder as string) || "desc",
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
+    national: (context.query.national as string) || "", // <-- add
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -874,6 +909,17 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     if (filters.dateTo) {
       query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
       countQuery = countQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
+    }
+
+    if (filters.national === "national") {
+      query = query.eq("national", "national");
+      countQuery = countQuery.eq("national", "national");
+    } else if (filters.national === "international") {
+      query = query.eq("national", "international");
+      countQuery = countQuery.eq("national", "international");
+    } else if (filters.national === "null") {
+      query = query.is("national", null);
+      countQuery = countQuery.is("national", null);
     }
 
     // Apply sorting

@@ -8,6 +8,7 @@ interface Author {
   description: string | null;
   cover_url: string | null;
   created_at: string;
+  national: "national" | "international" | null; // <-- add
 }
 
 interface AuthorRecord {
@@ -104,6 +105,7 @@ const EnhancedAuthorFormModal = ({
     name: "",
     description: "",
     cover_url: "",
+    national: "" as "" | "national" | "international", // empty means null
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -114,9 +116,10 @@ const EnhancedAuthorFormModal = ({
         name: author.name || "",
         description: author.description || "",
         cover_url: author.cover_url || "",
+        national: (author.national as "national" | "international" | null) ?? "", // null -> ""
       });
     } else {
-      setFormData({ name: "", description: "", cover_url: "" });
+      setFormData({ name: "", description: "", cover_url: "", national: "" });
     }
     setErrors({});
   }, [author, isOpen]);
@@ -160,7 +163,12 @@ const EnhancedAuthorFormModal = ({
 
     setLoading(true);
     try {
-      await onSave(formData);
+      await onSave({
+        name: formData.name,
+        description: formData.description || null,
+        cover_url: formData.cover_url || null,
+        national: formData.national || null, // "" -> null
+      });
     } finally {
       setLoading(false);
     }
@@ -245,6 +253,25 @@ const EnhancedAuthorFormModal = ({
               />
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Allotment</label>
+            <select
+              value={formData.national}
+              onChange={(e) =>
+                setFormData({ ...formData, national: e.target.value as "" | "national" | "international" })
+              }
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.national ? "border-red-500" : "border-gray-300"
+              }`}
+              disabled={loading}
+            >
+              <option value="">Unassigned</option>
+              <option value="national">National</option>
+              <option value="international">International</option>
+            </select>
+            {errors.national && <p className="text-red-500 text-xs mt-1">{errors.national}</p>}
+          </div>
 
           <div className="flex justify-end space-x-3 mt-6">
             <button
@@ -463,6 +490,22 @@ const SelectableAuthorCard = ({
           {author.description}
         </p>
       )}
+
+      <div className="text-xs text-gray-600">
+        {author.national ? (
+          <span
+            className={
+              author.national === "national"
+                ? "bg-green-100 text-green-800 px-1.5 py-0.5 rounded"
+                : "bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded"
+            }
+          >
+            {author.national}
+          </span>
+        ) : (
+          <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>
+        )}
+      </div>
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">

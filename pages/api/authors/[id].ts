@@ -33,15 +33,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "PUT") {
     // Update author
     try {
-      const { name, description, cover_url } = req.body;
+      const { name, description, cover_url, national } = req.body as {
+        name?: string;
+        description?: string | null;
+        cover_url?: string | null;
+        national?: string | null;
+      };
 
       if (!name) {
         return res.status(400).json({ message: "Name is required" });
       }
 
+      const normalizedNational =
+        national === "national" || national === "international"
+          ? national
+          : national === null || national === undefined || national === ""
+            ? null
+            : null;
+
       const { data, error } = await supabase
         .from("authors")
-        .update({ name, description, cover_url })
+        .update({ name, description, cover_url, national: normalizedNational })
         .eq("id", authorId)
         .select();
 

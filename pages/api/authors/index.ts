@@ -7,13 +7,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "POST") {
     // Create new author
     try {
-      const { name, description, cover_url } = req.body;
+      const { name, description, cover_url, national } = req.body as {
+        name?: string;
+        description?: string | null;
+        cover_url?: string | null;
+        national?: string | null;
+      };
 
       if (!name) {
         return res.status(400).json({ message: "Name is required" });
       }
 
-      const { data, error } = await supabase.from("authors").insert([{ name, description, cover_url }]).select();
+      const normalizedNational =
+        national === "national" || national === "international"
+          ? national
+          : national === null || national === undefined || national === ""
+            ? null
+            : null; // anything else -> null
+
+      const { data, error } = await supabase
+        .from("authors")
+        .insert([{ name, description, cover_url, national: normalizedNational }])
+        .select();
 
       if (error) {
         if (error.code === "23505") {

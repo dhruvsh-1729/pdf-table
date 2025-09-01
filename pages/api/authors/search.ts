@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       let query = supabase
         .from("authors")
-        .select("id, name, description, cover_url")
+        .select("id,name,description,cover_url,created_at,national")
         .order("name")
         .range(offsetNum, offsetNum + limitNum - 1);
 
