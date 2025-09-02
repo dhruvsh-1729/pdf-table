@@ -348,24 +348,50 @@ const AuthorStats = () => {
 const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
   const [importing, setImporting] = useState(false);
 
+  // Updated handleExport function for CSV
   const handleExport = async () => {
     try {
       const response = await fetch("/api/authors/export");
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.statusText}`);
+      }
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `authors-export-${new Date().toISOString().split("T")[0]}.json`;
+      a.download = `authors-export-${new Date().toISOString().split("T")[0]}.csv`;
       a.click();
       window.URL.revokeObjectURL(url);
+
+      // Optional: Show success message
+      console.log("Authors exported successfully");
     } catch (error) {
       console.error("Export error:", error);
+      // Optional: Show error message to user
+      alert("Failed to export authors. Please try again.");
     }
   };
 
+  // Updated handleImport function for CSV with better error handling
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      alert("Please select a CSV file");
+      event.target.value = "";
+      return;
+    }
+
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File size must be less than 10MB");
+      event.target.value = "";
+      return;
+    }
 
     setImporting(true);
     try {
@@ -377,16 +403,42 @@ const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
         body: formData,
       });
 
+      const result = await response.json();
+
       if (response.ok) {
+        // Success
+        alert(result.message || "Authors imported successfully");
         onRefresh();
+      } else {
+        // Error from server
+        console.error("Import failed:", result);
+        alert(`Import failed: ${result.error}${result.details ? "\n" + result.details : ""}`);
       }
     } catch (error) {
       console.error("Import error:", error);
+      alert("Import failed. Please check your file and try again.");
     } finally {
       setImporting(false);
       // Reset file input
       event.target.value = "";
     }
+  };
+
+  // Sample CSV structure for reference
+  const SAMPLE_CSV_STRUCTURE = `id,name,description,cover_url,national,created_at
+1,"John Doe","Famous novelist","https://example.com/john.jpg","American","2024-01-15T10:00:00Z"
+2,"Jane Smith","Science fiction writer","https://example.com/jane.jpg","British","2024-01-16T11:30:00Z"
+,"New Author","Leave ID empty for new authors","","Canadian",""`;
+
+  // Helper function to download sample CSV template
+  const downloadSampleCSV = () => {
+    const blob = new Blob([SAMPLE_CSV_STRUCTURE], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "authors-template.csv";
+    a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   return (
@@ -397,7 +449,7 @@ const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
       <div className="relative">
         <input
           type="file"
-          accept=".json"
+          accept=".csv"
           onChange={handleImport}
           className="absolute inset-0 opacity-0 cursor-pointer"
           disabled={importing}
