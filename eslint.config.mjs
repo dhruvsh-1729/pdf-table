@@ -18,6 +18,7 @@ const eslintConfig = [
       "@typescript-eslint/no-unused-vars": "off",
       "@typescript-eslint/explicit-module-boundary-types": "off",
       "@typescript-eslint/no-inferrable-types": "off",
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
 ];
