@@ -349,13 +349,12 @@ const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
   const [importing, setImporting] = useState(false);
 
   // Updated handleExport function for CSV
+  // Example: in AuthorsPage component
   const handleExport = async () => {
     try {
-      const response = await fetch("/api/authors/export");
-
-      if (!response.ok) {
-        throw new Error(`Export failed: ${response.statusText}`);
-      }
+      const qs = window.location.search; // already has ?search=...&dateFrom=...
+      const response = await fetch(`/api/authors/export${qs}`);
+      if (!response.ok) throw new Error(`Export failed: ${response.statusText}`);
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -364,12 +363,8 @@ const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
       a.download = `authors-export-${new Date().toISOString().split("T")[0]}.csv`;
       a.click();
       window.URL.revokeObjectURL(url);
-
-      // Optional: Show success message
-      console.log("Authors exported successfully");
     } catch (error) {
       console.error("Export error:", error);
-      // Optional: Show error message to user
       alert("Failed to export authors. Please try again.");
     }
   };
@@ -594,7 +589,7 @@ const EnhancedSearch = ({
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/authors/search?q=${encodeURIComponent(query)}&limit=5`);
+      const response = await fetch(`/api/authors/search?q=${encodeURIComponent(query)}`);
       const data = await response.json();
       setSuggestions(data);
     } catch (error) {
