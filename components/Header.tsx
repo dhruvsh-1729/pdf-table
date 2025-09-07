@@ -56,6 +56,15 @@ export default function Header({
                   Authors
                 </button>
               )}
+            {user?.email &&
+              (user.email === "dharmsasanwork99@gmail.com" || user.email === "dhruvshdarshansh@gmail.com") && (
+                <button
+                  onClick={() => router.push("/tags")}
+                  className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+                >
+                  Tags
+                </button>
+              )}
             <button
               onClick={() => {
                 localStorage.setItem("user", JSON.stringify(null));
