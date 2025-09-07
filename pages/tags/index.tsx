@@ -19,6 +19,7 @@ interface Tag {
   name: string;
   important: boolean | null;
   created_at: string;
+  recordsCount?: number;
 }
 
 interface TagRecord {
@@ -42,6 +43,7 @@ interface TagsPageProps {
     dateFrom: string;
     dateTo: string;
     important?: "true" | "false" | "null" | "";
+    minRecords?: string; // "", "0", "1", "5", "10", "50"
   };
 }
 
@@ -331,6 +333,8 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
       dateFrom: "",
       dateTo: "",
       important: "",
+      hasRecords: "", // <— ADD
+      minRecords: "",
     };
     setLocalFilters(clearedFilters);
     onFiltersChange(clearedFilters);
@@ -440,6 +444,44 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 <option value="true">Important</option>
                 <option value="false">Normal</option>
                 <option value="null">Unassigned</option>
+              </select>
+            </div>
+
+            {/* Has Records */}
+            <div className="col-span-2 md:col-span-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Attachment</label>
+              <select
+                value={localFilters.hasRecords || ""}
+                onChange={(e) => handleFilterChange("hasRecords", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="with">Attached to at least one record</option>
+                <option value="without">No records attached</option>
+              </select>
+            </div>
+
+            {/* Records Count */}
+            <div className="col-span-2 md:col-span-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Records Count</label>
+              <select
+                value={localFilters.minRecords || ""}
+                onChange={(e) => handleFilterChange("minRecords", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="0">0 (no records)</option>
+                <option value="1">1+</option>
+                <option value="2">2+</option>
+                <option value="3">3+</option>
+                <option value="4">4+</option>
+                <option value="5">5+</option>
+                <option value="6">6+</option>
+                <option value="7">7+</option>
+                <option value="8">8+</option>
+                <option value="9">9+</option>
+                <option value="10">10+</option>
+                <option value="50">50+</option>
               </select>
             </div>
           </div>
@@ -782,15 +824,23 @@ export default function TagsPage({ tags, total, currentPage, totalPages, filters
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {tags.map((tag) => (
-                <SelectableTagCard
-                  key={tag.id}
-                  tag={tag}
-                  isSelected={selectedTags.includes(tag.id)}
-                  onSelect={(selected) => handleTagSelection(tag.id, selected)}
-                  onClick={() => openDetailsModal(tag)}
-                  onEdit={() => openEditModal(tag)}
-                  onDelete={() => openDeleteModal(tag)}
-                />
+                <div key={tag.id} className="relative">
+                  {/* Count badge */}
+                  <div className="absolute -top-2 -right-2 z-10 bg-indigo-600 text-white text-xs px-2 py-1 rounded-full shadow">
+                    {typeof tag.recordsCount === "number"
+                      ? `${tag.recordsCount} record${tag.recordsCount === 1 ? "" : "s"}`
+                      : "—"}
+                  </div>
+
+                  <SelectableTagCard
+                    tag={tag}
+                    isSelected={selectedTags.includes(tag.id)}
+                    onSelect={(selected) => handleTagSelection(tag.id, selected)}
+                    onClick={() => openDetailsModal(tag)}
+                    onEdit={() => openEditModal(tag)}
+                    onDelete={() => openDeleteModal(tag)}
+                  />
+                </div>
               ))}
             </div>
 
@@ -871,62 +921,156 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
     important: (context.query.important as string) || "",
+    hasRecords: (context.query.hasRecords as string) || "", // if you kept the earlier feature
+    minRecords: (context.query.minRecords as string) || "", // NEW
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   try {
-    let query = supabase.from("tags").select("*", { count: "exact" });
-    let countQuery = supabase.from("tags").select("*", { count: "exact", head: true });
+    // 1) Build base filtered tag IDs (without pagination)
+    let baseIdsQuery = supabase.from("tags").select("id");
 
-    // Apply search filter
+    // Search
     if (filters.search) {
-      const searchFilter = `name.ilike.%${filters.search}%`;
-      query = query.or(searchFilter);
-      countQuery = countQuery.or(searchFilter);
+      baseIdsQuery = baseIdsQuery.or(`name.ilike.%${filters.search}%`);
+    }
+    // Date
+    if (filters.dateFrom) baseIdsQuery = baseIdsQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
+    if (filters.dateTo) baseIdsQuery = baseIdsQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
+
+    // Important
+    if (filters.important === "true") baseIdsQuery = baseIdsQuery.eq("important", true);
+    else if (filters.important === "false") baseIdsQuery = baseIdsQuery.eq("important", false);
+    else if (filters.important === "null") baseIdsQuery = baseIdsQuery.is("important", null);
+
+    // HasRecords (optional, from previous step)
+    let tagIdsWithRecords: number[] = [];
+    if (filters.hasRecords) {
+      const { data: rtRows, error: rtErr } = await supabase
+        .from("record_tags") // <— junction table
+        .select("tag_id")
+        .not("tag_id", "is", null);
+      if (rtErr) throw rtErr;
+      tagIdsWithRecords = Array.from(new Set((rtRows || []).map((r: any) => r.tag_id)));
     }
 
-    // Apply date filters
-    if (filters.dateFrom) {
-      query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
-      countQuery = countQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
-    }
-    if (filters.dateTo) {
-      query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
-      countQuery = countQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
-    }
-
-    // Apply important filter
-    if (filters.important === "true") {
-      query = query.eq("important", true);
-      countQuery = countQuery.eq("important", true);
-    } else if (filters.important === "false") {
-      query = query.eq("important", false);
-      countQuery = countQuery.eq("important", false);
-    } else if (filters.important === "null") {
-      query = query.is("important", null);
-      countQuery = countQuery.is("important", null);
+    if (filters.hasRecords === "with") {
+      if (tagIdsWithRecords.length === 0) baseIdsQuery = baseIdsQuery.eq("id", -1);
+      else baseIdsQuery = baseIdsQuery.in("id", tagIdsWithRecords);
+    } else if (filters.hasRecords === "without") {
+      if (tagIdsWithRecords.length > 0) {
+        const list = `(${tagIdsWithRecords.join(",")})`;
+        baseIdsQuery = baseIdsQuery.not("id", "in", list);
+      }
+      // else: everyone is "without" => no further restriction
     }
 
-    // Apply sorting
+    const { data: baseIdsData, error: baseIdsErr } = await baseIdsQuery;
+    if (baseIdsErr) throw baseIdsErr;
+
+    const allMatchingIds: number[] = (baseIdsData || []).map((r: any) => r.id);
+    if (allMatchingIds.length === 0) {
+      return {
+        props: {
+          tags: [],
+          total: 0,
+          currentPage: 1,
+          totalPages: 0,
+          filters,
+        },
+      };
+    }
+
+    // 2) Pull counts for those IDs: SELECT tag_id, count(record_id) GROUP BY tag_id
+    // If .group is not working, let's get all record_tags and process them in JavaScript
+    const { data: allRecordTags, error: recordTagsErr } = await supabase
+      .from("record_tags")
+      .select("tag_id, record_id")
+      .in("tag_id", allMatchingIds);
+
+    if (recordTagsErr) throw recordTagsErr;
+
+    const countsMap = new Map<number, number>();
+    // Initialize all matching tag IDs with 0 count
+    allMatchingIds.forEach((id) => countsMap.set(id, 0));
+
+    // Group and count in JavaScript
+    if (allRecordTags) {
+      const groupedByTagId: Record<number, Set<number>> = {};
+
+      // Group record_ids by tag_id
+      allRecordTags.forEach((row) => {
+        const tagId = row.tag_id;
+        const recordId = row.record_id;
+
+        if (!groupedByTagId[tagId]) {
+          groupedByTagId[tagId] = new Set();
+        }
+
+        groupedByTagId[tagId].add(recordId);
+      });
+
+      // Count unique records for each tag
+      Object.entries(groupedByTagId).forEach(([tagId, recordIds]) => {
+        countsMap.set(Number(tagId), recordIds.size);
+      });
+    }
+
+    // 3) Apply minRecords filter locally
+    // 3) Apply minRecords filter locally
+    const min = filters.minRecords ? parseInt(filters.minRecords, 10) : NaN;
+
+    let filteredIds: number[];
+    if (Number.isFinite(min)) {
+      if (min === 0) {
+        // Exactly zero
+        filteredIds = allMatchingIds.filter((id) => (countsMap.get(id) || 0) === 0);
+      } else {
+        // At least `min`
+        filteredIds = allMatchingIds.filter((id) => (countsMap.get(id) || 0) >= min);
+      }
+    } else {
+      filteredIds = allMatchingIds;
+    }
+
+    // 4) Total after count filter
+    const totalAfterCountFilter = filteredIds.length;
+    if (totalAfterCountFilter === 0) {
+      return {
+        props: {
+          tags: [],
+          total: 0,
+          currentPage: 1,
+          totalPages: 0,
+          filters,
+        },
+      };
+    }
+
+    // 5) Fetch page rows for the filtered IDs, with sorting
+    let pageQuery = supabase.from("tags").select("*").in("id", filteredIds);
     const ascending = filters.sortOrder === "asc";
-    query = query.order(filters.sortBy, { ascending });
+    pageQuery = pageQuery.order(filters.sortBy, { ascending });
 
-    // Apply pagination
-    query = query.range(offset, offset + limit - 1);
+    // Pagination
+    pageQuery = pageQuery.range(offset, offset + limit - 1);
 
-    const [{ data: tags, error }, { count }] = await Promise.all([query, countQuery]);
+    const { data: pageRows, error: pageErr } = await pageQuery;
+    if (pageErr) throw pageErr;
 
-    if (error) {
-      throw error;
-    }
+    // 6) Attach recordsCount to each row
+    const tagsWithCounts: Tag[] = (pageRows || []).map((t: any) => ({
+      ...t,
+      recordsCount: countsMap.get(t.id) || 0,
+    }));
 
-    const totalPages = Math.ceil((count || 0) / limit);
+    const totalPages = Math.ceil(totalAfterCountFilter / limit);
 
     return {
       props: {
-        tags: tags || [],
-        total: count || 0,
+        tags: tagsWithCounts,
+        total: totalAfterCountFilter,
         currentPage: page,
         totalPages,
         filters,

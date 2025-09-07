@@ -30,6 +30,7 @@ interface TagsPageProps {
     dateFrom: string;
     dateTo: string;
     important?: "true" | "false" | "null" | "";
+    hasRecords?: "with" | "without" | ""; // <— ADD THIS
   };
 }
 
@@ -497,7 +498,7 @@ const EnhancedSearch = ({
       if (value && showSuggestions) {
         fetchSuggestions(value);
       }
-    }, 300);
+    }, 600);
 
     return () => clearTimeout(debounceTimer);
   }, [value, showSuggestions]);
