@@ -2,11 +2,7 @@ const { createClient } = require("@supabase/supabase-js");
 const Papa = require("papaparse");
 const fs = require("fs");
 
-const supabase = createClient(
-  "https://hzdjfyzrladnxjerisnm.supabase.co" || "",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6ZGpmeXpybGFkbnhqZXJpc25tIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0ODg3NTAzMywiZXhwIjoyMDY0NDUxMDMzfQ.ahutTLsn1yeAzCEFzJpxxECyW4LX6AQo7euBAMMlXQ4" ||
-    "",
-);
+const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
 /**
  * Smart name matching function that handles various prefixes, suffixes, and formatting differences
