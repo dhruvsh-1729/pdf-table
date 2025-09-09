@@ -4,7 +4,23 @@ import { createClient } from "@supabase/supabase-js";
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === "POST") {
+  if (req.method === "GET") {
+    try {
+      const search = (req.query.q as string) || "";
+      let query = supabase.from("authors").select("id, name");
+
+      if (search) {
+        query = query.ilike("name", `%${search}%`);
+      }
+
+      const { data, error } = await query.limit(20);
+      if (error) throw error;
+
+      return res.status(200).json(data);
+    } catch (error) {
+      return res.status(500).json({ error: "Error fetching authors", details: (error as Error).message });
+    }
+  } else if (req.method === "POST") {
     // Create new author
     try {
       const { name, description, cover_url, national } = req.body as {
