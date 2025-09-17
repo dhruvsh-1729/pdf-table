@@ -2,15 +2,19 @@
 import { useState, useEffect } from "react";
 // Types
 
+// Updated Author Interface
 interface Author {
   id: number;
   name: string;
   description: string | null;
   cover_url: string | null;
   created_at: string;
-  national: "national" | "international" | null; // <-- add
+  national: "national" | "international" | null;
+  designation: string | null; // New field
+  short_name: string | null; // New field
 }
 
+// Updated AuthorRecord interface (if needed)
 interface AuthorRecord {
   id: number;
   name: string;
@@ -20,6 +24,7 @@ interface AuthorRecord {
   title_name: string | null;
 }
 
+// Updated AuthorsPageProps filters
 interface AuthorsPageProps {
   authors: Author[];
   total: number;
@@ -31,6 +36,8 @@ interface AuthorsPageProps {
     sortOrder: string;
     dateFrom: string;
     dateTo: string;
+    national?: "national" | "international" | "null" | "";
+    designation?: string; // New filter
   };
 }
 
@@ -105,7 +112,9 @@ const EnhancedAuthorFormModal = ({
     name: "",
     description: "",
     cover_url: "",
-    national: "" as "" | "national" | "international", // empty means null
+    national: "" as "" | "national" | "international",
+    designation: "", // New field
+    short_name: "", // New field
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -116,10 +125,19 @@ const EnhancedAuthorFormModal = ({
         name: author.name || "",
         description: author.description || "",
         cover_url: author.cover_url || "",
-        national: (author.national as "national" | "international" | null) ?? "", // null -> ""
+        national: (author.national as "national" | "international" | null) ?? "",
+        designation: author.designation || "", // New field
+        short_name: author.short_name || "", // New field
       });
     } else {
-      setFormData({ name: "", description: "", cover_url: "", national: "" });
+      setFormData({
+        name: "",
+        description: "",
+        cover_url: "",
+        national: "",
+        designation: "", // New field
+        short_name: "", // New field
+      });
     }
     setErrors({});
   }, [author, isOpen]);
@@ -139,6 +157,16 @@ const EnhancedAuthorFormModal = ({
 
     if (formData.cover_url && !isValidUrl(formData.cover_url)) {
       newErrors.cover_url = "Please enter a valid URL";
+    }
+
+    // Validate designation
+    if (formData.designation && formData.designation.length > 100) {
+      newErrors.designation = "Designation must be less than 100 characters";
+    }
+
+    // Validate short name
+    if (formData.short_name && formData.short_name.length > 20) {
+      newErrors.short_name = "Short name must be less than 20 characters";
     }
 
     setErrors(newErrors);
@@ -167,7 +195,9 @@ const EnhancedAuthorFormModal = ({
         name: formData.name,
         description: formData.description || null,
         cover_url: formData.cover_url || null,
-        national: formData.national || null, // "" -> null
+        national: formData.national || null,
+        designation: formData.designation || null, // New field
+        short_name: formData.short_name || null, // New field
       });
     } finally {
       setLoading(false);
@@ -178,7 +208,10 @@ const EnhancedAuthorFormModal = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg max-w-md w-full p-6 relative" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="bg-white rounded-lg max-w-[80vw] w-full p-6 relative max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 text-xl"
@@ -207,6 +240,42 @@ const EnhancedAuthorFormModal = ({
             {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
           </div>
 
+          {/* New field: Short Name */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Short Name / Abbreviation</label>
+            <input
+              type="text"
+              value={formData.short_name}
+              onChange={(e) => setFormData({ ...formData, short_name: e.target.value })}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.short_name ? "border-red-500" : "border-gray-300"
+              }`}
+              disabled={loading}
+              maxLength={20}
+              placeholder="e.g., JD, Dr. Smith"
+            />
+            {errors.short_name && <p className="text-red-500 text-xs mt-1">{errors.short_name}</p>}
+            <p className="text-xs text-gray-500 mt-1">Optional abbreviation or short form of name</p>
+          </div>
+
+          {/* New field: Designation */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
+            <input
+              type="text"
+              value={formData.designation}
+              onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.designation ? "border-red-500" : "border-gray-300"
+              }`}
+              disabled={loading}
+              maxLength={100}
+              placeholder="e.g., Professor, Editor, Journalist"
+            />
+            {errors.designation && <p className="text-red-500 text-xs mt-1">{errors.designation}</p>}
+            <p className="text-xs text-gray-500 mt-1">Professional title or designation</p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea
@@ -215,7 +284,7 @@ const EnhancedAuthorFormModal = ({
               className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.description ? "border-red-500" : "border-gray-300"
               }`}
-              rows={8}
+              rows={6}
               disabled={loading}
               maxLength={4000}
             />
@@ -486,7 +555,7 @@ const BulkActions = ({
   );
 };
 
-// Enhanced Author Card with Selection
+// Enhanced Author Card with Selection (Updated)
 const SelectableAuthorCard = ({
   author,
   isSelected,
@@ -528,7 +597,8 @@ const SelectableAuthorCard = ({
         )}
         <div className="flex-1 min-w-0">
           <h3 className="font-medium text-gray-900 truncate">{author.name}</h3>
-          {/* <p className="text-sm text-gray-500">{new Date(author.created_at).toLocaleDateString()}</p> */}
+          {author.short_name && <p className="text-xs text-gray-500">({author.short_name})</p>}
+          {author.designation && <p className="text-xs text-blue-600 font-medium">{author.designation}</p>}
         </div>
       </div>
 
@@ -538,8 +608,8 @@ const SelectableAuthorCard = ({
         </p>
       )}
 
-      <div className="text-xs text-gray-600">
-        {author.national ? (
+      <div className="flex flex-wrap gap-1 text-xs">
+        {author.national && (
           <span
             className={
               author.national === "national"
@@ -549,13 +619,12 @@ const SelectableAuthorCard = ({
           >
             {author.national}
           </span>
-        ) : (
-          <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>
         )}
+        {!author.national && <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>}
       </div>
 
       {/* Action Buttons */}
-      <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity mt-2">
         <button onClick={onEdit} className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600">
           Edit
         </button>

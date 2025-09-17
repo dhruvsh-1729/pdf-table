@@ -1,3 +1,4 @@
+// /api/authors/[id].ts (Updated)
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 
@@ -33,11 +34,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "PUT") {
     // Update author
     try {
-      const { name, description, cover_url, national } = req.body as {
+      const { name, description, cover_url, national, designation, short_name } = req.body as {
         name?: string;
         description?: string | null;
         cover_url?: string | null;
         national?: string | null;
+        designation?: string | null; // New field
+        short_name?: string | null; // New field
       };
 
       if (!name) {
@@ -53,7 +56,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const { data, error } = await supabase
         .from("authors")
-        .update({ name, description, cover_url, national: normalizedNational })
+        .update({
+          name,
+          description,
+          cover_url,
+          national: normalizedNational,
+          designation: designation || null, // New field
+          short_name: short_name || null, // New field
+        })
         .eq("id", authorId)
         .select();
 

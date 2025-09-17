@@ -1,3 +1,4 @@
+// /api/authors/search.ts (Updated)
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 
@@ -8,17 +9,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const { q: searchTerm = "", offset = "0" } = req.query;
 
-      // const limitNum = Math.min(parseInt(limit as string) || 10, 50); // Max 50 results
       const offsetNum = parseInt(offset as string) || 0;
 
       let query = supabase
         .from("authors")
-        .select("id,name,description,cover_url,created_at,national")
+        .select("id,name,description,cover_url,created_at,national,designation,short_name") // Updated select
         .order("name")
         .range(offsetNum, offsetNum - 1);
 
       if (searchTerm) {
-        query = query.or(`name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`);
+        query = query.or(
+          `name.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,designation.ilike.%${searchTerm}%`,
+        );
       }
 
       const { data, error } = await query;

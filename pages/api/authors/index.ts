@@ -1,3 +1,4 @@
+// /api/authors/index.ts (Updated)
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 
@@ -7,7 +8,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "GET") {
     try {
       const search = (req.query.q as string) || "";
-      let query = supabase.from("authors").select("id, name");
+      let query = supabase.from("authors").select("id, name, designation, short_name");
 
       if (search) {
         query = query.ilike("name", `%${search}%`);
@@ -23,11 +24,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } else if (req.method === "POST") {
     // Create new author
     try {
-      const { name, description, cover_url, national } = req.body as {
+      const { name, description, cover_url, national, designation, short_name } = req.body as {
         name?: string;
         description?: string | null;
         cover_url?: string | null;
         national?: string | null;
+        designation?: string | null; // New field
+        short_name?: string | null; // New field
       };
 
       if (!name) {
@@ -39,11 +42,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ? national
           : national === null || national === undefined || national === ""
             ? null
-            : null; // anything else -> null
+            : null;
 
       const { data, error } = await supabase
         .from("authors")
-        .insert([{ name, description, cover_url, national: normalizedNational }])
+        .insert([
+          {
+            name,
+            description,
+            cover_url,
+            national: normalizedNational,
+            designation: designation || null, // New field
+            short_name: short_name || null, // New field
+          },
+        ])
         .select();
 
       if (error) {

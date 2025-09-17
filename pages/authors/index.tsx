@@ -14,15 +14,19 @@ import {
 } from "../../components/AuthorManagement";
 
 // Types
+// Updated Author Interface
 interface Author {
   id: number;
   name: string;
   description: string | null;
   cover_url: string | null;
   created_at: string;
-  national: "national" | "international" | null; // <-- add
+  national: "national" | "international" | null;
+  designation: string | null; // New field
+  short_name: string | null; // New field
 }
 
+// Updated AuthorRecord interface (if needed)
 interface AuthorRecord {
   id: number;
   name: string;
@@ -32,6 +36,7 @@ interface AuthorRecord {
   title_name: string | null;
 }
 
+// Updated AuthorsPageProps filters
 interface AuthorsPageProps {
   authors: Author[];
   total: number;
@@ -43,7 +48,8 @@ interface AuthorsPageProps {
     sortOrder: string;
     dateFrom: string;
     dateTo: string;
-    national?: "national" | "international" | "null" | ""; // <-- add
+    national?: "national" | "international" | "null" | "";
+    designation?: string; // New filter
   };
 }
 
@@ -56,7 +62,7 @@ const getInitials = (name: string): string => {
     .join("");
 };
 
-// Author Details Modal with Records
+// Author Details Modal with Records (Updated)
 const AuthorDetailsModal = ({
   author,
   isOpen,
@@ -131,44 +137,40 @@ const AuthorDetailsModal = ({
           )}
           <div className="flex-1">
             <h2 className="text-2xl font-semibold text-gray-900">{author.name}</h2>
-            {/* <p className="text-sm text-gray-500">
-              Member since{" "}
-              {new Date(author.created_at).toLocaleDateString("en-US", {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </p> */}
+            {author.short_name && <p className="text-sm text-gray-600">Short Name: {author.short_name}</p>}
+            {author.designation && <p className="text-sm text-blue-600 font-medium">{author.designation}</p>}
           </div>
-          {typeof author.national !== "undefined" && (
-            <div className="mt-1">
+
+          {/* Status badges */}
+          <div className="flex flex-col items-end space-y-1">
+            {author.national && (
               <span
-                className={`inline-flex items-center px-2 py-0.5 rounded text-xs
-      ${
-        author.national === "national"
-          ? "bg-green-100 text-green-800"
-          : author.national === "international"
-            ? "bg-purple-100 text-purple-800"
-            : "bg-gray-100 text-gray-600"
-      }`}
+                className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${
+                  author.national === "national"
+                    ? "bg-green-100 text-green-800"
+                    : author.national === "international"
+                      ? "bg-purple-100 text-purple-800"
+                      : "bg-gray-100 text-gray-600"
+                }`}
               >
-                {author.national ?? "Unassigned"}
+                {author.national}
               </span>
+            )}
+
+            <div className="flex space-x-2">
+              <button
+                onClick={onEdit}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                Edit Author
+              </button>
+              <button
+                onClick={onDelete}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+              >
+                Delete Author
+              </button>
             </div>
-          )}
-          <div className="flex space-x-2">
-            <button
-              onClick={onEdit}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-            >
-              Edit Author
-            </button>
-            <button
-              onClick={onDelete}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-            >
-              Delete Author
-            </button>
           </div>
         </div>
 
@@ -327,7 +329,7 @@ const DeleteConfirmationModal = ({
   );
 };
 
-// Filters Component
+// Updated Filters Component
 const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFiltersChange: (filters: any) => void }) => {
   const [localFilters, setLocalFilters] = useState(filters);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -346,6 +348,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
       dateFrom: "",
       dateTo: "",
       national: "",
+      designation: "", // New filter
     };
     setLocalFilters(clearedFilters);
     onFiltersChange(clearedFilters);
@@ -384,7 +387,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
 
       {!isCollapsed && (
         <div className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
             {/* Search */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
@@ -405,6 +408,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
               >
                 <option value="created_at">Created Date</option>
                 <option value="name">Name</option>
+                <option value="designation">Designation</option>
               </select>
             </div>
 
@@ -421,28 +425,6 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
               </select>
             </div>
 
-            {/* Date From */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
-              <input
-                type="date"
-                value={localFilters.dateFrom}
-                onChange={(e) => handleFilterChange("dateFrom", e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            {/* Date To */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
-              <input
-                type="date"
-                value={localFilters.dateTo}
-                onChange={(e) => handleFilterChange("dateTo", e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
             {/* National / International */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Allotment</label>
@@ -456,6 +438,40 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 <option value="international">International</option>
                 <option value="null">Unassigned (null)</option>
               </select>
+            </div>
+
+            {/* New Designation Filter */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
+              <input
+                type="text"
+                value={localFilters.designation || ""}
+                onChange={(e) => handleFilterChange("designation", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Filter by designation"
+              />
+            </div>
+
+            {/* Date From */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+              <input
+                type="date"
+                value={localFilters.dateFrom}
+                onChange={(e) => handleFilterChange("dateFrom", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Date To - moved to a second row or adjust grid as needed */}
+            <div className="md:col-span-2 lg:col-span-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+              <input
+                type="date"
+                value={localFilters.dateTo}
+                onChange={(e) => handleFilterChange("dateTo", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
         </div>
@@ -873,7 +889,7 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, f
   );
 }
 
-// Server-side props with enhanced filters
+// Updated getServerSideProps with enhanced filters
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const page = parseInt(context.query.page as string) || 1;
   const limit = 20;
@@ -881,25 +897,31 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const filters = {
     search: (context.query.search as string) || "",
-    sortBy: (context.query.sortBy as string) || "name", // changed default to name
-    sortOrder: (context.query.sortOrder as string) || "asc", // changed default to asc for alphabetical
+    sortBy: (context.query.sortBy as string) || "name", // default to name
+    sortOrder: (context.query.sortOrder as string) || "asc", // default to asc for alphabetical
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
     national: (context.query.national as string) || "",
+    designation: (context.query.designation as string) || "", // New filter
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   try {
-    let query = supabase.from("authors").select("*", { count: "exact" });
+    // Updated to include new fields in select
+    let query = supabase
+      .from("authors")
+      .select("id, name, description, cover_url, created_at, national, designation, short_name", { count: "exact" });
     let countQuery = supabase.from("authors").select("*", { count: "exact", head: true });
 
+    // Search filter - updated to include designation
     if (filters.search) {
-      const searchFilter = `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`;
+      const searchFilter = `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%,designation.ilike.%${filters.search}%`;
       query = query.or(searchFilter);
       countQuery = countQuery.or(searchFilter);
     }
 
+    // Date filters
     if (filters.dateFrom) {
       query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
       countQuery = countQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
@@ -909,6 +931,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       countQuery = countQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
     }
 
+    // National filter
     if (filters.national === "national") {
       query = query.eq("national", "national");
       countQuery = countQuery.eq("national", "national");
@@ -920,9 +943,19 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       countQuery = countQuery.is("national", null);
     }
 
-    const ascending = filters.sortOrder === "asc";
-    query = query.order(filters.sortBy, { ascending });
+    // New designation filter
+    if (filters.designation) {
+      query = query.ilike("designation", `%${filters.designation}%`);
+      countQuery = countQuery.ilike("designation", `%${filters.designation}%`);
+    }
 
+    // Sorting - updated to include designation as valid sort option
+    const validSortFields = ["id", "name", "created_at", "designation"];
+    const sortBy = validSortFields.includes(filters.sortBy) ? filters.sortBy : "name";
+    const ascending = filters.sortOrder === "asc";
+    query = query.order(sortBy, { ascending });
+
+    // Pagination
     query = query.range(offset, offset + limit - 1);
 
     const [{ data: authors, error }, { count }] = await Promise.all([query, countQuery]);
