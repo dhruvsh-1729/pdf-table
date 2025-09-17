@@ -495,7 +495,7 @@ export default function Home() {
                 window.open(row.original.pdf_url, "_blank", "noopener,noreferrer");
               }}
             >
-              View PDF
+              PDF
             </button>
             <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">
               <span className="font-medium">Creator:</span> {row.original.creator_name || "N/A"}

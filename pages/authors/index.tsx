@@ -881,11 +881,11 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const filters = {
     search: (context.query.search as string) || "",
-    sortBy: (context.query.sortBy as string) || "created_at",
-    sortOrder: (context.query.sortOrder as string) || "desc",
+    sortBy: (context.query.sortBy as string) || "name", // changed default to name
+    sortOrder: (context.query.sortOrder as string) || "asc", // changed default to asc for alphabetical
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
-    national: (context.query.national as string) || "", // <-- add
+    national: (context.query.national as string) || "",
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -894,14 +894,12 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     let query = supabase.from("authors").select("*", { count: "exact" });
     let countQuery = supabase.from("authors").select("*", { count: "exact", head: true });
 
-    // Apply search filter
     if (filters.search) {
       const searchFilter = `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`;
       query = query.or(searchFilter);
       countQuery = countQuery.or(searchFilter);
     }
 
-    // Apply date filters
     if (filters.dateFrom) {
       query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
       countQuery = countQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
@@ -922,18 +920,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       countQuery = countQuery.is("national", null);
     }
 
-    // Apply sorting
     const ascending = filters.sortOrder === "asc";
     query = query.order(filters.sortBy, { ascending });
 
-    // Apply pagination
     query = query.range(offset, offset + limit - 1);
 
     const [{ data: authors, error }, { count }] = await Promise.all([query, countQuery]);
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     const totalPages = Math.ceil((count || 0) / limit);
 
