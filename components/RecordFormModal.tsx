@@ -2,6 +2,7 @@
 import { ChangeEvent, MouseEvent } from "react";
 import CreatableSelect from "react-select/creatable";
 import { MagazineRecord, User } from "../types";
+import { CheckCircleIcon } from "@phosphor-icons/react";
 
 interface RecordFormModalProps {
   modalOpen: boolean;
@@ -204,6 +205,15 @@ export default function RecordFormModal({
                 </svg>
                 Only PDF files are accepted (max 4MB)
               </p>
+              {editingRecord && (
+                <div
+                  className="flex items-center
+              text-base font-semibold text-green-700 mt-2 gap-1"
+                >
+                  <CheckCircleIcon size={21} />
+                  PDF file uploaded already, change whenever you want.
+                </div>
+              )}
             </div>
           </div>
           {showFileSize && (
