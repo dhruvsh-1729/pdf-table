@@ -240,7 +240,7 @@ export default function Home() {
 
       const resolvedAuthorIds: number[] = [];
       for (const author of selectedAuthors) {
-        if (typeof author.value === "number") {
+        if (author.value < 10000000) {
           resolvedAuthorIds.push(author.value);
         } else {
           const response = await fetch("/api/authors", {
