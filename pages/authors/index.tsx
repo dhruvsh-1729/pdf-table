@@ -49,7 +49,9 @@ interface AuthorsPageProps {
     dateFrom: string;
     dateTo: string;
     national?: "national" | "international" | "null" | "";
-    designation?: string; // New filter
+    designation?: string;
+    designationStatus?: "filled" | "empty" | ""; // NEW
+    descriptionStatus?: "filled" | "empty" | ""; // NEW
   };
 }
 
@@ -472,6 +474,34 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 onChange={(e) => handleFilterChange("dateTo", e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+
+            {/* Description Filled/Empty */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <select
+                value={localFilters.descriptionStatus || ""}
+                onChange={(e) => handleFilterChange("descriptionStatus", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="filled">Filled</option>
+                <option value="empty">Empty / Null</option>
+              </select>
+            </div>
+
+            {/* Designation Filled/Empty */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
+              <select
+                value={localFilters.designationStatus || ""}
+                onChange={(e) => handleFilterChange("designationStatus", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="filled">Filled</option>
+                <option value="empty">Empty / Null</option>
+              </select>
             </div>
           </div>
         </div>
@@ -897,12 +927,14 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const filters = {
     search: (context.query.search as string) || "",
-    sortBy: (context.query.sortBy as string) || "name", // default to name
-    sortOrder: (context.query.sortOrder as string) || "asc", // default to asc for alphabetical
+    sortBy: (context.query.sortBy as string) || "name",
+    sortOrder: (context.query.sortOrder as string) || "asc",
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
     national: (context.query.national as string) || "",
-    designation: (context.query.designation as string) || "", // New filter
+    designation: (context.query.designation as string) || "",
+    designationStatus: (context.query.designationStatus as string) || "",
+    descriptionStatus: (context.query.descriptionStatus as string) || "",
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -947,6 +979,24 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     if (filters.designation) {
       query = query.ilike("designation", `%${filters.designation}%`);
       countQuery = countQuery.ilike("designation", `%${filters.designation}%`);
+    }
+
+    // Description filled/empty filter
+    if (filters.descriptionStatus === "empty") {
+      query = query.or("description.is.null,description.eq.");
+      countQuery = countQuery.or("description.is.null,description.eq.");
+    } else if (filters.descriptionStatus === "filled") {
+      query = query.not("description", "is", null).not("description", "eq", "");
+      countQuery = countQuery.not("description", "is", null).not("description", "eq", "");
+    }
+
+    // Designation filled/empty filter
+    if (filters.designationStatus === "empty") {
+      query = query.or("designation.is.null,designation.eq.");
+      countQuery = countQuery.or("designation.is.null,designation.eq.");
+    } else if (filters.designationStatus === "filled") {
+      query = query.not("designation", "is", null).not("designation", "eq", "");
+      countQuery = countQuery.not("designation", "is", null).not("designation", "eq", "");
     }
 
     // Sorting - updated to include designation as valid sort option
