@@ -1,12 +1,38 @@
 // components/Pagination.tsx
 import { Table } from "@tanstack/react-table";
 import { MagazineRecord } from "../types";
+import { useState } from "react";
 
 interface PaginationProps {
   table: Table<MagazineRecord>;
 }
 
 export default function Pagination({ table }: PaginationProps) {
+  const [pageInput, setPageInput] = useState(table.getState().pagination.pageIndex + 1);
+
+  const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setPageInput(value === "" ? 0 : Number(value));
+  };
+
+  const handlePageInputSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pageIndex = pageInput - 1;
+    if (pageIndex >= 0 && pageIndex < table.getPageCount()) {
+      table.setPageIndex(pageIndex);
+    } else {
+      // Reset to current page if invalid
+      setPageInput(table.getState().pagination.pageIndex + 1);
+    }
+  };
+
+  const handlePageInputBlur = () => {
+    const pageIndex = pageInput - 1;
+    if (pageIndex < 0 || pageIndex >= table.getPageCount()) {
+      setPageInput(table.getState().pagination.pageIndex + 1);
+    }
+  };
+
   return (
     <div className="mt-6 bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -58,9 +84,17 @@ export default function Pagination({ table }: PaginationProps) {
           </span>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
             <span>Page</span>
-            <span className="inline-flex items-center px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-800 font-bold">
-              {table.getState().pagination.pageIndex + 1}
-            </span>
+            <form onSubmit={handlePageInputSubmit} className="inline-flex">
+              <input
+                type="number"
+                min="1"
+                max={table.getPageCount()}
+                value={pageInput}
+                onChange={handlePageInputChange}
+                onBlur={handlePageInputBlur}
+                className="w-16 px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-800 font-bold text-center border-2 border-transparent focus:border-indigo-500 focus:ring-0 transition-all duration-200"
+              />
+            </form>
             <span>of</span>
             <span className="inline-flex items-center px-3 py-1 rounded-lg bg-gradient-to-r from-slate-100 to-gray-100 text-slate-800 font-bold">
               {table.getPageCount()}

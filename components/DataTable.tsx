@@ -426,9 +426,33 @@ export default function DataTable({
             </span>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <span>Page</span>
-              <span className="inline-flex items-center px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-800 font-bold">
-                {table.getState().pagination.pageIndex + 1}
-              </span>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const input = e.currentTarget.querySelector("input") as HTMLInputElement;
+                  const pageIndex = Number(input.value) - 1;
+                  if (pageIndex >= 0 && pageIndex < table.getPageCount()) {
+                    table.setPageIndex(pageIndex);
+                  } else {
+                    input.value = String(table.getState().pagination.pageIndex + 1);
+                  }
+                }}
+                className="inline-flex"
+              >
+                <input
+                  type="number"
+                  min="1"
+                  max={table.getPageCount()}
+                  defaultValue={table.getState().pagination.pageIndex + 1}
+                  onBlur={(e) => {
+                    const pageIndex = Number(e.target.value) - 1;
+                    if (pageIndex < 0 || pageIndex >= table.getPageCount()) {
+                      e.target.value = String(table.getState().pagination.pageIndex + 1);
+                    }
+                  }}
+                  className="w-16 px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-100 to-purple-100 text-indigo-800 font-bold text-center border-2 border-transparent focus:border-indigo-500 focus:ring-0 transition-all duration-200"
+                />
+              </form>
               <span>of</span>
               <span className="inline-flex items-center px-3 py-1 rounded-lg bg-gradient-to-r from-slate-100 to-gray-100 text-slate-800 font-bold">
                 {table.getPageCount()}
