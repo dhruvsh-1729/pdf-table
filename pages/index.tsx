@@ -320,7 +320,27 @@ export default function Home() {
                   {isLong ? summary.slice(0, 50) + "..." : summary}
                 </span>
               ) : null}
-              <div className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md">
+              <div
+                onClick={() => {
+                  // Set the editing record to the current row
+                  setEditingRecord(row.original);
+                  // Set the summary state to the current row's summary
+                  setSummary(row.original.summary || "");
+                  // Also set other fields if editing an existing record
+                  setName(row.original.name || "");
+                  setVolume(row.original.volume || "");
+                  setNumber(row.original.number || "");
+                  setTitleName(row.original.title_name || "");
+                  setPageNumbers(row.original.page_numbers || "");
+                  setAuthors(row.original.authors || "");
+                  setLanguage(row.original.language || "");
+                  setTimestamp(row.original.timestamp || "");
+                  setConclusion(row.original.conclusion || "");
+                  // Open the summary modal
+                  setSummaryOpen(true);
+                }}
+                className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+              >
                 <PencilCircleIcon className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
                 <span className="text-blue-600 font-medium text-sm group-hover:text-blue-700">Edit Summary</span>
               </div>
@@ -343,7 +363,26 @@ export default function Home() {
                   {isLong ? conclusion.slice(0, 50) + "..." : conclusion}
                 </span>
               ) : null}
-              <div className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md">
+              <div
+                onClick={() => {
+                  // Set the editing record to the current row
+                  setEditingRecord(row.original);
+                  // Set all the fields from the current row
+                  setName(row.original.name || "");
+                  setSummary(row.original.summary || "");
+                  setVolume(row.original.volume || "");
+                  setNumber(row.original.number || "");
+                  setTitleName(row.original.title_name || "");
+                  setPageNumbers(row.original.page_numbers || "");
+                  setAuthors(row.original.authors || "");
+                  setLanguage(row.original.language || "");
+                  setTimestamp(row.original.timestamp || "");
+                  setConclusion(row.original.conclusion || "");
+                  // Open the conclusion modal
+                  setConclusionOpen(true);
+                }}
+                className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+              >
                 <PencilCircleIcon className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
                 <span className="text-emerald-600 font-medium text-sm group-hover:text-emerald-700">
                   Edit Conclusion
@@ -489,7 +528,7 @@ export default function Home() {
         cell: ({ row }) => (
           <div className="space-y-2">
             <button
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow transition-transform transform hover:scale-105"
+              className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-black text-sm font-bold rounded-lg shadow transition-transform transform hover:scale-105"
               onClick={(e) => {
                 e.stopPropagation();
                 window.open(row.original.pdf_url, "_blank", "noopener,noreferrer");
@@ -497,8 +536,8 @@ export default function Home() {
             >
               PDF
             </button>
-            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">
-              <span className="font-medium">Creator:</span> {row.original.creator_name || "N/A"}
+            <div className="text-xs text-black bg-slate-50 border border-slate-200 rounded-lg p-2">
+              <span className="font-bold">Creator:</span> {row.original.creator_name || "N/A"}
             </div>
           </div>
         ),
@@ -508,32 +547,32 @@ export default function Home() {
         header: "Edit History",
         cell: ({ row }) => {
           const editHistory = row.original.editHistory;
-          if (!editHistory) return <span className="text-slate-400 italic text-sm">No history</span>;
+          if (!editHistory) return <span className="text-black italic text-sm font-bold">No history</span>;
           return (
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs space-y-2 w-full">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                <span className="font-semibold text-slate-800">Edits:</span>
-                <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                <div className="w-2 h-2 bg-emerald-300 rounded-full"></div>
+                <span className="font-bold text-black">Edits:</span>
+                <span className="bg-emerald-100 text-black px-2 py-0.5 rounded-full font-bold">
                   {editHistory.count}
                 </span>
                 {editHistory.latestEditor && (
                   <>
-                    <span className="text-slate-400">•</span>
-                    <span className="text-slate-700">{editHistory.latestEditor.name}</span>
-                    <span className="text-slate-500">({editHistory.latestEditor.timeFromNow})</span>
+                    <span className="text-black font-bold">•</span>
+                    <span className="text-black font-bold">{editHistory.latestEditor.name}</span>
+                    <span className="text-black font-bold">({editHistory.latestEditor.timeFromNow})</span>
                   </>
                 )}
               </div>
               <div>
-                <span className="font-semibold text-slate-800">Editors:</span>{" "}
-                <span className="text-slate-600">
+                <span className="font-bold text-black">Editors:</span>{" "}
+                <span className="text-black font-bold">
                   {editHistory.editors.length ? editHistory.editors.join(", ") : "—"}
                 </span>
               </div>
               <div>
-                <span className="font-semibold text-slate-800">By Count:</span>{" "}
-                <span className="text-slate-600">
+                <span className="font-bold text-black">By Count:</span>{" "}
+                <span className="text-black font-bold">
                   {Object.entries(editHistory.editorCounts)
                     .map(([editor, count]) => `${editor}: ${count}`)
                     .join(", ")}
@@ -544,7 +583,7 @@ export default function Home() {
                   href={`/summary/${row.original.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-medium transition"
+                  className="px-3 py-1 bg-sky-200 hover:bg-sky-300 text-black rounded-lg text-xs font-bold transition"
                 >
                   Summary
                 </a>
@@ -552,7 +591,7 @@ export default function Home() {
                   href={`/conclusion/${row.original.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1 bg-purple-500 hover:bg-purple-600 text-white rounded-lg text-xs font-medium transition"
+                  className="px-3 py-1 bg-violet-200 hover:bg-violet-300 text-black rounded-lg text-xs font-bold transition"
                 >
                   Conclusion
                 </a>
@@ -567,7 +606,7 @@ export default function Home() {
         cell: ({ row }) => (
           <div className="flex flex-col gap-2">
             <button
-              className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white text-sm font-medium rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+              className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-blue-200 to-indigo-200 hover:from-blue-300 hover:to-indigo-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
               onClick={() => {
                 const record = row.original;
                 setEditingRecord(record);
@@ -598,7 +637,7 @@ export default function Home() {
             </button>
             {access && access === "records" && (
               <button
-                className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-sm font-medium rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+                className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-200 to-teal-200 hover:from-emerald-300 hover:to-teal-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
                 onClick={() => {
                   const record = row.original;
                   setName(record.name || "");
@@ -778,15 +817,22 @@ export default function Home() {
 
   const handleSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
-    if (!name || !summary || (!file && !editingRecord)) {
-      setError("Please provide a name, summary and select a PDF file");
-      return;
+
+    // Validation: only enforce summary/file for NEW uploads
+    if (!editingRecord) {
+      if (!name || !summary || !file) {
+        setError("Please provide a name, summary and select a PDF file");
+        return;
+      }
     }
+
     setLoading(true);
     setError(null);
+
     const formData = new FormData();
     formData.append("name", name);
-    formData.append("summary", summary);
+    formData.append("summary", summary || "");
+    formData.append("conclusion", conclusion || "");
     if (file) formData.append("pdf", file);
     formData.append("volume", volume);
     formData.append("number", number);
@@ -795,42 +841,32 @@ export default function Home() {
     formData.append("authors", authors);
     formData.append("language", language);
     formData.append("timestamp", timestamp);
-    formData.append("conclusion", conclusion || "");
-    const user = localStorage.getItem("user");
-    if (user) {
-      try {
-        const parsedUser = JSON.parse(user);
-        if (parsedUser.name) formData.append("creator_name", parsedUser.name);
-        if (parsedUser.email) formData.append("email", parsedUser.email);
-      } catch (error) {
-        console.error("Error parsing user data:", error);
-        setError("Failed to retrieve user information");
-        setLoading(false);
-        return;
-      }
-    }
+
     if (editingRecord) {
       formData.append("id", String(editingRecord.id));
     }
+
     try {
       const url = editingRecord ? "/api/update-record" : "/api/upload";
       const response = await fetch(url, {
         method: "POST",
         body: formData,
-        headers: { Accept: "application/json" },
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || "Failed");
       }
+
       await fetchRecords();
       await fetchEmails();
-      setModalOpen(editingRecord ? false : true);
-      if (editingRecord) {
-        setEditingRecord(null);
+      toast(editingRecord ? "Record updated successfully!" : "Record uploaded successfully!");
+
+      // Reset if new
+      if (!editingRecord) {
         setName("");
         setSummary("");
         setConclusion("");
+        setFile(null);
         setVolume("");
         setNumber("");
         setTimestamp("");
@@ -838,19 +874,8 @@ export default function Home() {
         setPageNumbers("");
         setAuthors("");
         setLanguage("");
-        setFile(null);
-      } else {
-        setSummary("");
-        setConclusion("");
-        setTitleName("");
-        setPageNumbers("");
-        setAuthors("");
-        setFile(null);
       }
-      toast(editingRecord ? "Record updated successfully!" : "Record uploaded successfully!", {
-        duration: 2000,
-        description: "Your record has been saved.",
-      });
+      setEditingRecord(null);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -941,7 +966,6 @@ export default function Home() {
           handleSubmit={handleSubmit}
           placeholder="Enter a detailed summary..."
           editingRecord={editingRecord}
-          summary={summary}
         />
         <EditTextModal
           isOpen={conclusionOpen}
@@ -953,7 +977,6 @@ export default function Home() {
           handleSubmit={handleSubmit}
           placeholder="Enter your conclusion..."
           editingRecord={editingRecord}
-          summary={summary}
         />
         <div className="w-full">
           <Header

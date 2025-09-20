@@ -1,7 +1,7 @@
 // components/Header.tsx
 import { useRouter } from "next/router";
-import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
-import { MagazineRecord, User } from "../types";
+import { memo, useMemo } from "react";
+import { User } from "../types";
 
 interface HeaderProps {
   user: User | null;
@@ -14,139 +14,106 @@ interface HeaderProps {
   exportToCSV: () => void;
 }
 
-export default function Header({
-  user,
-  access,
-  selectedEmail,
-  setSelectedEmail,
-  fetchedEmails,
-  setModalOpen,
-  setBugModalOpen,
-  exportToCSV,
-}: HeaderProps) {
-  const router = useRouter();
+const ADMIN_EMAILS = ["dharmsasanwork99@gmail.com", "dhruvshdarshansh@gmail.com"];
 
-  return (
-    <div className="mb-8">
-      <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
-        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-6">
-          <div>
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-slate-800 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-              📚 Magazine Summary Portal
-            </h1>
-            <p className="text-slate-600 text-lg">Manage and organize your magazine summary collection with ease</p>
-          </div>
-          {/* Action Buttons */}
-          <div className="flex flex-wrap gap-3">
-            {user?.email &&
-              (user.email === "dharmsasanwork99@gmail.com" || user.email === "dhruvshdarshansh@gmail.com") && (
-                <button
-                  onClick={() => router.push("/dashboard")}
-                  className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-                >
-                  Dashboard
-                </button>
-              )}
-            {user?.email &&
-              (user.email === "dharmsasanwork99@gmail.com" || user.email === "dhruvshdarshansh@gmail.com") && (
-                <button
-                  onClick={() => router.push("/authors")}
-                  className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-                >
-                  Authors
-                </button>
-              )}
-            {user?.email &&
-              (user.email === "dharmsasanwork99@gmail.com" || user.email === "dhruvshdarshansh@gmail.com") && (
-                <button
-                  onClick={() => router.push("/tags")}
-                  className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-                >
-                  Tags
-                </button>
-              )}
-            {user?.email &&
-              (user.email === "dharmsasanwork99@gmail.com" || user.email === "dhruvshdarshansh@gmail.com") && (
-                <button
-                  onClick={() => router.push("/bulkadd")}
-                  className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-                >
-                  Bulk add records
-                </button>
-              )}
-            <button
-              onClick={() => {
-                localStorage.setItem("user", JSON.stringify(null));
-                router.push("/login");
-              }}
-              className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                />
-              </svg>
-              Logout
-            </button>
+const Header = memo<HeaderProps>(
+  ({ user, access, selectedEmail, setSelectedEmail, fetchedEmails, setModalOpen, setBugModalOpen, exportToCSV }) => {
+    const router = useRouter();
+
+    const isAdmin = useMemo(() => user?.email && ADMIN_EMAILS.includes(user.email), [user?.email]);
+
+    const handleLogout = () => {
+      localStorage.removeItem("user");
+      router.push("/login");
+    };
+
+    const adminButtons = [
+      { label: "Dashboard", path: "/dashboard", colors: "bg-blue-200" },
+      { label: "Authors", path: "/authors", colors: "bg-green-200" },
+      { label: "Tags", path: "/tags", colors: "bg-purple-200" },
+      { label: "Bulk Add", path: "/bulkadd", colors: "bg-indigo-200" },
+    ];
+
+    return (
+      <header className="mb-4">
+        <div className="bg-white/90 backdrop-blur-sm rounded-xl p-4 shadow-md border border-gray-100">
+          {/* Single Row Layout */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-shrink-0">
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-indigo-600 bg-clip-text text-transparent">
+                📚 Magazine Portal
+              </h1>
+            </div>
+
+            {/* User Filter */}
             <select
               value={selectedEmail || ""}
               onChange={(e) => setSelectedEmail(e.target.value)}
-              className="px-4 py-2.5 border-2 border-slate-200 rounded-xl text-sm font-medium shadow-lg bg-white/80 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-200"
+              className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent flex-shrink-0"
             >
-              <option value="">📋 Show All Users</option>
+              <option value="">All Users</option>
               {fetchedEmails.map(({ creator_name, email }) => (
                 <option key={email} value={email}>
-                  👤 {`${creator_name} (${email})`}
+                  {creator_name} ({email})
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => setBugModalOpen(true)}
-              className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              Report Bug
-            </button>
-            <button
-              onClick={exportToCSV}
-              className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              Export
-            </button>
-            {access && access === "records" && (
+
+            {/* All Buttons in One Row */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Admin Buttons */}
+              {isAdmin &&
+                adminButtons.map(({ label, path, colors }) => (
+                  <button
+                    key={path}
+                    onClick={() => router.push(path)}
+                    className={`px-3 py-1.5 text-sm font-bold text-black bg-gradient-to-r ${colors} rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap`}
+                  >
+                    {label}
+                  </button>
+                ))}
+
+              {/* Add Record Button */}
+              {access === "records" && (
+                <button
+                  onClick={() => setModalOpen(true)}
+                  className="px-3 py-1.5 text-sm font-bold text-black bg-indigo-200 rounded-lg hover:shadow-md transition-all duration-200 flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span className="text-xs">+</span>
+                  Add Record
+                </button>
+              )}
+
+              {/* Utility Buttons */}
               <button
-                onClick={() => {
-                  setModalOpen(true);
-                }}
-                className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 transform hover:scale-105"
+                onClick={() => setBugModalOpen(true)}
+                className="px-3 py-1.5 text-sm font-bold text-black bg-amber-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
               >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Add Record
+                Report Bug
               </button>
-            )}
+
+              <button
+                onClick={exportToCSV}
+                className="px-3 py-1.5 text-sm font-bold text-black bg-emerald-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
+              >
+                Export
+              </button>
+
+              {/* Logout Button */}
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 text-sm font-bold text-black bg-red-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
+      </header>
+    );
+  },
+);
+
+Header.displayName = "Header";
+
+export default Header;
