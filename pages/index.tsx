@@ -396,10 +396,14 @@ export default function Home() {
         accessorKey: "tags",
         header: "Tags",
         id: "tags",
+        // NEW: filter understands special values
         filterFn: (row, columnId, filterValue) => {
           const tags = row.original.tags || [];
           if (!filterValue) return true;
-          return tags.some((tag) => tag.name.toLowerCase() === filterValue.toLowerCase());
+          if (filterValue === "__EMPTY__") return tags.length === 0;
+          if (filterValue === "__NONEMPTY__") return tags.length > 0;
+          // exact-name match option kept
+          return tags.some((tag) => tag.name.toLowerCase() === String(filterValue).toLowerCase());
         },
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-2 items-center">
@@ -490,6 +494,15 @@ export default function Home() {
         accessorKey: "authors",
         header: "Authors",
         id: "authors",
+        // NEW: filter understands special values, uses authors_linked
+        filterFn: (row, columnId, filterValue) => {
+          const linked = (row.original.authors_linked || []) as { id: number; name: string }[];
+          if (!filterValue) return true;
+          if (filterValue === "__EMPTY__") return linked.length === 0;
+          if (filterValue === "__NONEMPTY__") return linked.length > 0;
+          // exact-name match if a specific author is selected
+          return linked.some((a) => a.name.toLowerCase() === String(filterValue).toLowerCase());
+        },
         cell: ({ row }) => {
           const linked = row.original.authors_linked as { id: number; name: string }[] | undefined;
           return (

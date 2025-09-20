@@ -8,7 +8,6 @@ import {
   flexRender,
   ColumnDef,
 } from "@tanstack/react-table";
-import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { fuzzyFilter } from "../utils/fuzzyFilter";
 import { MagazineRecord } from "../types";
 import { useEffect, useMemo } from "react";
@@ -42,7 +41,6 @@ interface DataTableProps {
   setFile: (file: File | null) => void;
   access: string | null;
   setError: (error: string | null) => void;
-  // Add pagination props
   pagination: any;
   setPagination: (pagination: any) => void;
   onFilteredDataChange?: (filteredRows: MagazineRecord[]) => void;
@@ -103,11 +101,33 @@ export default function DataTable({
   );
 
   useEffect(() => {
-    if (onFilteredDataChange) {
-      onFilteredDataChange(filteredRows);
-    }
+    if (onFilteredDataChange) onFilteredDataChange(filteredRows);
   }, [onFilteredDataChange, JSON.stringify(filteredRows)]);
 
+  // ---- Helpers for header filter dropdowns ----
+  const getUnique = (arr: (string | null | undefined)[]) =>
+    Array.from(new Set(arr.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
+
+  const nameFilterValue = table.getState().columnFilters.find((f) => f.id === "name")?.value;
+
+  // Build unique values for tags and authors with optional dependency on name filter (keeps choices relevant)
+  const uniqueTagNames = useMemo(() => {
+    let rows = data;
+    if (nameFilterValue) {
+      rows = rows.filter((r) => String(r.name ?? "").toLowerCase() === String(nameFilterValue).toLowerCase());
+    }
+    return getUnique(rows.flatMap((r) => (r.tags || []).map((t) => t.name)));
+  }, [data, nameFilterValue]);
+
+  const uniqueAuthorNames = useMemo(() => {
+    let rows = data;
+    if (nameFilterValue) {
+      rows = rows.filter((r) => String(r.name ?? "").toLowerCase() === String(nameFilterValue).toLowerCase());
+    }
+    return getUnique(rows.flatMap((r) => (r.authors_linked || []).map((a) => a.name)));
+  }, [data, nameFilterValue]);
+
+  // ---- Loading State ----
   if (tableLoading) {
     return (
       <div className="flex flex-col items-center justify-center p-12 space-y-4">
@@ -125,23 +145,196 @@ export default function DataTable({
 
   return (
     <div className="flex flex-col h-[90vh]">
-      {/* Table Container with Fixed Height */}
-      <div className="flex-1 border border-slate-200 rounded-lg">
+      {/* Top Toolbar: global search + quick actions */}
+      <div className="mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <input
+            value={globalFilter ?? ""}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+            placeholder="🔎 Global search…"
+            className="w-64 max-w-[70vw] px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          {globalFilter ? (
+            <button
+              className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
+              onClick={() => setGlobalFilter("")}
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
+            onClick={() => setColumnFilters([])}
+          >
+            Clear Filters
+          </button>
+          <button
+            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
+            onClick={() => setSorting([])}
+          >
+            Clear Sorting
+          </button>
+          <button
+            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
+            onClick={() => setPagination({ ...pagination, pageIndex: 0 })}
+          >
+            Reset Page
+          </button>
+        </div>
+      </div>
+
+      {/* Table Container with fixed height + single scrollable area (keeps columns aligned) */}
+      <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
-          <div className="max-h-[80vh] overflow-y-auto">
+          {/* Give the scrolling to the wrapper around the table so thead:sticky works */}
+          <div className="max-h-[80vh] overflow-y-auto custom-scrollbar">
             <table className="min-w-full divide-y divide-slate-200 table-fixed">
               <thead className="bg-gradient-to-r from-slate-50 to-gray-100 sticky top-0 z-40">
                 {table.getHeaderGroups().map((headerGroup) => (
                   <tr key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        colSpan={header.colSpan}
-                        className="px-2 py-4 text-left text-xs font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200"
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                      </th>
-                    ))}
+                    {headerGroup.headers.map((header) => {
+                      const isFiltered =
+                        !!header.column.getFilterValue() &&
+                        header.column.getFilterValue() !== "" &&
+                        header.column.getCanFilter();
+
+                      const canSort = header.column.getCanSort();
+                      const sortState = header.column.getIsSorted() as false | "asc" | "desc";
+
+                      return (
+                        <th
+                          key={header.id}
+                          colSpan={header.colSpan}
+                          className={`px-2 py-3 text-left align-bottom text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 ${
+                            isFiltered
+                              ? "bg-pink-100 text-red-900"
+                              : "text-slate-700 bg-gradient-to-r from-slate-50 to-gray-100"
+                          }`}
+                        >
+                          <div
+                            className={`${canSort ? "cursor-pointer select-none" : ""} flex items-center`}
+                            onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            <span className="ml-1">
+                              {sortState === "asc" ? "🔼" : sortState === "desc" ? "🔽" : ""}
+                            </span>
+                            {isFiltered && (
+                              <span className="ml-2 px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                                Filter
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Per-column filter UIs */}
+                          {header.column.getCanFilter() && (
+                            <div className="mt-2">
+                              {["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
+                                header.column.id === "name" ? (
+                                  // Filter by exact magazine name (dropdown)
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      // optional: when name changes, reset to first page
+                                      setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    {getUnique(data.map((r) => r.name)).map((value) => (
+                                      <option key={value} value={value}>
+                                        {value}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : header.column.id === "tags" ? (
+                                  // Tags filter: includes (No tags)/(Has tags) + exact tag names
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    <option value="__EMPTY__">(No tags)</option>
+                                    <option value="__NONEMPTY__">(Has tags)</option>
+                                    {uniqueTagNames.map((name) => (
+                                      <option key={name} value={name}>
+                                        {name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : header.column.id === "authors" ? (
+                                  // Authors filter: includes (No authors)/(Has authors) + exact author names
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    <option value="__EMPTY__">(No authors)</option>
+                                    <option value="__NONEMPTY__">(Has authors)</option>
+                                    {uniqueAuthorNames.map((name) => (
+                                      <option key={name} value={name}>
+                                        {name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  // title_name fallback (exact match list)
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    {getUnique(data.map((r) => r.title_name)).map((value) => (
+                                      <option key={value} value={value}>
+                                        {value}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )
+                              ) : (
+                                // Generic text filter for other columns
+                                <input
+                                  type="text"
+                                  value={(header.column.getFilterValue() as string) ?? ""}
+                                  onChange={(e) => {
+                                    header.column.setFilterValue(e.target.value);
+                                    setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                  }}
+                                  placeholder="Filter…"
+                                  className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                    isFiltered ? "border-red-400" : "border-slate-300"
+                                  }`}
+                                />
+                              )}
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })}
                   </tr>
                 ))}
               </thead>
@@ -156,7 +349,7 @@ export default function DataTable({
                       }`}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-2 py-6 text-sm text-slate-700 whitespace-normal">
+                        <td key={cell.id} className="px-2 py-4 text-sm text-slate-700 align-top">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
                       ))}
@@ -164,7 +357,7 @@ export default function DataTable({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={columns.length} className="px-2 py-12 text-center">
+                    <td colSpan={columns.length} className="px-2 py-12 text-center text-slate-600">
                       No records found
                     </td>
                   </tr>
@@ -175,8 +368,8 @@ export default function DataTable({
         </div>
       </div>
 
-      {/* Pagination Component */}
-      <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
+      {/* Pagination */}
+      <div className="mt-4 bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -184,44 +377,33 @@ export default function DataTable({
               onClick={() => table.setPageIndex(0)}
               disabled={!table.getCanPreviousPage()}
             >
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-              </svg>
-              First
+              ⏮️ First
             </button>
             <button
               className="inline-flex items-center px-4 py-2 border-2 border-slate-200 rounded-xl text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
             >
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-              Previous
+              ◀️ Previous
             </button>
             <button
               className="inline-flex items-center px-4 py-2 border-2 border-slate-200 rounded-xl text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
             >
-              Next
-              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
+              Next ▶️
             </button>
             <button
               className="inline-flex items-center px-4 py-2 border-2 border-slate-200 rounded-xl text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
               onClick={() => table.setPageIndex(table.getPageCount() - 1)}
               disabled={!table.getCanNextPage()}
             >
-              Last
-              <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-              </svg>
+              Last ⏭️
             </button>
           </div>
+
           <div className="flex flex-col sm:flex-row items-center gap-4">
-            <span className="ml-4 flex items-center gap-1 text-base text-zinc-900 font-bold">
+            <span className="ml-0 sm:ml-4 flex items-center gap-1 text-base text-zinc-900 font-bold">
               Showing {table.getFilteredRowModel().rows.length} records
             </span>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
