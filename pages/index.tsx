@@ -64,7 +64,7 @@ export default function Home() {
   // Add this state alongside your other table states:
   const [pagination, setPagination] = useState({
     pageIndex: 0,
-    pageSize: 10,
+    pageSize: 20,
   });
 
   // NEW: export modal open state & which columns are selected
