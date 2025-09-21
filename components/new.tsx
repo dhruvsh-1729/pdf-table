@@ -9,7 +9,6 @@ import {
 } from "@tanstack/react-table";
 import { MagazineRecord } from "../types";
 import { useState, useEffect, useMemo } from "react";
-import AsyncSelect from "react-select/async";
 
 interface ServerDataTableProps {
   data: MagazineRecord[];
@@ -62,75 +61,8 @@ export default function ServerDataTable({
   const getUnique = (arr: (string | null | undefined)[]) =>
     Array.from(new Set(arr.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
 
+  const uniqueNames = useMemo(() => getUnique(data.map((r) => r.name)), [data]);
   const uniqueTitles = useMemo(() => getUnique(data.map((r) => r.title_name)), [data]);
-
-  // Async load functions for select fields
-  const loadMagazineOptions = async (inputValue: string) => {
-    try {
-      const response = await fetch(`/api/magazine-names?q=${encodeURIComponent(inputValue)}`);
-      if (!response.ok) throw new Error("Failed to fetch magazine names");
-      const data = await response.json();
-      return data.map((name: string) => ({
-        label: name,
-        value: name,
-      }));
-    } catch (error) {
-      console.error("Error loading magazine names:", error);
-      return [];
-    }
-  };
-
-  const loadTagOptions = async (inputValue: string) => {
-    try {
-      if (!inputValue) {
-        // Return special options when no input
-        return [
-          { label: "(No tags)", value: "__EMPTY__" },
-          { label: "(Has tags)", value: "__NONEMPTY__" },
-        ];
-      }
-      const response = await fetch(`/api/tags?q=${encodeURIComponent(inputValue)}`);
-      if (!response.ok) throw new Error("Failed to fetch tags");
-      const data = await response.json();
-      const options = data.map((tag: { id: number; name: string }) => ({
-        label: tag.name,
-        value: tag.name,
-      }));
-      // Add special options at the beginning
-      return [{ label: "(No tags)", value: "__EMPTY__" }, { label: "(Has tags)", value: "__NONEMPTY__" }, ...options];
-    } catch (error) {
-      console.error("Error loading tags:", error);
-      return [];
-    }
-  };
-
-  const loadAuthorOptions = async (inputValue: string) => {
-    try {
-      if (!inputValue) {
-        // Return special options when no input
-        return [
-          { label: "(No authors)", value: "__EMPTY__" },
-          { label: "(Has authors)", value: "__NONEMPTY__" },
-        ];
-      }
-      const response = await fetch(`/api/authors?q=${encodeURIComponent(inputValue)}`);
-      if (!response.ok) throw new Error("Failed to fetch authors");
-      const data = await response.json();
-      const options = data.map((author: { id: number; name: string }) => ({
-        label: author.name,
-        value: author.name,
-      }));
-      // Add special options at the beginning
-      return [
-        { label: "(No authors)", value: "__EMPTY__" },
-        { label: "(Has authors)", value: "__NONEMPTY__" },
-        ...options,
-      ];
-    } catch (error) {
-      console.error("Error loading authors:", error);
-      return [];
-    }
-  };
 
   const table = useReactTable({
     data,
@@ -169,6 +101,37 @@ export default function ServerDataTable({
 
   return (
     <div className="flex flex-col h-[90vh]">
+      {/* Global Filter */}
+      <div className="p-4 bg-white/60 backdrop-blur-sm border-b border-slate-200">
+        <div className="flex items-center gap-4">
+          <input
+            type="text"
+            value={localGlobalFilter}
+            onChange={(e) => setLocalGlobalFilter(e.target.value)}
+            placeholder="Search across all fields..."
+            className="flex-1 px-4 py-2 border-2 border-slate-200 rounded-xl text-sm focus:border-indigo-500 focus:ring-0 bg-white"
+          />
+          {localGlobalFilter && (
+            <button
+              onClick={() => setLocalGlobalFilter("")}
+              className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm font-semibold transition-all"
+            >
+              Clear
+            </button>
+          )}
+          <div className="text-sm text-slate-600 font-medium">
+            {tableLoading ? (
+              <span className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-slate-300 border-t-indigo-500 rounded-full animate-spin"></div>
+                Loading...
+              </span>
+            ) : (
+              `${totalRecords} total records`
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Table Container */}
       <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden relative">
         {tableLoading && (
@@ -242,174 +205,74 @@ export default function ServerDataTable({
                                     isFiltered ? "border-red-400" : "border-slate-300"
                                   }`}
                                 />
-                              ) : header.column.id === "name" ? (
-                                <AsyncSelect
-                                  isClearable
-                                  value={
-                                    header.column.getFilterValue()
-                                      ? {
-                                          label: header.column.getFilterValue() as string,
-                                          value: header.column.getFilterValue() as string,
-                                        }
-                                      : null
-                                  }
-                                  onChange={(option) => {
-                                    header.column.setFilterValue(option ? option.value : "");
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  loadOptions={loadMagazineOptions}
-                                  classNamePrefix="react-select"
-                                  styles={{
-                                    control: (base) => ({
-                                      ...base,
-                                      minHeight: "28px",
-                                      fontSize: "12px",
-                                      borderColor: isFiltered ? "#f87171" : "#cbd5e1",
-                                      "&:hover": {
-                                        borderColor: "#6366f1",
-                                      },
-                                    }),
-                                    menu: (base) => ({
-                                      ...base,
-                                      zIndex: 9999,
-                                      fontSize: "12px",
-                                      width: "400px",
-                                      minWidth: "400px",
-                                    }),
-                                    dropdownIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                    clearIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                  }}
-                                />
-                              ) : header.column.id === "tags" ? (
-                                <AsyncSelect
-                                  isClearable
-                                  value={
-                                    header.column.getFilterValue()
-                                      ? {
-                                          label:
-                                            header.column.getFilterValue() === "__EMPTY__"
-                                              ? "(No tags)"
-                                              : header.column.getFilterValue() === "__NONEMPTY__"
-                                                ? "(Has tags)"
-                                                : (header.column.getFilterValue() as string),
-                                          value: header.column.getFilterValue() as string,
-                                        }
-                                      : null
-                                  }
-                                  onChange={(option) => {
-                                    header.column.setFilterValue(option ? option.value : "");
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  loadOptions={loadTagOptions}
-                                  defaultOptions={[
-                                    { label: "(No tags)", value: "__EMPTY__" },
-                                    { label: "(Has tags)", value: "__NONEMPTY__" },
-                                  ]}
-                                  classNamePrefix="react-select"
-                                  styles={{
-                                    control: (base) => ({
-                                      ...base,
-                                      minHeight: "28px",
-                                      fontSize: "12px",
-                                      borderColor: isFiltered ? "#f87171" : "#cbd5e1",
-                                      "&:hover": {
-                                        borderColor: "#6366f1",
-                                      },
-                                    }),
-                                    menu: (base) => ({
-                                      ...base,
-                                      zIndex: 9999,
-                                      fontSize: "12px",
-                                      width: "400px",
-                                      minWidth: "400px",
-                                    }),
-                                    dropdownIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                    clearIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                  }}
-                                />
-                              ) : header.column.id === "authors" ? (
-                                <AsyncSelect
-                                  isClearable
-                                  value={
-                                    header.column.getFilterValue()
-                                      ? {
-                                          label:
-                                            header.column.getFilterValue() === "__EMPTY__"
-                                              ? "(No authors)"
-                                              : header.column.getFilterValue() === "__NONEMPTY__"
-                                                ? "(Has authors)"
-                                                : (header.column.getFilterValue() as string),
-                                          value: header.column.getFilterValue() as string,
-                                        }
-                                      : null
-                                  }
-                                  onChange={(option) => {
-                                    header.column.setFilterValue(option ? option.value : "");
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  loadOptions={loadAuthorOptions}
-                                  defaultOptions={[
-                                    { label: "(No authors)", value: "__EMPTY__" },
-                                    { label: "(Has authors)", value: "__NONEMPTY__" },
-                                  ]}
-                                  classNamePrefix="react-select"
-                                  styles={{
-                                    control: (base) => ({
-                                      ...base,
-                                      minHeight: "28px",
-                                      fontSize: "12px",
-                                      borderColor: isFiltered ? "#f87171" : "#cbd5e1",
-                                      "&:hover": {
-                                        borderColor: "#6366f1",
-                                      },
-                                    }),
-                                    menu: (base) => ({
-                                      ...base,
-                                      zIndex: 9999,
-                                      fontSize: "12px",
-                                      width: "400px",
-                                      minWidth: "400px",
-                                    }),
-                                    dropdownIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                    clearIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                  }}
-                                />
-                              ) : header.column.id === "title_name" ? (
-                                <select
-                                  value={(header.column.getFilterValue() as string) ?? ""}
-                                  onChange={(e) => {
-                                    header.column.setFilterValue(e.target.value);
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
-                                    isFiltered ? "border-red-400" : "border-slate-300"
-                                  }`}
-                                >
-                                  <option value="">All</option>
-                                  {uniqueTitles.map((value) => (
-                                    <option key={value} value={value}>
-                                      {value}
-                                    </option>
-                                  ))}
-                                </select>
+                              ) : ["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
+                                header.column.id === "name" ? (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination({ ...pagination, pageIndex: 0 });
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    {uniqueNames.map((value) => (
+                                      <option key={value} value={value}>
+                                        {value}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : header.column.id === "tags" ? (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination({ ...pagination, pageIndex: 0 });
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    <option value="__EMPTY__">(No tags)</option>
+                                    <option value="__NONEMPTY__">(Has tags)</option>
+                                  </select>
+                                ) : header.column.id === "authors" ? (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination({ ...pagination, pageIndex: 0 });
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    <option value="__EMPTY__">(No authors)</option>
+                                    <option value="__NONEMPTY__">(Has authors)</option>
+                                  </select>
+                                ) : (
+                                  <select
+                                    value={(header.column.getFilterValue() as string) ?? ""}
+                                    onChange={(e) => {
+                                      header.column.setFilterValue(e.target.value);
+                                      setPagination({ ...pagination, pageIndex: 0 });
+                                    }}
+                                    className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                      isFiltered ? "border-red-400" : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">All</option>
+                                    {uniqueTitles.map((value) => (
+                                      <option key={value} value={value}>
+                                        {value}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )
                               ) : (
                                 <input
                                   type="text"

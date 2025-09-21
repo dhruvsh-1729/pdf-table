@@ -1,25 +1,15 @@
-// pages/index.tsx or Home.tsx
-import { useState, useEffect, ChangeEvent, MouseEvent, useMemo } from "react";
-import {
-  ColumnDef,
-  ColumnFiltersState,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  SortingState,
-  useReactTable,
-} from "@tanstack/react-table";
+// pages/index.tsx
+import { useState, useEffect, ChangeEvent, MouseEvent, useMemo, useCallback } from "react";
+import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useRouter } from "next/router";
+import { debounce } from "lodash";
 import BugModal from "@/components/BugModal";
 import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { MagazineRecord, Tag, User } from "../types";
-import { fuzzyFilter } from "../utils/fuzzyFilter";
 import Header from "../components/Header";
-import DataTable from "../components/DataTable";
-import Pagination from "../components/Pagination";
+import ServerDataTable from "../components/DataTable";
 import RecordFormModal from "../components/RecordFormModal";
 import TagsModal from "../components/TagsModal";
 import EditTextModal from "../components/EditTextModal";
@@ -28,7 +18,12 @@ import ExportColumnsModal from "@/components/ExportColumnsModal";
 
 export default function Home() {
   const router = useRouter();
+
+  // Data states
   const [records, setRecords] = useState<MagazineRecord[]>([]);
+  const [totalRecords, setTotalRecords] = useState<number>(0);
+
+  // Form states
   const [name, setName] = useState<string>("");
   const [summary, setSummary] = useState<string>("");
   const [conclusion, setConclusion] = useState<string>("");
@@ -40,6 +35,8 @@ export default function Home() {
   const [pageNumbers, setPageNumbers] = useState<string>("");
   const [authors, setAuthors] = useState<string>("");
   const [language, setLanguage] = useState<string>("");
+
+  // UI states
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
@@ -53,30 +50,29 @@ export default function Home() {
   const [selectedTags, setSelectedTags] = useState<{ label: string; value: number }[]>([]);
   const [authorsModalOpen, setAuthorsModalOpen] = useState(false);
   const [selectedAuthors, setSelectedAuthors] = useState<{ label: string; value: number }[]>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [globalFilter, setGlobalFilter] = useState("");
-  const [sorting, setSorting] = useState<SortingState>([]);
   const [user, setUser] = useState<User | null>(null);
   const [access, setAccess] = useState<string | null>(null);
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
   const [showFileSize, setShowFileSize] = useState<boolean>(false);
-  // Add this state alongside your other table states:
+
+  // Table states - server-side
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 20,
   });
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [sorting, setSorting] = useState<SortingState>([]);
 
-  // NEW: export modal open state & which columns are selected
+  // Export states
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedExportColumnIds, setSelectedExportColumnIds] = useState<string[]>([]);
 
-  const [filteredData, setFilteredData] = useState<MagazineRecord[]>([]);
+  // For export functionality - fetch all filtered data
+  const [filteredDataForExport, setFilteredDataForExport] = useState<MagazineRecord[]>([]);
 
-  const handleFilteredDataChange = (filteredRows: MagazineRecord[]) => {
-    setFilteredData(filteredRows);
-  };
-
+  // Initialize user
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
     if (storedUser) {
@@ -92,6 +88,7 @@ export default function Home() {
     }
   }, []);
 
+  // Auth check
   useEffect(() => {
     const user = localStorage.getItem("user");
     if (user) {
@@ -99,7 +96,6 @@ export default function Home() {
         const parsedUser = JSON.parse(user);
         if (parsedUser && parsedUser.name && parsedUser.email && parsedUser.access) {
           fetchEmails();
-          fetchRecords();
         } else {
           router.push("/login");
         }
@@ -112,11 +108,104 @@ export default function Home() {
     }
   }, []);
 
+  // Debounced fetch records function
+  const debouncedFetchRecords = useMemo(
+    () =>
+      debounce(
+        async (
+          page: number,
+          pageSize: number,
+          filters: ColumnFiltersState,
+          globalFilter: string,
+          sorting: SortingState,
+          email: string | null,
+          forExport: boolean = false,
+        ) => {
+          try {
+            setTableLoading(true);
+
+            // Build filter object
+            const filterObj: Record<string, any> = {};
+            filters.forEach((filter) => {
+              filterObj[filter.id] = filter.value;
+            });
+
+            // Handle sorting - map frontend column names to database columns
+            let sortBy = "id";
+            if (sorting.length > 0) {
+              const sortCol = sorting[0].id;
+              // Map columns that don't exist directly in the database
+              if (sortCol === "tags" || sortCol === "authors") {
+                sortBy = "id"; // Default to id for relation columns
+              } else {
+                sortBy = sortCol;
+              }
+            }
+
+            // Build query params
+            const params = new URLSearchParams({
+              page: forExport ? "0" : String(page),
+              pageSize: forExport ? "10000" : String(pageSize), // Large number for export
+              sortBy: sortBy,
+              sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
+              filters: JSON.stringify(filterObj),
+              globalFilter: globalFilter || "",
+              email: email || "",
+              noCache: "false",
+            });
+
+            const response = await fetch(`/api/records-paginated?${params}`);
+            if (!response.ok) throw new Error("Failed to fetch records");
+
+            const result = await response.json();
+
+            if (forExport) {
+              setFilteredDataForExport(result.data || []);
+            } else {
+              setRecords(result.data || []);
+              setTotalRecords(result.count || 0);
+            }
+          } catch (err) {
+            console.error("Error:", err);
+            setError("Failed to load records");
+            if (!forExport) {
+              setRecords([]);
+              setTotalRecords(0);
+            }
+          } finally {
+            setTableLoading(false);
+          }
+        },
+        300,
+      ),
+    [],
+  );
+
+  // Fetch records when dependencies change
   useEffect(() => {
-    if (selectedEmail !== null) {
-      fetchRecords();
-    }
-  }, [selectedEmail]);
+    debouncedFetchRecords(
+      pagination.pageIndex,
+      pagination.pageSize,
+      columnFilters,
+      globalFilter,
+      sorting,
+      selectedEmail,
+      false,
+    );
+  }, [
+    pagination.pageIndex,
+    pagination.pageSize,
+    columnFilters,
+    globalFilter,
+    sorting,
+    selectedEmail,
+    debouncedFetchRecords,
+  ]);
+
+  // Fetch all data for export when needed
+  const fetchAllForExport = useCallback(async () => {
+    await debouncedFetchRecords(0, 10000, columnFilters, globalFilter, sorting, selectedEmail, true);
+  }, [columnFilters, globalFilter, sorting, selectedEmail, debouncedFetchRecords]);
 
   const fetchAllTags = async (): Promise<void> => {
     try {
@@ -126,31 +215,6 @@ export default function Home() {
       setAllTags(data);
     } catch (err) {
       console.error("Error fetching tags:", err);
-    }
-  };
-
-  const fetchRecords = async (): Promise<void> => {
-    try {
-      setTableLoading(true);
-      const queryParam = selectedEmail ? `?email=${encodeURIComponent(selectedEmail)}` : "";
-      const response = await fetch(`/api/records${queryParam}`);
-      if (!response.ok) throw new Error("Failed to fetch records");
-      const data: any = await response.json();
-      let recordsArray: MagazineRecord[];
-      if (Array.isArray(data)) {
-        recordsArray = data;
-      } else if (data && Array.isArray(data.records)) {
-        recordsArray = data.records;
-      } else {
-        recordsArray = [];
-      }
-      setRecords(recordsArray);
-    } catch (err) {
-      console.error("Error:", err);
-      setError("Failed to load records");
-      setRecords([]);
-    } finally {
-      setTableLoading(false);
     }
   };
 
@@ -165,20 +229,45 @@ export default function Home() {
     }
   };
 
+  // Invalidate cache and refresh
+  const refreshRecords = async () => {
+    // Call with noCache=true to bypass cache
+    const params = new URLSearchParams({
+      page: String(pagination.pageIndex),
+      pageSize: String(pagination.pageSize),
+      sortBy: sorting.length > 0 ? sorting[0].id : "id",
+      sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
+      filters: JSON.stringify({}),
+      globalFilter: globalFilter || "",
+      email: selectedEmail || "",
+      noCache: "true", // Force cache bypass
+    });
+
+    try {
+      setTableLoading(true);
+      const response = await fetch(`/api/records-paginated?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch records");
+      const result = await response.json();
+      setRecords(result.data || []);
+      setTotalRecords(result.count || 0);
+    } catch (err) {
+      console.error("Error refreshing:", err);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
   const handleTagSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
     if (!editingRecord) return;
     try {
       setLoading(true);
 
-      // Resolve selectedTags → DB ids
       const resolvedTagIds: number[] = [];
       for (const tag of selectedTags) {
         if (tag.value < 10000000) {
-          // Already an existing tag
           resolvedTagIds.push(tag.value);
         } else {
-          // New tag → create it in DB
           const response = await fetch("/api/tags", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -190,11 +279,9 @@ export default function Home() {
         }
       }
 
-      // Current tags from record
       const currentTags = editingRecord.tags || [];
       const currentTagIds = currentTags.map((t) => t.id);
 
-      // Diff to find adds/removes
       const tagsToAdd = resolvedTagIds.filter((id) => !currentTagIds.includes(id));
       const tagsToRemove = currentTagIds.filter((id) => !resolvedTagIds.includes(id));
 
@@ -220,7 +307,7 @@ export default function Home() {
         });
       }
 
-      await fetchRecords();
+      await refreshRecords();
       setTagsModalOpen(false);
       setSelectedTags([]);
       setEditingRecord(null);
@@ -231,7 +318,6 @@ export default function Home() {
     }
   };
 
-  // submit handler (similar to tags)
   const handleAuthorSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
     if (!editingRecord) return;
@@ -276,7 +362,7 @@ export default function Home() {
         });
       }
 
-      await fetchRecords();
+      await refreshRecords();
       setAuthorsModalOpen(false);
       setSelectedAuthors([]);
       setEditingRecord(null);
@@ -322,11 +408,8 @@ export default function Home() {
               ) : null}
               <div
                 onClick={() => {
-                  // Set the editing record to the current row
                   setEditingRecord(row.original);
-                  // Set the summary state to the current row's summary
                   setSummary(row.original.summary || "");
-                  // Also set other fields if editing an existing record
                   setName(row.original.name || "");
                   setVolume(row.original.volume || "");
                   setNumber(row.original.number || "");
@@ -336,13 +419,11 @@ export default function Home() {
                   setLanguage(row.original.language || "");
                   setTimestamp(row.original.timestamp || "");
                   setConclusion(row.original.conclusion || "");
-                  // Open the summary modal
                   setSummaryOpen(true);
                 }}
                 className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
               >
                 <PencilCircleIcon className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
-                {/* <span className="text-blue-600 font-medium text-sm group-hover:text-blue-700">Edit Summary</span> */}
               </div>
             </div>
           );
@@ -365,9 +446,7 @@ export default function Home() {
               ) : null}
               <div
                 onClick={() => {
-                  // Set the editing record to the current row
                   setEditingRecord(row.original);
-                  // Set all the fields from the current row
                   setName(row.original.name || "");
                   setSummary(row.original.summary || "");
                   setVolume(row.original.volume || "");
@@ -378,15 +457,11 @@ export default function Home() {
                   setLanguage(row.original.language || "");
                   setTimestamp(row.original.timestamp || "");
                   setConclusion(row.original.conclusion || "");
-                  // Open the conclusion modal
                   setConclusionOpen(true);
                 }}
                 className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
               >
                 <PencilCircleIcon className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
-                {/* <span className="text-emerald-600 font-medium text-sm group-hover:text-emerald-700">
-                  Edit Conclusion
-                </span> */}
               </div>
             </div>
           );
@@ -396,15 +471,7 @@ export default function Home() {
         accessorKey: "tags",
         header: "Tags",
         id: "tags",
-        // NEW: filter understands special values
-        filterFn: (row, columnId, filterValue) => {
-          const tags = row.original.tags || [];
-          if (!filterValue) return true;
-          if (filterValue === "__EMPTY__") return tags.length === 0;
-          if (filterValue === "__NONEMPTY__") return tags.length > 0;
-          // exact-name match option kept
-          return tags.some((tag) => tag.name.toLowerCase() === String(filterValue).toLowerCase());
-        },
+        enableSorting: false, // Disable sorting for relation column
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-2 items-center">
             {row.original.tags?.slice(0, 2).map((tag) => (
@@ -494,15 +561,7 @@ export default function Home() {
         accessorKey: "authors",
         header: "Authors",
         id: "authors",
-        // NEW: filter understands special values, uses authors_linked
-        filterFn: (row, columnId, filterValue) => {
-          const linked = (row.original.authors_linked || []) as { id: number; name: string }[];
-          if (!filterValue) return true;
-          if (filterValue === "__EMPTY__") return linked.length === 0;
-          if (filterValue === "__NONEMPTY__") return linked.length > 0;
-          // exact-name match if a specific author is selected
-          return linked.some((a) => a.name.toLowerCase() === String(filterValue).toLowerCase());
-        },
+        enableSorting: false, // Disable sorting for relation column
         cell: ({ row }) => {
           const linked = row.original.authors_linked as { id: number; name: string }[] | undefined;
           return (
@@ -648,38 +707,6 @@ export default function Home() {
               </svg>
               Update
             </button>
-            {/* {access && access === "records" && (
-              <button
-                className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-200 to-teal-200 hover:from-emerald-300 hover:to-teal-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
-                onClick={() => {
-                  const record = row.original;
-                  setName(record.name || "");
-                  setVolume(record.volume || "");
-                  setNumber(record.number || "");
-                  setTimestamp(record.timestamp || "");
-                  setAuthors(record.authors || "");
-                  setLanguage(record.language || "");
-                  setModalOpen(true);
-                  setEditingRecord(null);
-                  setError(null);
-                  setSummary("");
-                  setConclusion("");
-                  setFile(null);
-                  setTitleName("");
-                  setPageNumbers("");
-                }}
-              >
-                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  />
-                </svg>
-                Duplicate
-              </button> 
-            )} */}
           </div>
         ),
       },
@@ -687,10 +714,7 @@ export default function Home() {
     [],
   );
 
-  // NEW: map which columns are “exportable” and give them clean labels
   const exportableColumns = useMemo(() => {
-    // Only list columns that map to real data fields (exclude UI-only columns)
-    // The 'id' keys here must match the record key/extractor switch below.
     const candidates: { id: string; label: string }[] = [
       { id: "id", label: "ID" },
       { id: "name", label: "Magazine Name" },
@@ -702,36 +726,19 @@ export default function Home() {
       { id: "number", label: "Number" },
       { id: "title_name", label: "Title Name" },
       { id: "page_numbers", label: "Page Numbers" },
-      { id: "authors", label: "Authors" }, // derived from authors_linked
+      { id: "authors", label: "Authors" },
       { id: "language", label: "Language" },
       { id: "pdf_url", label: "PDF URL" },
-      { id: "creator_name", label: "Creator" }, // present on record
-      // add more if you store them on each record
+      { id: "creator_name", label: "Creator" },
     ];
 
-    // Optional: Only include those that actually exist in your current `columns`
-    // or that we know how to extract below.
-    const knownIds = new Set(candidates.map((c) => c.id));
-    const presentIds = new Set<string>();
-    columns.forEach((c: any) => {
-      if (c?.id && knownIds.has(c.id)) presentIds.add(c.id);
-      if (c?.accessorKey && knownIds.has(c.accessorKey)) presentIds.add(c.accessorKey);
-    });
-    // Also include derived fields we handle (authors, tags, creator_name, pdf_url)
-    ["tags", "authors", "creator_name", "pdf_url"].forEach((id) => presentIds.add(id));
-
-    const filtered = candidates.filter((c) => presentIds.has(c.id));
-
-    // Initialize default selection once
-    if (selectedExportColumnIds.length === 0 && filtered.length > 0) {
-      setSelectedExportColumnIds(filtered.map((c) => c.id));
+    if (selectedExportColumnIds.length === 0 && candidates.length > 0) {
+      setSelectedExportColumnIds(candidates.map((c) => c.id));
     }
 
-    return filtered;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columns]);
+    return candidates;
+  }, [selectedExportColumnIds.length]);
 
-  // NEW: central value extractor for each exportable field
   const getExportValue = (record: MagazineRecord, key: string) => {
     switch (key) {
       case "id":
@@ -763,17 +770,19 @@ export default function Home() {
       case "creator_name":
         return (record as any).creator_name ?? "";
       default:
-        // If you add custom fields later, handle them here
         return (record as any)[key] ?? "";
     }
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
+    // Fetch all filtered data first
+    await fetchAllForExport();
+
     const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
     if (cols.length === 0) return;
 
     const headers = cols.map((c) => c.label);
-    const rows = filteredData.map((record) =>
+    const rows = filteredDataForExport.map((record) =>
       cols.map((c) => {
         const raw = getExportValue(record, c.id);
         return String(raw ?? "");
@@ -792,14 +801,16 @@ export default function Home() {
     link.click();
   };
 
-  // UPDATED: XLSX export uses selected columns from the modal
-  const exportToXLSX = () => {
+  const exportToXLSX = async () => {
+    // Fetch all filtered data first
+    await fetchAllForExport();
+
     const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
     if (cols.length === 0) return;
 
     try {
       import("xlsx").then((XLSX) => {
-        const data = filteredData.map((record) => {
+        const data = filteredDataForExport.map((record) => {
           const row: Record<string, any> = {};
           cols.forEach((c) => (row[c.label] = getExportValue(record, c.id)));
           return row;
@@ -817,21 +828,11 @@ export default function Home() {
     }
   };
 
-  // NEW: Convenience to open the modal from Header’s existing prop
   const openExportModal = () => setExportModalOpen(true);
-
-  const handleExport = (format: "csv" | "xlsx") => {
-    if (format === "csv") {
-      exportToCSV();
-    } else {
-      exportToXLSX();
-    }
-  };
 
   const handleSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
 
-    // Validation: only enforce summary/file for NEW uploads
     if (!editingRecord) {
       if (!name || !summary || !file) {
         setError("Please provide a name, summary and select a PDF file");
@@ -870,11 +871,10 @@ export default function Home() {
         throw new Error(errorData.error || "Failed");
       }
 
-      await fetchRecords();
+      await refreshRecords();
       await fetchEmails();
       toast(editingRecord ? "Record updated successfully!" : "Record uploaded successfully!");
 
-      // Reset if new
       if (!editingRecord) {
         setName("");
         setSummary("");
@@ -1003,7 +1003,7 @@ export default function Home() {
             exportToCSV={openExportModal}
           />
           <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
-            <DataTable
+            <ServerDataTable
               data={records}
               columns={columns}
               columnFilters={columnFilters}
@@ -1013,35 +1013,14 @@ export default function Home() {
               sorting={sorting}
               setSorting={setSorting}
               tableLoading={tableLoading}
-              setModalOpen={setModalOpen}
-              setTagsModalOpen={setTagsModalOpen}
-              setSummaryOpen={setSummaryOpen}
-              setConclusionOpen={setConclusionOpen}
-              setEditingRecord={setEditingRecord}
-              setSelectedTags={setSelectedTags}
-              setName={setName}
-              setSummary={setSummary}
-              setConclusion={setConclusion}
-              setVolume={setVolume}
-              setNumber={setNumber}
-              setTimestamp={setTimestamp}
-              setTitleName={setTitleName}
-              setPageNumbers={setPageNumbers}
-              setAuthors={setAuthors}
-              setLanguage={setLanguage}
-              setFile={setFile}
-              access={access}
-              setError={setError}
-              // Add these new props:
               pagination={pagination}
               setPagination={setPagination}
-              onFilteredDataChange={handleFilteredDataChange}
+              totalRecords={totalRecords}
+              pageCount={Math.ceil(totalRecords / pagination.pageSize)}
             />
           </div>
         </div>
         <BugModal isOpen={bugModalOpen} onClose={() => setBugModalOpen(false)} />
-
-        {/* NEW: Export Modal */}
         <ExportColumnsModal
           isOpen={exportModalOpen}
           onClose={() => setExportModalOpen(false)}

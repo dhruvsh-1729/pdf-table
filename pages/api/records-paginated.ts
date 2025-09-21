@@ -1,4 +1,4 @@
-// pages/api/records.ts
+// pages/api/records-paginated.ts
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import NodeCache from "node-cache";
@@ -22,7 +22,7 @@ export function invalidateRecordsCache() {
   cache.flushAll();
 }
 
-// Format value helper (reused from original)
+// Format value helper
 function formatValue(value: any): any {
   if (typeof value !== "string") {
     if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
@@ -93,17 +93,24 @@ async function fetchPaginatedRecords(params: FilterParams) {
   let query = supabase.from("records").select(
     `
       *,
-      record_tags!left(tags(id, name)),
-      record_authors!left(authors(id, name))
+      record_tags:record_tags(
+        tag_id,
+        tags:tags(id, name)
+      ),
+      record_authors:record_authors(
+        author_id,
+        authors:authors(id, name)
+      )
     `,
     { count: "exact" },
   );
 
-  // Apply email filter if provided
+  // -------------------------
+  // Email filtering
+  // -------------------------
   if (email) {
     const formattedEmail = `["${email.trim()}"]`;
 
-    // Get all record IDs associated with this email
     const [summaryRecords, conclusionRecords, directRecords] = await Promise.all([
       supabase.from("summaries").select("record_id").eq("email", formattedEmail),
       supabase.from("conclusions").select("record_id").eq("email", formattedEmail),
@@ -111,31 +118,26 @@ async function fetchPaginatedRecords(params: FilterParams) {
     ]);
 
     const uniqueRecordIds = new Set<string>();
-    summaryRecords.data?.forEach((r) => uniqueRecordIds.add(r.record_id));
-    conclusionRecords.data?.forEach((r) => uniqueRecordIds.add(r.record_id));
-    directRecords.data?.forEach((r) => uniqueRecordIds.add(r.id));
+    summaryRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
+    conclusionRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
+    directRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.id)));
 
-    if (uniqueRecordIds.size === 0) {
-      return { data: [], count: 0, editHistory: {} };
-    }
-
+    if (uniqueRecordIds.size === 0) return { data: [], count: 0, editHistory: {} };
     query = query.in("id", Array.from(uniqueRecordIds));
   }
 
-  // Apply column filters
+  // -------------------------
+  // Other column filters
+  // -------------------------
   Object.entries(filters).forEach(([key, value]) => {
     if (value === null || value === undefined || value === "") return;
 
     if (key === "id") {
-      // ID prefix filter
       query = query.filter("id", "gte", value);
       query = query.filter("id", "lt", String(Number(value) + 1));
-    } else if (key === "tags") {
-      // Special handling for tags - this needs a custom approach
-      // We'll handle this post-fetch for now
-    } else if (key === "authors") {
-      // Special handling for authors - this needs a custom approach
-      // We'll handle this post-fetch for now
+    } else if (key === "tags" || key === "authors") {
+      // handled below
+      return;
     } else if (typeof value === "string") {
       query = query.ilike(key, `%${value}%`);
     } else {
@@ -143,29 +145,90 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   });
 
-  // Apply global filter
+  // -------------------------
+  // Global filter
+  // -------------------------
   if (globalFilter) {
     query = query.or(
       `name.ilike.%${globalFilter}%,summary.ilike.%${globalFilter}%,conclusion.ilike.%${globalFilter}%,title_name.ilike.%${globalFilter}%`,
     );
   }
 
-  // Apply sorting
-  query = query.order(sortBy, { ascending: sortOrder === "asc" });
+  // -------------------------
+  // Tags filtering (server side)
+  // -------------------------
+  if (filters.tags) {
+    if (filters.tags === "__EMPTY__" || filters.tags === "__NONEMPTY__") {
+      const { data: rtAll } = await supabase.from("record_tags").select("record_id");
+      const idsWithTags = new Set(rtAll?.map((r) => String(r.record_id)) ?? []);
+      if (filters.tags === "__EMPTY__") {
+        query = query.not("id", "in", `(${Array.from(idsWithTags).join(",") || "NULL"})`);
+      } else {
+        query = query.in("id", Array.from(idsWithTags));
+      }
+    } else {
+      const { data: tagRows } = await supabase.from("tags").select("id, name").ilike("name", filters.tags);
+      const tagIds = (tagRows ?? []).map((t) => t.id);
+      if (tagIds.length > 0) {
+        const { data: rtRows } = await supabase.from("record_tags").select("record_id").in("tag_id", tagIds);
+        const recIds = Array.from(new Set((rtRows ?? []).map((r) => String(r.record_id))));
+        query = query.in("id", recIds);
+      } else {
+        return { data: [], count: 0, editHistory: {} };
+      }
+    }
+  }
 
-  // Apply pagination
+  // -------------------------
+  // Authors filtering (server side)
+  // -------------------------
+  if (filters.authors) {
+    if (filters.authors === "__EMPTY__" || filters.authors === "__NONEMPTY__") {
+      const { data: raAll } = await supabase.from("record_authors").select("record_id");
+      const idsWithAuthors = new Set(raAll?.map((r) => String(r.record_id)) ?? []);
+      if (filters.authors === "__EMPTY__") {
+        query = query.not("id", "in", `(${Array.from(idsWithAuthors).join(",") || "NULL"})`);
+      } else {
+        query = query.in("id", Array.from(idsWithAuthors));
+      }
+    } else {
+      const { data: aRows } = await supabase.from("authors").select("id, name").ilike("name", filters.authors);
+      const authorIds = (aRows ?? []).map((a) => a.id);
+      if (authorIds.length > 0) {
+        const { data: raRows } = await supabase.from("record_authors").select("record_id").in("author_id", authorIds);
+        const recIds = Array.from(new Set((raRows ?? []).map((r) => String(r.record_id))));
+        query = query.in("id", recIds);
+      } else {
+        return { data: [], count: 0, editHistory: {} };
+      }
+    }
+  }
+
+  // -------------------------
+  // Sorting
+  // -------------------------
+  if (sortBy === "tags" || sortBy === "authors" || sortBy === "authors_linked") {
+    query = query.order("id", { ascending: sortOrder === "asc" });
+  } else {
+    query = query.order(sortBy, { ascending: sortOrder === "asc" });
+  }
+
+  // -------------------------
+  // Pagination
+  // -------------------------
   const from = page * pageSize;
   const to = from + pageSize - 1;
   query = query.range(from, to);
 
+  // -------------------------
   // Execute query
+  // -------------------------
   const { data: records, count, error } = await query;
+  if (error) throw error;
 
-  if (error) {
-    throw error;
-  }
-
-  // Fetch edit history for the current page of records
+  // -------------------------
+  // Edit history aggregation
+  // -------------------------
   const recordIds = records?.map((r) => r.id) || [];
   const editHistory: Record<string, any> = {};
 
@@ -217,18 +280,20 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   }
 
+  // -------------------------
   // Format records
+  // -------------------------
   const formattedRecords = (records || []).map((record) => {
     const formatted: any = {};
 
     // Handle tags
     if (record.record_tags) {
-      formatted.tags = record.record_tags.map((rt: any) => rt.tags).filter(Boolean);
+      formatted.tags = record.record_tags.map((rt: any) => rt?.tags).filter(Boolean);
     }
 
     // Handle authors
     if (record.record_authors) {
-      formatted.authors_linked = record.record_authors.map((ra: any) => ra.authors).filter(Boolean);
+      formatted.authors_linked = record.record_authors.map((ra: any) => ra?.authors).filter(Boolean);
     }
 
     // Format other fields
@@ -263,35 +328,8 @@ async function fetchPaginatedRecords(params: FilterParams) {
     return formatted;
   });
 
-  // Post-process for special filters (tags, authors)
-  let filteredRecords = formattedRecords;
-
-  if (filters.tags) {
-    if (filters.tags === "__EMPTY__") {
-      filteredRecords = filteredRecords.filter((r) => !r.tags || r.tags.length === 0);
-    } else if (filters.tags === "__NONEMPTY__") {
-      filteredRecords = filteredRecords.filter((r) => r.tags && r.tags.length > 0);
-    } else {
-      filteredRecords = filteredRecords.filter((r) =>
-        r.tags?.some((tag: any) => tag.name.toLowerCase() === filters.tags.toLowerCase()),
-      );
-    }
-  }
-
-  if (filters.authors) {
-    if (filters.authors === "__EMPTY__") {
-      filteredRecords = filteredRecords.filter((r) => !r.authors_linked || r.authors_linked.length === 0);
-    } else if (filters.authors === "__NONEMPTY__") {
-      filteredRecords = filteredRecords.filter((r) => r.authors_linked && r.authors_linked.length > 0);
-    } else {
-      filteredRecords = filteredRecords.filter((r) =>
-        r.authors_linked?.some((author: any) => author.name.toLowerCase() === filters.authors.toLowerCase()),
-      );
-    }
-  }
-
   return {
-    data: filteredRecords,
+    data: formattedRecords,
     count: count || 0,
     editHistory,
   };
@@ -303,7 +341,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Parse query parameters
     const {
       page = "0",
       pageSize = "20",
@@ -325,10 +362,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       email: email as string,
     };
 
-    // Generate cache key
     const cacheKey = `${CACHE_VERSION_KEY}:${cacheVersion}:${getCacheKey(params)}`;
 
-    // Check cache unless explicitly disabled
     if (noCache !== "true") {
       const cachedData = cache.get(cacheKey);
       if (cachedData) {
@@ -338,11 +373,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     console.log("🔍 Cache miss, fetching from database...");
-
-    // Fetch from database
     const result = await fetchPaginatedRecords(params);
-
-    // Store in cache
     cache.set(cacheKey, result);
 
     return res.status(200).json(result);
@@ -355,5 +386,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-// Export cache invalidation for use in other API routes
+// Export cache invalidation
 export { invalidateRecordsCache as invalidateCache };
