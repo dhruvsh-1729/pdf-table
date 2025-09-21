@@ -339,10 +339,10 @@ export default function Home() {
                   // Open the summary modal
                   setSummaryOpen(true);
                 }}
-                className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+                className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
               >
                 <PencilCircleIcon className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
-                <span className="text-blue-600 font-medium text-sm group-hover:text-blue-700">Edit Summary</span>
+                {/* <span className="text-blue-600 font-medium text-sm group-hover:text-blue-700">Edit Summary</span> */}
               </div>
             </div>
           );
@@ -381,12 +381,12 @@ export default function Home() {
                   // Open the conclusion modal
                   setConclusionOpen(true);
                 }}
-                className="group flex items-center justify-center gap-2 p-3 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+                className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
               >
                 <PencilCircleIcon className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
-                <span className="text-emerald-600 font-medium text-sm group-hover:text-emerald-700">
+                {/* <span className="text-emerald-600 font-medium text-sm group-hover:text-emerald-700">
                   Edit Conclusion
-                </span>
+                </span> */}
               </div>
             </div>
           );
@@ -648,7 +648,7 @@ export default function Home() {
               </svg>
               Update
             </button>
-            {access && access === "records" && (
+            {/* {access && access === "records" && (
               <button
                 className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-200 to-teal-200 hover:from-emerald-300 hover:to-teal-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
                 onClick={() => {
@@ -678,8 +678,8 @@ export default function Home() {
                   />
                 </svg>
                 Duplicate
-              </button>
-            )}
+              </button> 
+            )} */}
           </div>
         ),
       },

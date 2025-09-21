@@ -56,25 +56,6 @@ export default function DataTable({
   sorting,
   setSorting,
   tableLoading,
-  setModalOpen,
-  setTagsModalOpen,
-  setSummaryOpen,
-  setConclusionOpen,
-  setEditingRecord,
-  setSelectedTags,
-  setName,
-  setSummary,
-  setConclusion,
-  setVolume,
-  setNumber,
-  setTimestamp,
-  setTitleName,
-  setPageNumbers,
-  setAuthors,
-  setLanguage,
-  setFile,
-  access,
-  setError,
   pagination,
   setPagination,
   onFilteredDataChange,
@@ -145,47 +126,6 @@ export default function DataTable({
 
   return (
     <div className="flex flex-col h-[90vh]">
-      {/* Top Toolbar: global search + quick actions */}
-      <div className="mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <input
-            value={globalFilter ?? ""}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder="🔎 Global search…"
-            className="w-64 max-w-[70vw] px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          {globalFilter ? (
-            <button
-              className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
-              onClick={() => setGlobalFilter("")}
-            >
-              Clear
-            </button>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
-            onClick={() => setColumnFilters([])}
-          >
-            Clear Filters
-          </button>
-          <button
-            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
-            onClick={() => setSorting([])}
-          >
-            Clear Sorting
-          </button>
-          <button
-            className="px-3 py-2 text-sm rounded-lg border border-slate-300 hover:bg-slate-50"
-            onClick={() => setPagination({ ...pagination, pageIndex: 0 })}
-          >
-            Reset Page
-          </button>
-        </div>
-      </div>
-
       {/* Table Container with fixed height + single scrollable area (keeps columns aligned) */}
       <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -344,7 +284,7 @@ export default function DataTable({
                   table.getRowModel().rows.map((row, index) => (
                     <tr
                       key={row.id}
-                      className={`hover:bg-indigo-50/50 transition-all duration-200 ${
+                      className={`hover:bg-indigo-50/50 transition-all duration-200 border-b border-zinc-900 ${
                         index % 2 === 0 ? "bg-slate-50/30" : "bg-white/50"
                       }`}
                     >
