@@ -181,7 +181,7 @@ export default function ServerDataTable({
         )}
 
         <div className="overflow-x-auto">
-          <div className="max-h-[70vh] overflow-y-auto custom-scrollbar">
+          <div className="max-h-[80vh] overflow-y-auto custom-scrollbar">
             <table className="min-w-full divide-y divide-slate-200 table-fixed">
               <thead className="bg-gradient-to-r from-slate-50 to-gray-100 sticky top-0 z-40">
                 {table.getHeaderGroups().map((headerGroup) => (
@@ -463,7 +463,7 @@ export default function ServerDataTable({
       </div>
 
       {/* Pagination */}
-      <div className="mt-4 bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
+      <div className="bg-white/80 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <button

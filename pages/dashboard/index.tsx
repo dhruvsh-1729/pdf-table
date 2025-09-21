@@ -40,16 +40,16 @@ type RecordRow = {
 
 type SummaryRow = {
   id: number;
-  name: string;
-  email?: string;
-  record_id?: number;
+  name?: string | null;
+  email?: string | null;
+  record_id?: number | null;
 };
 
 type ConclusionRow = {
   id: number;
-  name: string;
-  email?: string;
-  record_id?: number;
+  name?: string | null;
+  email?: string | null;
+  record_id?: number | null;
 };
 
 type FilterState = {
@@ -270,16 +270,16 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
   const summaries: SummaryRow[] = (summariesRaw ?? []).map((s) => ({
     id: Number(s.id ?? 0),
     name: normalizeField(s.name) ?? "",
-    email: normalizeMaybe(s.email),
-    record_id: s.record_id ? Number(s.record_id) : undefined,
+    email: normalizeField(s.email),
+    record_id: s.record_id ? Number(s.record_id) : null,
   }));
 
   // --- Normalize Conclusions
   const conclusions: ConclusionRow[] = (conclusionsRaw ?? []).map((c) => ({
     id: Number(c.id ?? 0),
     name: normalizeField(c.name) ?? "",
-    email: normalizeMaybe(c.email),
-    record_id: c.record_id ? Number(c.record_id) : undefined,
+    email: normalizeField(c.email),
+    record_id: c.record_id ? Number(c.record_id) : null,
   }));
 
   // --- Normalize Unconfirmed Users
