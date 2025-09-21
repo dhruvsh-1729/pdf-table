@@ -60,10 +60,79 @@ export default function DataTable({
   setPagination,
   onFilteredDataChange,
 }: DataTableProps) {
+  // 1) Add a dedicated id filter + sorter
+  const idPrefixFilter = (row: any, columnId: string, filterValue: string) => {
+    const f = (filterValue ?? "").toString().trim();
+    if (!f) return true;
+    const v = row.getValue(columnId);
+    const s = v == null ? "" : String(v);
+    // exact OR prefix
+    return s === f || s.startsWith(f);
+  };
+
+  // Grab current id filter so sorter can prioritize exact match first
+  const currentIdFilter = (columnFilters.find((f: any) => f.id === "id")?.value ?? "").toString().trim();
+
+  // Sorting: exact match (if filtering) first, then by length, then numeric, then lexicographic
+  const idSmartSort = (rowA: any, rowB: any, columnId: string) => {
+    const a = String(rowA.getValue(columnId) ?? "");
+    const b = String(rowB.getValue(columnId) ?? "");
+
+    if (currentIdFilter) {
+      const aExact = a === currentIdFilter;
+      const bExact = b === currentIdFilter;
+      if (aExact !== bExact) return aExact ? -1 : 1; // exact match first
+
+      // When filtering, sort remaining records in ascending order
+      const na = Number(a);
+      const nb = Number(b);
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    }
+
+    if (a.length !== b.length) return a.length - b.length;
+
+    const na = Number(a);
+    const nb = Number(b);
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+
+    return a.localeCompare(b);
+  };
+
+  // 2) Patch the columns so id uses the custom fns (overrides 'fuzzy')
+  const patchedColumns: ColumnDef<MagazineRecord, any>[] = useMemo(() => {
+    return columns.map((c) => {
+      const colId =
+        // accessorKey is the common way; fallback to id
+        (typeof (c as any).accessorKey === "string" && (c as any).accessorKey) ||
+        (typeof (c as any).id === "string" && (c as any).id) ||
+        undefined;
+
+      if (colId === "id") {
+        return {
+          ...c,
+          // force our custom behavior for id
+          filterFn: idPrefixFilter,
+          sortingFn: idSmartSort,
+          // ensure it's filterable/sortable
+          enableColumnFilter: true,
+          enableSorting: true,
+        } as ColumnDef<MagazineRecord, any>;
+      }
+      return c;
+    });
+  }, [columns]);
+
   const table = useReactTable({
     data,
-    columns,
-    filterFns: { fuzzy: fuzzyFilter },
+    columns: patchedColumns, // <-- use patched columns
+    filterFns: {
+      fuzzy: fuzzyFilter,
+      // give it a name if you prefer using string refs in column defs
+      idPrefixFilter,
+    },
+    // optional: register the sorter by name as well
+    // sortingFns: { idSmartSort },
     state: { columnFilters, globalFilter, sorting, pagination },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
@@ -76,14 +145,21 @@ export default function DataTable({
     getSortedRowModel: getSortedRowModel(),
   });
 
+  // ---- filteredRows memo (small cleanup to avoid unstable deps) ----
   const filteredRows = useMemo(
     () => table.getFilteredRowModel().rows.map((row) => row.original),
-    [table.getFilteredRowModel().rows],
+    [
+      data,
+      table.getState().columnFilters,
+      table.getState().globalFilter,
+      table.getState().sorting,
+      table.getState().pagination, // optional; include if you want page-scoped
+    ],
   );
 
   useEffect(() => {
-    if (onFilteredDataChange) onFilteredDataChange(filteredRows);
-  }, [onFilteredDataChange, JSON.stringify(filteredRows)]);
+    onFilteredDataChange?.(filteredRows);
+  }, [onFilteredDataChange, filteredRows]);
 
   // ---- Helpers for header filter dropdowns ----
   const getUnique = (arr: (string | null | undefined)[]) =>
@@ -144,6 +220,24 @@ export default function DataTable({
                       const canSort = header.column.getCanSort();
                       const sortState = header.column.getIsSorted() as false | "asc" | "desc";
 
+                      // Special handling for numeric id column: proper numeric filtering
+                      if (header.column.id === "id") {
+                        if (!header.column.columnDef.filterFn) {
+                          header.column.columnDef.filterFn = (row, columnId, filterValue) => {
+                            if (filterValue == null || filterValue === "") return true;
+
+                            // Convert both to strings for consistent prefix matching
+                            const filterStr = String(filterValue).trim();
+                            // Ensure we get the ID as a string, handling null/undefined
+                            const cellValue = row.getValue(columnId);
+                            const cellStr = cellValue != null ? String(cellValue) : "";
+
+                            // Prefix match: "23" matches "23", "230", "231", etc.
+                            return cellStr.startsWith(filterStr);
+                          };
+                        }
+                      }
+
                       return (
                         <th
                           key={header.id}
@@ -169,17 +263,31 @@ export default function DataTable({
                             )}
                           </div>
 
-                          {/* Per-column filter UIs */}
                           {header.column.getCanFilter() && (
                             <div className="mt-2">
-                              {["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
+                              {header.column.id === "id" ? (
+                                // ID filter - accepts numeric input but does string-based prefix matching
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={(header.column.getFilterValue() as string) ?? ""}
+                                  onChange={(e) => {
+                                    // Only allow numeric characters
+                                    const value = e.target.value.replace(/[^\d]/g, "");
+                                    header.column.setFilterValue(value);
+                                    setPagination((p: any) => ({ ...p, pageIndex: 0 }));
+                                  }}
+                                  placeholder="Filter ID…"
+                                  className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                    isFiltered ? "border-red-400" : "border-slate-300"
+                                  }`}
+                                />
+                              ) : ["name", "title_name", "authors", "tags"].includes(header.column.id) ? (
                                 header.column.id === "name" ? (
-                                  // Filter by exact magazine name (dropdown)
                                   <select
                                     value={(header.column.getFilterValue() as string) ?? ""}
                                     onChange={(e) => {
                                       header.column.setFilterValue(e.target.value);
-                                      // optional: when name changes, reset to first page
                                       setPagination((p: any) => ({ ...p, pageIndex: 0 }));
                                     }}
                                     className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
@@ -194,7 +302,6 @@ export default function DataTable({
                                     ))}
                                   </select>
                                 ) : header.column.id === "tags" ? (
-                                  // Tags filter: includes (No tags)/(Has tags) + exact tag names
                                   <select
                                     value={(header.column.getFilterValue() as string) ?? ""}
                                     onChange={(e) => {
@@ -215,7 +322,6 @@ export default function DataTable({
                                     ))}
                                   </select>
                                 ) : header.column.id === "authors" ? (
-                                  // Authors filter: includes (No authors)/(Has authors) + exact author names
                                   <select
                                     value={(header.column.getFilterValue() as string) ?? ""}
                                     onChange={(e) => {
@@ -236,7 +342,6 @@ export default function DataTable({
                                     ))}
                                   </select>
                                 ) : (
-                                  // title_name fallback (exact match list)
                                   <select
                                     value={(header.column.getFilterValue() as string) ?? ""}
                                     onChange={(e) => {
@@ -256,7 +361,6 @@ export default function DataTable({
                                   </select>
                                 )
                               ) : (
-                                // Generic text filter for other columns
                                 <input
                                   type="text"
                                   value={(header.column.getFilterValue() as string) ?? ""}
