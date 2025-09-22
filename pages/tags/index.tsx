@@ -75,7 +75,7 @@ const TagDetailsModal = ({
   const fetchTagRecords = async (tagId: number, page = 1) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/tags/${tagId}/records?page=${page}&limit=10`);
+      const response = await fetch(`/api/tags/${tagId}/records?page=${page}`);
       const data = await response.json();
 
       // Convert object with numeric keys to an array if needed
@@ -827,9 +827,7 @@ export default function TagsPage({ tags, total, currentPage, totalPages, filters
                 <div key={tag.id} className="relative">
                   {/* Count badge */}
                   <div className="absolute -top-2 -right-2 z-10 bg-indigo-600 text-white text-xs px-2 py-1 rounded-full shadow">
-                    {typeof tag.recordsCount === "number"
-                      ? `${tag.recordsCount} record${tag.recordsCount === 1 ? "" : "s"}`
-                      : "—"}
+                    {typeof tag.recordsCount === "number" ? `${tag.recordsCount} records` : "—"}
                   </div>
 
                   <SelectableTagCard
@@ -908,9 +906,8 @@ export default function TagsPage({ tags, total, currentPage, totalPages, filters
   );
 }
 
-// Server-side props with enhanced filters
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const page = parseInt(context.query.page as string) || 1;
+  const page = parseInt((context.query.page as string) || "1");
   const limit = 20;
   const offset = (page - 1) * limit;
 
@@ -921,163 +918,84 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     dateFrom: (context.query.dateFrom as string) || "",
     dateTo: (context.query.dateTo as string) || "",
     important: (context.query.important as string) || "",
-    hasRecords: (context.query.hasRecords as string) || "", // if you kept the earlier feature
-    minRecords: (context.query.minRecords as string) || "", // NEW
+    hasRecords: (context.query.hasRecords as string) || "",
+    minRecords: (context.query.minRecords as string) || "",
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   try {
-    // 1) Build base filtered tag IDs (without pagination)
-    let baseIdsQuery = supabase.from("tags").select("id");
+    // 1) Query tags with aggregated record counts
+    let query = supabase.from("tags").select(
+      `
+        id,
+        name,
+        created_at,
+        important,
+        record_tags(count)
+      `,
+    );
 
-    // Search
-    if (filters.search) {
-      baseIdsQuery = baseIdsQuery.or(`name.ilike.%${filters.search}%`);
-    }
-    // Date
-    if (filters.dateFrom) baseIdsQuery = baseIdsQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
-    if (filters.dateTo) baseIdsQuery = baseIdsQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
+    // Apply filters at DB level where possible
+    if (filters.search) query = query.ilike("name", `%${filters.search}%`);
+    if (filters.dateFrom) query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
+    if (filters.dateTo) query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
 
-    // Important
-    if (filters.important === "true") baseIdsQuery = baseIdsQuery.eq("important", true);
-    else if (filters.important === "false") baseIdsQuery = baseIdsQuery.eq("important", false);
-    else if (filters.important === "null") baseIdsQuery = baseIdsQuery.is("important", null);
+    if (filters.important === "true") query = query.eq("important", true);
+    else if (filters.important === "false") query = query.eq("important", false);
+    else if (filters.important === "null") query = query.is("important", null);
 
-    // HasRecords (optional, from previous step)
-    let tagIdsWithRecords: number[] = [];
-    if (filters.hasRecords) {
-      const { data: rtRows, error: rtErr } = await supabase
-        .from("record_tags") // <— junction table
-        .select("tag_id")
-        .not("tag_id", "is", null);
-      if (rtErr) throw rtErr;
-      tagIdsWithRecords = Array.from(new Set((rtRows || []).map((r: any) => r.tag_id)));
-    }
+    const { data, error } = await query;
 
-    if (filters.hasRecords === "with") {
-      if (tagIdsWithRecords.length === 0) baseIdsQuery = baseIdsQuery.eq("id", -1);
-      else baseIdsQuery = baseIdsQuery.in("id", tagIdsWithRecords);
-    } else if (filters.hasRecords === "without") {
-      if (tagIdsWithRecords.length > 0) {
-        const list = `(${tagIdsWithRecords.join(",")})`;
-        baseIdsQuery = baseIdsQuery.not("id", "in", list);
-      }
-      // else: everyone is "without" => no further restriction
-    }
+    if (error) throw error;
 
-    const { data: baseIdsData, error: baseIdsErr } = await baseIdsQuery;
-    if (baseIdsErr) throw baseIdsErr;
-
-    const allMatchingIds: number[] = (baseIdsData || []).map((r: any) => r.id);
-    if (allMatchingIds.length === 0) {
-      return {
-        props: {
-          tags: [],
-          total: 0,
-          currentPage: 1,
-          totalPages: 0,
-          filters,
-        },
-      };
-    }
-
-    // 2) Pull counts for those IDs: SELECT tag_id, count(record_id) GROUP BY tag_id
-    // If .group is not working, let's get all record_tags and process them in JavaScript
-    const { data: allRecordTags, error: recordTagsErr } = await supabase
-      .from("record_tags")
-      .select("tag_id, record_id")
-      .in("tag_id", allMatchingIds);
-
-    if (recordTagsErr) throw recordTagsErr;
-
-    const countsMap = new Map<number, number>();
-    // Initialize all matching tag IDs with 0 count
-    allMatchingIds.forEach((id) => countsMap.set(id, 0));
-
-    // Group and count in JavaScript
-    if (allRecordTags) {
-      const groupedByTagId: Record<number, Set<number>> = {};
-
-      // Group record_ids by tag_id
-      allRecordTags.forEach((row) => {
-        const tagId = row.tag_id;
-        const recordId = row.record_id;
-
-        if (!groupedByTagId[tagId]) {
-          groupedByTagId[tagId] = new Set();
-        }
-
-        groupedByTagId[tagId].add(recordId);
-      });
-
-      // Count unique records for each tag
-      Object.entries(groupedByTagId).forEach(([tagId, recordIds]) => {
-        countsMap.set(Number(tagId), recordIds.size);
-      });
-    }
-
-    // 3) Apply minRecords filter locally
-    // 3) Apply minRecords filter locally
-    const min = filters.minRecords ? parseInt(filters.minRecords, 10) : NaN;
-
-    let filteredIds: number[];
-    if (Number.isFinite(min)) {
-      if (min === 0) {
-        // Exactly zero
-        filteredIds = allMatchingIds.filter((id) => (countsMap.get(id) || 0) === 0);
-      } else {
-        // At least `min`
-        filteredIds = allMatchingIds.filter((id) => (countsMap.get(id) || 0) >= min);
-      }
-    } else {
-      filteredIds = allMatchingIds;
-    }
-
-    // 4) Total after count filter
-    const totalAfterCountFilter = filteredIds.length;
-    if (totalAfterCountFilter === 0) {
-      return {
-        props: {
-          tags: [],
-          total: 0,
-          currentPage: 1,
-          totalPages: 0,
-          filters,
-        },
-      };
-    }
-
-    // 5) Fetch page rows for the filtered IDs, with sorting
-    let pageQuery = supabase.from("tags").select("*").in("id", filteredIds);
-    const ascending = filters.sortOrder === "asc";
-    pageQuery = pageQuery.order(filters.sortBy, { ascending });
-
-    // Pagination
-    pageQuery = pageQuery.range(offset, offset + limit - 1);
-
-    const { data: pageRows, error: pageErr } = await pageQuery;
-    if (pageErr) throw pageErr;
-
-    // 6) Attach recordsCount to each row
-    const tagsWithCounts: Tag[] = (pageRows || []).map((t: any) => ({
+    // 2) Convert supabase `record_tags(count)` into usable number
+    let tags = (data || []).map((t: any) => ({
       ...t,
-      recordsCount: countsMap.get(t.id) || 0,
+      recordsCount: t.record_tags?.[0]?.count || 0,
     }));
 
-    const totalPages = Math.ceil(totalAfterCountFilter / limit);
+    // 3) Apply hasRecords and minRecords in-memory
+    if (filters.hasRecords === "with") tags = tags.filter((t) => t.recordsCount > 0);
+    if (filters.hasRecords === "without") tags = tags.filter((t) => t.recordsCount === 0);
+
+    if (filters.minRecords) {
+      const min = parseInt(filters.minRecords, 10);
+      if (!isNaN(min)) tags = tags.filter((t) => t.recordsCount >= min);
+    }
+
+    // 4) Sorting
+    const ascending = filters.sortOrder === "asc";
+    tags.sort((a, b) => {
+      if (filters.sortBy === "created_at") {
+        const va = new Date(a.created_at).getTime();
+        const vb = new Date(b.created_at).getTime();
+        return ascending ? va - vb : vb - va;
+      } else {
+        const va = a.name.toLowerCase();
+        const vb = b.name.toLowerCase();
+        if (va < vb) return ascending ? -1 : 1;
+        if (va > vb) return ascending ? 1 : -1;
+        return 0;
+      }
+    });
+
+    // 5) Pagination
+    const total = tags.length;
+    const totalPages = Math.ceil(total / limit);
+    const pageSlice = tags.slice(offset, offset + limit);
 
     return {
       props: {
-        tags: tagsWithCounts,
-        total: totalAfterCountFilter,
+        tags: pageSlice,
+        total,
         currentPage: page,
         totalPages,
         filters,
       },
     };
-  } catch (error) {
-    console.error("Error fetching tags:", error);
+  } catch (err) {
+    console.error("Error fetching tags:", err);
     return {
       props: {
         tags: [],

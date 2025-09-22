@@ -1,41 +1,19 @@
-import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { NextApiRequest, NextApiResponse } from "next";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
+// pages/api/tags/[id]/records/count.ts
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === "GET") {
-    try {
-      const { id } = req.query;
-      const tagId = parseInt(id as string);
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ message: "Missing tag id" });
 
-      if (isNaN(tagId)) {
-        return res.status(400).json({ message: "Invalid tag ID" });
-      }
+  const { count, error } = await supabase
+    .from("record_tags")
+    .select("record_id", { count: "exact", head: true })
+    .eq("tag_id", id);
 
-      // First verify the tag exists
-      const { data: tag, error: tagError } = await supabase.from("tags").select("id").eq("id", tagId).single();
+  if (error) return res.status(500).json({ message: error.message });
 
-      if (tagError || !tag) {
-        return res.status(404).json({ message: "Tag not found" });
-      }
-
-      // Count records associated with this tag
-      const { count, error } = await supabase
-        .from("record_tags")
-        .select("*", { count: "exact", head: true })
-        .eq("tag_id", tagId);
-
-      if (error) {
-        throw error;
-      }
-
-      return res.status(200).json({ count: count || 0 });
-    } catch (error) {
-      console.error("Error counting tag records:", error);
-      return res.status(500).json({ message: "Internal server error" });
-    }
-  }
-
-  return res.status(405).json({ message: "Method not allowed" });
+  res.status(200).json({ count });
 }
