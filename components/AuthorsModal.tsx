@@ -54,8 +54,8 @@ export default function AuthorsModal({
               try {
                 const res = await fetch(`/api/authors?q=${encodeURIComponent(inputValue)}`);
                 const data = await res.json();
-                return data.map((author: { id: number; name: string }) => ({
-                  label: author.name,
+                return data.map((author: { id: number; name: string; short_name: string }) => ({
+                  label: author.name + (author.short_name ? ` [${author.short_name}]` : ""),
                   value: author.id,
                 }));
               } catch (err) {
