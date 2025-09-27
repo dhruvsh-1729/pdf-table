@@ -151,13 +151,13 @@ const TagDetailsModal = ({
               onClick={onEdit}
               className="px-4 py-2 bg-blue-100 text-black rounded-lg hover:bg-blue-200 transition-colors"
             >
-              Edit Tag
+              Edit
             </button>
             <button
               onClick={onDelete}
               className="px-4 py-2 bg-green-100 text-black rounded-lg hover:bg-green-200 transition-colors"
             >
-              Delete Tag
+              Delete
             </button>
           </div>
         </div>

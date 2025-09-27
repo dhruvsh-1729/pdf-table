@@ -161,7 +161,7 @@ const EnhancedTagFormModal = ({
           ×
         </button>
 
-        <h2 className="text-xl font-semibold mb-4">{tag ? "Edit Tag" : "Create Tag"}</h2>
+        <h2 className="text-xl font-semibold mb-4">{tag ? "Edit" : "Create"}</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
