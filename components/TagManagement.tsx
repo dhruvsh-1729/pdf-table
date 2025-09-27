@@ -7,6 +7,7 @@ interface Tag {
   name: string;
   important: boolean | null;
   created_at: string;
+  recordsCount?: number; // <— ADD THIS
 }
 
 interface TagRecord {
@@ -428,16 +429,13 @@ const SelectableTagCard = ({
       </div>
 
       <div className="flex items-center mb-3 ml-6 cursor-pointer" onClick={onClick}>
-        <div className="w-10 h-10 rounded-lg bg-indigo-500 text-white flex items-center justify-center text-lg font-bold mr-3">
-          #
-        </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-medium text-gray-900 truncate">#{tag.name}</h3>
           {/* <p className="text-sm text-gray-500">{new Date(tag.created_at).toLocaleDateString()}</p> */}
         </div>
       </div>
 
-      <div className="ml-6 text-xs text-gray-600">
+      <div className="ml-6 gap-2 flex items-center text-xs text-gray-600">
         {tag.important === true ? (
           <span className="bg-red-100 text-red-800 px-1.5 py-0.5 rounded font-medium">Important</span>
         ) : tag.important === false ? (
@@ -445,14 +443,20 @@ const SelectableTagCard = ({
         ) : (
           <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>
         )}
+
+        {typeof tag.recordsCount === "number" && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-green-100 text-gray-600">
+            {tag.recordsCount} Records
+          </span>
+        )}
       </div>
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity mt-3">
-        <button onClick={onEdit} className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600">
+        <button onClick={onEdit} className="px-2 py-1 text-xs bg-blue-300 text-black rounded hover:bg-blue-400">
           Edit
         </button>
-        <button onClick={onDelete} className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600">
+        <button onClick={onDelete} className="px-2 py-1 text-xs bg-green-300 text-black rounded hover:bg-green-400">
           Delete
         </button>
       </div>
@@ -542,9 +546,6 @@ const EnhancedSearch = ({
                 }}
               >
                 <div className="flex items-center">
-                  <div className="w-6 h-6 rounded bg-indigo-500 text-white flex items-center justify-center text-xs font-bold mr-2">
-                    #
-                  </div>
                   <div className="flex-1">
                     <div className="text-sm font-medium text-gray-900">#{tag.name}</div>
                     {tag.important === true && (

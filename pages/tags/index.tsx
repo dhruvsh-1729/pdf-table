@@ -79,11 +79,7 @@ const TagDetailsModal = ({
       const data = await response.json();
 
       // Convert object with numeric keys to an array if needed
-      const recordsArray = Array.isArray(data)
-        ? data
-        : Object.keys(data)
-            .filter((key) => !isNaN(Number(key)))
-            .map((key) => data[key]);
+      const recordsArray = data.records;
 
       // Extract hasMore property if it exists
       const hasMore = data.hasMore !== undefined ? data.hasMore : false;
@@ -123,9 +119,6 @@ const TagDetailsModal = ({
 
         {/* Tag Info */}
         <div className="flex items-center mb-6">
-          <div className="w-16 h-16 rounded-lg bg-indigo-500 text-white flex items-center justify-center text-xl font-bold mr-4">
-            #
-          </div>
           <div className="flex-1">
             <h2 className="text-2xl font-semibold text-gray-900">{tag.name}</h2>
             <p className="text-sm text-gray-500">
@@ -152,16 +145,17 @@ const TagDetailsModal = ({
               </span>
             </div>
           )}
-          <div className="flex space-x-2">
+
+          <div className="flex space-x-2 mr-2">
             <button
               onClick={onEdit}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+              className="px-4 py-2 bg-blue-100 text-black rounded-lg hover:bg-blue-200 transition-colors"
             >
               Edit Tag
             </button>
             <button
               onClick={onDelete}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+              className="px-4 py-2 bg-green-100 text-black rounded-lg hover:bg-green-200 transition-colors"
             >
               Delete Tag
             </button>
@@ -826,9 +820,9 @@ export default function TagsPage({ tags, total, currentPage, totalPages, filters
               {tags.map((tag) => (
                 <div key={tag.id} className="relative">
                   {/* Count badge */}
-                  <div className="absolute -top-2 -right-2 z-10 bg-indigo-600 text-white text-xs px-2 py-1 rounded-full shadow">
+                  {/* <div className="absolute -top-2 -right-2 z-10 bg-indigo-600 text-white text-xs px-2 py-1 rounded-full shadow">
                     {typeof tag.recordsCount === "number" ? `${tag.recordsCount} records` : "—"}
-                  </div>
+                  </div> */}
 
                   <SelectableTagCard
                     tag={tag}
@@ -959,7 +953,10 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     if (filters.hasRecords === "with") tags = tags.filter((t) => t.recordsCount > 0);
     if (filters.hasRecords === "without") tags = tags.filter((t) => t.recordsCount === 0);
 
-    if (filters.minRecords) {
+    // Special handling for minRecords=0: only tags with no records
+    if (filters.minRecords === "0") {
+      tags = tags.filter((t) => t.recordsCount === 0);
+    } else if (filters.minRecords) {
       const min = parseInt(filters.minRecords, 10);
       if (!isNaN(min)) tags = tags.filter((t) => t.recordsCount >= min);
     }
