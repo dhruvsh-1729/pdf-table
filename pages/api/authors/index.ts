@@ -7,19 +7,27 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
     try {
-      const search = (req.query.q as string) || "";
+      const raw = (req.query.q as string) || "";
+      // normalize: keep only letters/digits, lowercase
+      const needle = raw.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+      // Build a fuzzy pattern like %c%k% for "ck"
+      const fuzzy = needle ? `%${needle.split("").join("%")}%` : "";
+
       let query = supabase.from("authors").select("id, name, designation, short_name");
 
-      if (search) {
-        query = query.ilike("name", `%${search}%`);
+      if (needle) {
+        // case-insensitive search with wildcards between letters
+        // This will match across punctuation/spaces like "C. K. Chapple"
+        query = query.or(`name.ilike.${fuzzy},short_name.ilike.${fuzzy}`);
       }
 
       const { data, error } = await query.limit(20);
       if (error) throw error;
 
       return res.status(200).json(data);
-    } catch (error) {
-      return res.status(500).json({ error: "Error fetching authors", details: (error as Error).message });
+    } catch (err) {
+      return res.status(500).json({ error: "Server error" });
     }
   } else if (req.method === "POST") {
     // Create new author

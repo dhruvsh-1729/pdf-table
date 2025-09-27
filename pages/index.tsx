@@ -387,7 +387,7 @@ export default function Home() {
       },
       {
         accessorKey: "name",
-        header: "Magazine Name",
+        header: "Magazine",
         id: "name",
         cell: ({ row }) => <div className="font-semibold text-slate-900 text-sm">{row.original.name}</div>,
       },
@@ -549,7 +549,7 @@ export default function Home() {
       },
       {
         accessorKey: "page_numbers",
-        header: "Page Numbers",
+        header: "Pages",
         id: "page_numbers",
         cell: ({ row }) => (
           <span className="font-mono text-sm bg-amber-50 text-amber-800 px-2 py-1 rounded border border-amber-200">

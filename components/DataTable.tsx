@@ -116,8 +116,8 @@ export default function ServerDataTable({
       const response = await fetch(`/api/authors?q=${encodeURIComponent(inputValue)}`);
       if (!response.ok) throw new Error("Failed to fetch authors");
       const data = await response.json();
-      const options = data.map((author: { id: number; name: string }) => ({
-        label: author.name,
+      const options = data.map((author: { id: number; name: string; short_name: string }) => ({
+        label: author.name + (author.short_name ? ` [${author.short_name}]` : ""),
         value: author.name,
       }));
       // Add special options at the beginning
@@ -199,7 +199,7 @@ export default function ServerDataTable({
                         <th
                           key={header.id}
                           colSpan={header.colSpan}
-                          className={`px-2 py-3 text-left align-bottom text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 ${
+                          className={`px-2 py-3 text-left align-bottom text-sm font-bold tracking-wider border-b border-slate-200 ${
                             isFiltered
                               ? "bg-pink-100 text-red-900"
                               : "text-slate-700 bg-gradient-to-r from-slate-50 to-gray-100"
