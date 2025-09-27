@@ -54,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ? null
             : null;
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("authors")
         .update({
           name,
@@ -66,14 +66,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         })
         .eq("id", authorId)
         .select();
-
-      if (error) {
-        if (error.code === "23505") {
-          // Unique constraint violation
-          return res.status(409).json({ message: "Author name already exists" });
-        }
-        throw error;
-      }
 
       if (!data || data.length === 0) {
         return res.status(404).json({ message: "Author not found" });
