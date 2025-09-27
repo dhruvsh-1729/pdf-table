@@ -1,4 +1,5 @@
 // components/AuthorManagement.tsx
+import Image from "next/image";
 import { useState, useEffect } from "react";
 // Types
 
@@ -151,8 +152,8 @@ const EnhancedAuthorFormModal = ({
       newErrors.name = "Name must be at least 2 characters";
     }
 
-    if (formData.description && formData.description.length > 4000) {
-      newErrors.description = "Description must be less than 4000 characters";
+    if (formData.description && formData.description.length > 8000) {
+      newErrors.description = "Description must be less than 8000 characters";
     }
 
     if (formData.cover_url && !isValidUrl(formData.cover_url)) {
@@ -160,13 +161,8 @@ const EnhancedAuthorFormModal = ({
     }
 
     // Validate designation
-    if (formData.designation && formData.designation.length > 100) {
-      newErrors.designation = "Designation must be less than 100 characters";
-    }
-
-    // Validate short name
-    if (formData.short_name && formData.short_name.length > 20) {
-      newErrors.short_name = "Short name must be less than 20 characters";
+    if (formData.designation && formData.designation.length > 500) {
+      newErrors.designation = "Designation must be less than 500 characters";
     }
 
     setErrors(newErrors);
@@ -235,7 +231,7 @@ const EnhancedAuthorFormModal = ({
                 errors.name ? "border-red-500" : "border-gray-300"
               }`}
               disabled={loading}
-              maxLength={255}
+              maxLength={1000}
             />
             {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
           </div>
@@ -251,7 +247,7 @@ const EnhancedAuthorFormModal = ({
                 errors.short_name ? "border-red-500" : "border-gray-300"
               }`}
               disabled={loading}
-              maxLength={20}
+              maxLength={2000}
               placeholder="e.g., JD, Dr. Smith"
             />
             {errors.short_name && <p className="text-red-500 text-xs mt-1">{errors.short_name}</p>}
@@ -269,7 +265,7 @@ const EnhancedAuthorFormModal = ({
                 errors.designation ? "border-red-500" : "border-gray-300"
               }`}
               disabled={loading}
-              maxLength={100}
+              maxLength={500}
               placeholder="e.g., Professor, Editor, Journalist"
             />
             {errors.designation && <p className="text-red-500 text-xs mt-1">{errors.designation}</p>}
@@ -286,10 +282,10 @@ const EnhancedAuthorFormModal = ({
               }`}
               rows={6}
               disabled={loading}
-              maxLength={4000}
+              maxLength={8000}
             />
             {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
-            <p className="text-xs text-gray-500 mt-1">{formData.description.length}/4000 characters</p>
+            <p className="text-xs text-gray-500 mt-1">{formData.description.length}/8000 characters</p>
           </div>
 
           <div>
@@ -311,15 +307,28 @@ const EnhancedAuthorFormModal = ({
           {formData.cover_url && !errors.cover_url && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Preview</label>
-              <img
+              <div className="w-16 h-16 rounded-full overflow-hidden border border-gray-300 bg-gray-100 flex items-center justify-center">
+                {/* <img
                 src={formData.cover_url}
                 alt="Preview"
-                className="w-16 h-16 rounded-full object-cover border border-gray-300"
+                className="w-full h-full object-cover"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                  setErrors({ ...errors, cover_url: "Invalid image URL" });
+                (e.target as HTMLImageElement).style.display = "none";
+                setErrors({ ...errors, cover_url: "Invalid image URL" });
                 }}
-              />
+                style={{ display: formData.cover_url ? "block" : "none" }}
+              /> */}
+                {/* If you want to use next/image, you need to import it and use it like below: */}
+
+                <Image
+                  src={formData.cover_url}
+                  alt="Preview"
+                  width={64}
+                  height={64}
+                  className="rounded-full object-cover"
+                  onError={() => setErrors({ ...errors, cover_url: "Invalid image URL" })}
+                />
+              </div>
             </div>
           )}
 
