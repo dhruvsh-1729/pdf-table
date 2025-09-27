@@ -130,17 +130,13 @@ const AuthorDetailsModal = ({
 
         {/* Author Info */}
         <div className="flex items-center mb-6">
-          {author.cover_url ? (
+          {author.cover_url && (
             <img src={author.cover_url} alt={author.name} className="w-20 h-20 rounded-full object-cover mr-4" />
-          ) : (
-            <div className="w-20 h-20 rounded-full bg-blue-500 text-white flex items-center justify-center text-2xl font-semibold mr-4">
-              {getInitials(author.name)}
-            </div>
           )}
           <div className="flex-1">
-            <h2 className="text-2xl font-semibold text-gray-900">{author.name}</h2>
-            {author.short_name && <p className="text-sm text-gray-600">Short Name: {author.short_name}</p>}
-            {author.designation && <p className="text-sm text-blue-600 font-medium">{author.designation}</p>}
+            <h2 className="text-2xl font-bold text-gray-900">{author.name}</h2>
+            {author.short_name && <p className="text-sm text-gray-600 font-bold">Short Name: {author.short_name}</p>}
+            {author.designation && <p className="text-sm text-blue-600 font-bold">{author.designation}</p>}
           </div>
 
           {/* Status badges */}
@@ -159,18 +155,18 @@ const AuthorDetailsModal = ({
               </span>
             )}
 
-            <div className="flex space-x-2">
+            <div className="flex space-x-2 mr-4 mt-4">
               <button
                 onClick={onEdit}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                className="px-4 py-2 bg-blue-300 text-black rounded-lg hover:bg-blue-400 transition-colors"
               >
-                Edit Author
+                Edit
               </button>
               <button
                 onClick={onDelete}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                className="px-4 py-2 bg-green-300 text-black rounded-lg hover:bg-green-400 transition-colors"
               >
-                Delete Author
+                Delete
               </button>
             </div>
           </div>

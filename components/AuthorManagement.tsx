@@ -597,17 +597,13 @@ const SelectableAuthorCard = ({
       </div>
 
       <div className="flex items-center mb-3 ml-6 cursor-pointer" onClick={onClick}>
-        {author.cover_url ? (
+        {author.cover_url && (
           <img src={author.cover_url} alt={author.name} className="w-12 h-12 rounded-full object-cover mr-3" />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-semibold mr-3">
-            {getInitials(author.name)}
-          </div>
         )}
         <div className="flex-1 min-w-0">
-          <h3 className="font-medium text-gray-900 truncate">{author.name}</h3>
-          {author.short_name && <p className="text-xs text-gray-500">({author.short_name})</p>}
-          {author.designation && <p className="text-xs text-blue-600 font-medium">{author.designation}</p>}
+          <h3 className="text-gray-900 truncate font-bold">{author.name}</h3>
+          {author.short_name && <p className="text-xs text-gray-500 font-bold">({author.short_name})</p>}
+          {author.designation && <p className="text-xs text-blue-600 font-bold">{author.designation}</p>}
         </div>
       </div>
 
@@ -634,10 +630,10 @@ const SelectableAuthorCard = ({
 
       {/* Action Buttons */}
       <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity mt-2">
-        <button onClick={onEdit} className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600">
+        <button onClick={onEdit} className="px-2 py-1 text-xs bg-blue-300 text-black rounded hover:bg-blue-400">
           Edit
         </button>
-        <button onClick={onDelete} className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600">
+        <button onClick={onDelete} className="px-2 py-1 text-xs bg-green-300 text-black rounded hover:bg-green-400">
           Delete
         </button>
       </div>
