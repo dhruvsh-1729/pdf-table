@@ -22,8 +22,9 @@ interface Author {
   cover_url: string | null;
   created_at: string;
   national: "national" | "international" | null;
-  designation: string | null; // New field
-  short_name: string | null; // New field
+  designation: string | null;
+  short_name: string | null;
+  recordsCount?: number; // NEW
 }
 
 // Updated AuthorRecord interface (if needed)
@@ -36,7 +37,7 @@ interface AuthorRecord {
   title_name: string | null;
 }
 
-// Updated AuthorsPageProps filters
+// Add to AuthorsPageProps interface filters
 interface AuthorsPageProps {
   authors: Author[];
   total: number;
@@ -50,8 +51,10 @@ interface AuthorsPageProps {
     dateTo: string;
     national?: "national" | "international" | "null" | "";
     designation?: string;
-    designationStatus?: "filled" | "empty" | ""; // NEW
-    descriptionStatus?: "filled" | "empty" | ""; // NEW
+    designationStatus?: "filled" | "empty" | "";
+    descriptionStatus?: "filled" | "empty" | "";
+    hasRecords?: "with" | "without" | ""; // NEW
+    minRecords?: string; // NEW: "", "0", "1", "2", etc.
   };
 }
 
@@ -327,7 +330,7 @@ const DeleteConfirmationModal = ({
   );
 };
 
-// Updated Filters Component
+// Updated FiltersComponent with new filters
 const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFiltersChange: (filters: any) => void }) => {
   const [localFilters, setLocalFilters] = useState(filters);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -346,7 +349,11 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
       dateFrom: "",
       dateTo: "",
       national: "",
-      designation: "", // New filter
+      designation: "",
+      designationStatus: "",
+      descriptionStatus: "",
+      hasRecords: "", // NEW
+      minRecords: "", // NEW
     };
     setLocalFilters(clearedFilters);
     onFiltersChange(clearedFilters);
@@ -387,7 +394,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
         <div className="p-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
             {/* Search */}
-            <div>
+            <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
               <EnhancedSearch
                 value={localFilters.search}
@@ -434,11 +441,13 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 <option value="">Any</option>
                 <option value="national">National</option>
                 <option value="international">International</option>
+                <option value="jainmonk">Jain Monk</option>
+                <option value="jainnun">Jain Nun</option>
                 <option value="null">Unassigned (null)</option>
               </select>
             </div>
 
-            {/* New Designation Filter */}
+            {/* Designation Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
               <input
@@ -461,8 +470,8 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
               />
             </div>
 
-            {/* Date To - moved to a second row or adjust grid as needed */}
-            <div className="md:col-span-2 lg:col-span-1">
+            {/* Date To */}
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
               <input
                 type="date"
@@ -472,7 +481,7 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
               />
             </div>
 
-            {/* Description Filled/Empty */}
+            {/* Description Status */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <select
@@ -486,9 +495,9 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
               </select>
             </div>
 
-            {/* Designation Filled/Empty */}
+            {/* Designation Status */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Designation</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Designation Status</label>
               <select
                 value={localFilters.designationStatus || ""}
                 onChange={(e) => handleFilterChange("designationStatus", e.target.value)}
@@ -497,6 +506,44 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
                 <option value="">Any</option>
                 <option value="filled">Filled</option>
                 <option value="empty">Empty / Null</option>
+              </select>
+            </div>
+
+            {/* Has Records - NEW */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Attachment</label>
+              <select
+                value={localFilters.hasRecords || ""}
+                onChange={(e) => handleFilterChange("hasRecords", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="with">Attached to at least one record</option>
+                <option value="without">No records attached</option>
+              </select>
+            </div>
+
+            {/* Min Records Count - NEW */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Records Count</label>
+              <select
+                value={localFilters.minRecords || ""}
+                onChange={(e) => handleFilterChange("minRecords", e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Any</option>
+                <option value="0">0 (no records)</option>
+                <option value="1">1+</option>
+                <option value="2">2+</option>
+                <option value="3">3+</option>
+                <option value="4">4+</option>
+                <option value="5">5+</option>
+                <option value="6">6+</option>
+                <option value="7">7+</option>
+                <option value="8">8+</option>
+                <option value="9">9+</option>
+                <option value="10">10+</option>
+                <option value="50">50+</option>
               </select>
             </div>
           </div>
@@ -915,7 +962,7 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, f
   );
 }
 
-// Updated getServerSideProps with enhanced filters
+// Updated getServerSideProps with record filtering
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const page = parseInt(context.query.page as string) || 1;
   const limit = 20;
@@ -931,96 +978,127 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     designation: (context.query.designation as string) || "",
     designationStatus: (context.query.designationStatus as string) || "",
     descriptionStatus: (context.query.descriptionStatus as string) || "",
+    hasRecords: (context.query.hasRecords as string) || "", // NEW
+    minRecords: (context.query.minRecords as string) || "", // NEW
   };
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   try {
-    // Updated to include new fields in select
-    let query = supabase
-      .from("authors")
-      .select("id, name, description, cover_url, created_at, national, designation, short_name", { count: "exact" });
-    let countQuery = supabase.from("authors").select("*", { count: "exact", head: true });
+    // 1) Query authors with aggregated record counts
+    let query = supabase.from("authors").select(
+      `
+        id,
+        name,
+        description,
+        cover_url,
+        created_at,
+        national,
+        designation,
+        short_name,
+        record_authors(count)
+      `,
+    );
 
-    // Search filter - updated to include designation
+    // Apply filters at DB level where possible
     if (filters.search) {
-      const searchFilter = `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%,designation.ilike.%${filters.search}%`;
-      query = query.or(searchFilter);
-      countQuery = countQuery.or(searchFilter);
+      query = query.or(
+        `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%,designation.ilike.%${filters.search}%`,
+      );
     }
 
-    // Date filters
-    if (filters.dateFrom) {
-      query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
-      countQuery = countQuery.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
-    }
-    if (filters.dateTo) {
-      query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
-      countQuery = countQuery.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
-    }
+    if (filters.dateFrom) query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
+    if (filters.dateTo) query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
 
     // National filter
-    if (filters.national === "national") {
-      query = query.eq("national", "national");
-      countQuery = countQuery.eq("national", "national");
-    } else if (filters.national === "international") {
-      query = query.eq("national", "international");
-      countQuery = countQuery.eq("national", "international");
-    } else if (filters.national === "null") {
-      query = query.is("national", null);
-      countQuery = countQuery.is("national", null);
-    }
+    if (filters.national === "national") query = query.eq("national", "national");
+    else if (filters.national === "international") query = query.eq("national", "international");
+    else if (filters.national === "null") query = query.is("national", null);
 
-    // New designation filter
-    if (filters.designation) {
-      query = query.ilike("designation", `%${filters.designation}%`);
-      countQuery = countQuery.ilike("designation", `%${filters.designation}%`);
-    }
+    // Designation text filter
+    if (filters.designation) query = query.ilike("designation", `%${filters.designation}%`);
 
     // Description filled/empty filter
     if (filters.descriptionStatus === "empty") {
       query = query.or("description.is.null,description.eq.");
-      countQuery = countQuery.or("description.is.null,description.eq.");
     } else if (filters.descriptionStatus === "filled") {
       query = query.not("description", "is", null).not("description", "eq", "");
-      countQuery = countQuery.not("description", "is", null).not("description", "eq", "");
     }
 
     // Designation filled/empty filter
     if (filters.designationStatus === "empty") {
       query = query.or("designation.is.null,designation.eq.");
-      countQuery = countQuery.or("designation.is.null,designation.eq.");
     } else if (filters.designationStatus === "filled") {
       query = query.not("designation", "is", null).not("designation", "eq", "");
-      countQuery = countQuery.not("designation", "is", null).not("designation", "eq", "");
     }
 
-    // Sorting - updated to include designation as valid sort option
-    const validSortFields = ["id", "name", "created_at", "designation"];
-    const sortBy = validSortFields.includes(filters.sortBy) ? filters.sortBy : "name";
-    const ascending = filters.sortOrder === "asc";
-    query = query.order(sortBy, { ascending });
-
-    // Pagination
-    query = query.range(offset, offset + limit - 1);
-
-    const [{ data: authors, error }, { count }] = await Promise.all([query, countQuery]);
+    const { data, error } = await query;
 
     if (error) throw error;
 
-    const totalPages = Math.ceil((count || 0) / limit);
+    // 2) Convert supabase `record_authors(count)` into usable number
+    let authors = (data || []).map((a: any) => ({
+      ...a,
+      recordsCount: a.record_authors?.[0]?.count || 0,
+    }));
+
+    // 3) Apply hasRecords and minRecords filters in-memory
+    if (filters.hasRecords === "with") {
+      authors = authors.filter((a) => a.recordsCount > 0);
+    }
+    if (filters.hasRecords === "without") {
+      authors = authors.filter((a) => a.recordsCount === 0);
+    }
+
+    // Special handling for minRecords=0: only authors with no records
+    if (filters.minRecords === "0") {
+      authors = authors.filter((a) => a.recordsCount === 0);
+    } else if (filters.minRecords) {
+      const min = parseInt(filters.minRecords, 10);
+      if (!isNaN(min)) {
+        authors = authors.filter((a) => a.recordsCount >= min);
+      }
+    }
+
+    // 4) Sorting
+    const ascending = filters.sortOrder === "asc";
+    authors.sort((a, b) => {
+      if (filters.sortBy === "created_at") {
+        const va = new Date(a.created_at).getTime();
+        const vb = new Date(b.created_at).getTime();
+        return ascending ? va - vb : vb - va;
+      } else if (filters.sortBy === "designation") {
+        const va = (a.designation || "").toLowerCase();
+        const vb = (b.designation || "").toLowerCase();
+        if (va < vb) return ascending ? -1 : 1;
+        if (va > vb) return ascending ? 1 : -1;
+        return 0;
+      } else {
+        // name
+        const va = a.name.toLowerCase();
+        const vb = b.name.toLowerCase();
+        if (va < vb) return ascending ? -1 : 1;
+        if (va > vb) return ascending ? 1 : -1;
+        return 0;
+      }
+    });
+
+    // 5) Pagination
+    const total = authors.length;
+    const totalPages = Math.ceil(total / limit);
+    const pageSlice = authors.slice(offset, offset + limit);
 
     return {
       props: {
-        authors: authors || [],
-        total: count || 0,
+        authors: pageSlice,
+        total,
         currentPage: page,
         totalPages,
         filters,
       },
     };
-  } catch (error) {
-    console.error("Error fetching authors:", error);
+  } catch (err) {
+    console.error("Error fetching authors:", err);
     return {
       props: {
         authors: [],

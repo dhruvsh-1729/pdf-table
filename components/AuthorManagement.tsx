@@ -13,6 +13,7 @@ interface Author {
   national: "national" | "international" | null;
   designation: string | null; // New field
   short_name: string | null; // New field
+  recordsCount?: number; // NEW
 }
 
 // Updated AuthorRecord interface (if needed)
@@ -347,6 +348,8 @@ const EnhancedAuthorFormModal = ({
               <option value="">Unassigned</option>
               <option value="national">National</option>
               <option value="international">International</option>
+              <option value="jainmonk">Jain Monk</option>
+              <option value="jainnun">Jain Nun</option>
             </select>
             {errors.national && <p className="text-red-500 text-xs mt-1">{errors.national}</p>}
           </div>
@@ -626,6 +629,10 @@ const SelectableAuthorCard = ({
           </span>
         )}
         {!author.national && <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>}
+
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600">
+          {author.recordsCount !== undefined ? author.recordsCount : 0} Records
+        </span>
       </div>
 
       {/* Action Buttons */}
