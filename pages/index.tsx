@@ -4,7 +4,7 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useRouter } from "next/router";
 import { debounce } from "lodash";
 import BugModal from "@/components/BugModal";
-import { PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
+import { Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { MagazineRecord, Tag, User } from "../types";
@@ -567,7 +567,7 @@ export default function Home() {
           return (
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-slate-700 text-sm">
-                {linked?.length ? linked.map((a) => a.name).join(", ") : "—"}
+                {linked?.length ? linked.map((a) => a.name).join(", ") : ""}
               </span>
               <button
                 className="ml-2 px-2 py-1 text-xs bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
@@ -577,7 +577,7 @@ export default function Home() {
                   setAuthorsModalOpen(true);
                 }}
               >
-                Edit
+                <Pencil size={21} />
               </button>
             </div>
           );
