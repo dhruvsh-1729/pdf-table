@@ -599,15 +599,33 @@ export default function Home() {
         id: "pdf_url",
         cell: ({ row }) => (
           <div className="space-y-2">
-            <button
-              className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-black text-sm font-bold rounded-lg shadow transition-transform transform hover:scale-105"
-              onClick={(e) => {
-                e.stopPropagation();
-                window.open(row.original.pdf_url, "_blank", "noopener,noreferrer");
-              }}
+            {/* {row.original.id && row.original.id > 1217 ? (
+              <a
+                href={`/api/pdf/view?id=${encodeURIComponent(row.original.pdf_public_id || "")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-black text-sm font-bold rounded-lg shadow transition-transform transform hover:scale-105 inline-block text-center no-underline"
+              >
+                PDF
+              </a>
+            ) : (
+              <a
+                href={row.original.pdf_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-black text-sm font-bold rounded-lg shadow transition-transform transform hover:scale-105 inline-block text-center no-underline"
+              >
+                PDF
+              </a>
+            )} */}
+            <a
+              href={row.original.pdf_url!}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-black text-xs font-bold rounded-lg shadow transition-transform transform hover:scale-105 inline-block text-center no-underline"
             >
               PDF
-            </button>
+            </a>
             <div className="text-xs text-black bg-slate-50 border border-slate-200 rounded-lg p-2">
               <span className="font-bold">Creator:</span> {row.original.creator_name || "N/A"}
             </div>
