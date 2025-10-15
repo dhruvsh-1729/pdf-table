@@ -21,6 +21,7 @@ export interface MagazineRecord {
   name: string;
   timestamp: string | null;
   summary: string | null;
+  pdf_public_id: string | null;
   pdf_url: string;
   volume: string | null;
   number: string | null;

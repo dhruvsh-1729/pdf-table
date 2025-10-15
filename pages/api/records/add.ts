@@ -1,15 +1,15 @@
+// pages/api/records/upload-create-cloudinary.ts
 import type { NextApiRequest, NextApiResponse } from "next";
 import formidable, { File } from "formidable";
 import fs from "fs/promises";
 import path from "path";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { slugify } from "@/lib/slugify";
+import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
 
 export const config = {
-  api: { bodyParser: false }, // we will parse multipart ourselves
+  api: { bodyParser: false, sizeLimit: "150mb" },
 };
 
-// Shape we expect from the client; extend if you add columns
 export type RecordRow = {
   name: string;
   timestamp?: string | null;
@@ -23,28 +23,84 @@ export type RecordRow = {
   email?: string | null;
   creator_name?: string | null;
   conclusion?: string | null;
-  pdf_url?: string | null; // filled on server after upload
+  pdf_url?: string | null; // viewer URL
+  pdf_public_id?: string | null; // cloudinary public id with .pdf
 };
 
-function toNullIfEmpty(v: any) {
-  return v === "" || v === undefined ? null : v;
+const toNullIfEmpty = (v: any) => (v === "" || v === undefined ? null : v);
+function safeParseJSON<T>(maybeJson: unknown, fallback: T): T {
+  if (typeof maybeJson !== "string") return fallback;
+  const s = maybeJson.trim();
+  if (!s) return fallback;
+  try {
+    return JSON.parse(s) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
+  api_key: process.env.CLOUDINARY_API_KEY || "",
+  api_secret: process.env.CLOUDINARY_API_SECRET || "",
+  secure: true,
+});
+const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "pdfs";
+
+function getPdfExt(originalFilename?: string | null) {
+  const e = (originalFilename && path.extname(originalFilename)) || ".pdf";
+  return e || ".pdf";
+}
+function buildBaseId(title: string) {
+  const base = String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9\-_.]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${base}-${Date.now()}`;
+}
+function buildViewerUrl(publicIdWithExt: string, version?: number | string) {
+  const params = new URLSearchParams({ id: publicIdWithExt });
+  if (version) params.set("v", String(version));
+  return `/api/pdf/view?${params.toString()}`;
 }
 
 async function parseForm(req: NextApiRequest): Promise<{ row: RecordRow; pdf: File }> {
-  const form = formidable({
-    multiples: false,
-    maxFileSize: 100 * 1024 * 1024, // 100MB
-  });
-
+  const form = formidable({ multiples: false, maxFileSize: 150 * 1024 * 1024 });
   return new Promise((resolve, reject) => {
     form.parse(req, (err, fields, files) => {
       if (err) return reject(err);
       try {
-        const json = Array.isArray(fields.json) ? fields.json[0] : (fields.json ?? ("" as string));
-        const row = JSON.parse(json) as RecordRow;
+        const jsonField = Array.isArray(fields.json) ? fields.json[0] : (fields.json as string | undefined);
+        const fromJson = safeParseJSON<RecordRow>(jsonField, {} as RecordRow);
+
+        // Merge flat fields if present
+        const getStr = (k: keyof RecordRow): string | null => {
+          const v = (fields as any)[k];
+          if (typeof v === "string") return v;
+          if (Array.isArray(v)) return typeof v[0] === "string" ? v[0] : null;
+          return null;
+        };
+
+        const row: RecordRow = {
+          name: fromJson.name ?? getStr("name") ?? "",
+          timestamp: fromJson.timestamp ?? toNullIfEmpty(getStr("timestamp")),
+          summary: fromJson.summary ?? toNullIfEmpty(getStr("summary")),
+          volume: fromJson.volume ?? toNullIfEmpty(getStr("volume")),
+          number: fromJson.number ?? toNullIfEmpty(getStr("number")),
+          title_name: fromJson.title_name ?? toNullIfEmpty(getStr("title_name")),
+          page_numbers: fromJson.page_numbers ?? toNullIfEmpty(getStr("page_numbers")),
+          authors: fromJson.authors ?? toNullIfEmpty(getStr("authors")),
+          language: fromJson.language ?? toNullIfEmpty(getStr("language")),
+          email: fromJson.email ?? toNullIfEmpty(getStr("email")),
+          creator_name: fromJson.creator_name ?? toNullIfEmpty(getStr("creator_name")),
+          conclusion: fromJson.conclusion ?? toNullIfEmpty(getStr("conclusion")),
+        };
+
         const pdfAny = files.pdf as File | File[] | undefined;
         const pdf = Array.isArray(pdfAny) ? pdfAny[0] : pdfAny;
         if (!pdf) return reject(new Error("Missing PDF file"));
+
         resolve({ row, pdf });
       } catch (e) {
         reject(e);
@@ -53,36 +109,39 @@ async function parseForm(req: NextApiRequest): Promise<{ row: RecordRow; pdf: Fi
   });
 }
 
+async function uploadPdfBufferToCloudinary(buffer: Buffer, publicIdBase: string, ext: string) {
+  const public_id = `${CLOUDINARY_FOLDER}/${publicIdBase}${ext}`;
+  const result = await new Promise<UploadApiResponse>((resolve, reject) => {
+    const upload = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "raw",
+        public_id,
+        overwrite: false,
+        access_mode: "public",
+      },
+      (error, res) => (error || !res ? reject(error ?? new Error("Unknown Cloudinary error")) : resolve(res)),
+    );
+    upload.end(buffer);
+  });
+  return { publicIdWithExt: public_id, version: result.version };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const { row, pdf } = await parseForm(req);
+    if (!row?.name || !row.name.trim()) return res.status(400).json({ error: "Name is required" });
 
     const title = row.title_name || row.name || "untitled";
-    const baseSlug = slugify(title);
-    const fileExt = path.extname(pdf.originalFilename || ".pdf") || ".pdf";
-    const fileName = `${baseSlug}-${Date.now()}${fileExt}`;
+    const baseId = buildBaseId(title);
+    const ext = getPdfExt(pdf.originalFilename);
 
-    // Read the uploaded temp file into a Buffer for Supabase Storage
     const fileBuffer = await fs.readFile(pdf.filepath);
+    const { publicIdWithExt, version } = await uploadPdfBufferToCloudinary(fileBuffer, baseId, ext);
 
-    const bucket = process.env.SUPABASE_STORAGE_BUCKET || "pdfs";
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from(bucket)
-      .upload(fileName, fileBuffer, { contentType: "application/pdf" });
-
-    if (uploadError) {
-      return res.status(500).json({ error: `Upload failed: ${uploadError.message}` });
-    }
-
-    // Public URL
-    const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(fileName);
-    const pdf_url = pub?.publicUrl || null;
-
-    // Normalize empty strings → nulls for cleaner DB
     const payload: RecordRow = {
-      name: toNullIfEmpty(row.name)!,
+      name: row.name,
       timestamp: toNullIfEmpty(row.timestamp),
       summary: toNullIfEmpty(row.summary),
       volume: toNullIfEmpty(row.volume),
@@ -94,15 +153,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       email: toNullIfEmpty(row.email),
       creator_name: toNullIfEmpty(row.creator_name),
       conclusion: toNullIfEmpty(row.conclusion),
-      pdf_url,
+      pdf_public_id: publicIdWithExt,
+      pdf_url: buildViewerUrl(publicIdWithExt, version), // <- proxy viewer
     };
 
-    // Insert row
     const { data, error } = await supabaseAdmin.from("records").insert([payload]).select();
     if (error) return res.status(500).json({ error: `Insert failed: ${error.message}` });
 
     return res.status(200).json({ ok: true, record: data?.[0] || null });
   } catch (e: any) {
+    console.error("upload-create-cloudinary error:", e);
     return res.status(500).json({ error: e?.message || "Unknown error" });
   }
 }
