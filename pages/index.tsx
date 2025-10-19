@@ -237,7 +237,7 @@ export default function Home() {
       pageSize: String(pagination.pageSize),
       sortBy: sorting.length > 0 ? sorting[0].id : "id",
       sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
-      filters: JSON.stringify({}),
+      filters: JSON.stringify(Object.fromEntries(columnFilters.map((f) => [f.id, f.value]))),
       globalFilter: globalFilter || "",
       email: selectedEmail || "",
       noCache: "true", // Force cache bypass
