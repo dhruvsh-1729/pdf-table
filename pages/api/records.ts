@@ -22,58 +22,29 @@ export function invalidateRecordsCache() {
   cache.flushAll();
 }
 
-// Format value helper (reused from original)
-function formatValue(value: any): any {
-  if (typeof value !== "string") {
-    if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
-      return formatValue(value[0]);
-    }
-    return value === null || value === undefined ? "" : value;
+/** ==============================================================
+ * Utility formatters (same as before)
+ * ============================================================== */
+function formatValue(v: any) {
+  if (v === null || v === undefined) return null;
+  try {
+    const parsed = JSON.parse(v);
+    if (Array.isArray(parsed)) return parsed.join(", ");
+    if (typeof parsed === "object") return JSON.stringify(parsed);
+    return parsed;
+  } catch {
+    return v;
   }
-
-  if (!value.includes("[") && !value.includes("{") && !value.includes('"')) {
-    return value.trim();
-  }
-
-  let parsed = value;
-  if ((value.startsWith("[") && value.endsWith("]")) || (value.startsWith("{") && value.endsWith("}"))) {
-    try {
-      const jsonParsed = JSON.parse(value);
-      if (Array.isArray(jsonParsed) && jsonParsed.length === 1 && typeof jsonParsed[0] === "string") {
-        parsed = jsonParsed[0];
-      } else if (typeof jsonParsed === "string") {
-        parsed = jsonParsed;
-      }
-    } catch {
-      // Keep original if parse fails
-    }
-  }
-
-  if (typeof parsed === "string") {
-    parsed = parsed
-      .replace(/\\r\\n|\\n|\\r/g, "\n")
-      .replace(/\\"/g, '"')
-      .replace(/\\'/g, "'")
-      .replace(/\\\\/g, "\\")
-      .trim();
-
-    if (parsed.length > 1 && parsed[0] === '"' && parsed[parsed.length - 1] === '"') {
-      parsed = parsed.slice(1, -1);
-    }
-  }
-
-  return parsed;
 }
 
-// Time from now helper
-function timeFromNow(dateString: string): string {
-  const diffMs = Date.now() - new Date(dateString).getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-
-  if (diffSec < 60) return `${diffSec}s ago`;
-  else if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  else if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  else return `${Math.floor(diffSec / 86400)}d ago`;
+function timeFromNow(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days !== 1 ? "s" : ""} ago`;
 }
 
 interface FilterParams {
@@ -86,159 +57,185 @@ interface FilterParams {
   email?: string;
 }
 
+/** ==============================================================
+ * Helper to fetch *all* rows from a Supabase table (bypass 1000-row limit)
+ * ============================================================== */
+async function fetchAllRows<T = any>(table: string, columns = "*", filters?: (query: any) => any): Promise<T[]> {
+  const pageSize = 1000;
+  let from = 0;
+  const all: T[] = [];
+
+  while (true) {
+    let q = supabase
+      .from(table)
+      .select(columns)
+      .range(from, from + pageSize - 1);
+    if (filters) q = filters(q);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    if (!data || !Array.isArray(data) || data.length === 0) break;
+
+    all.push(...(data as T[]));
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+/** ==============================================================
+ * Main function — fetchPaginatedRecords (now no row limit)
+ * ============================================================== */
 async function fetchPaginatedRecords(params: FilterParams) {
   const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
 
-  // Start building the query
-  let query = supabase.from("records").select(
-    `
-      *,
-      record_tags!left(tags(id, name)),
-      record_authors!left(authors(id, name))
-    `,
-    { count: "exact" },
-  );
+  /** ------------------------------------------
+   * Step 1: handle email filter (collect record IDs)
+   * ------------------------------------------ */
+  let allowedRecordIds: string[] | null = null;
 
-  // Apply email filter if provided
   if (email) {
     const formattedEmail = `["${email.trim()}"]`;
 
-    // Get all record IDs associated with this email
     const [summaryRecords, conclusionRecords, directRecords] = await Promise.all([
-      supabase.from("summaries").select("record_id").eq("email", formattedEmail),
-      supabase.from("conclusions").select("record_id").eq("email", formattedEmail),
-      supabase.from("records").select("id").eq("email", formattedEmail),
+      fetchAllRows("summaries", "record_id", (q) => q.eq("email", formattedEmail)),
+      fetchAllRows("conclusions", "record_id", (q) => q.eq("email", formattedEmail)),
+      fetchAllRows("records", "id", (q) => q.eq("email", formattedEmail)),
     ]);
 
     const uniqueRecordIds = new Set<string>();
-    summaryRecords.data?.forEach((r) => uniqueRecordIds.add(r.record_id));
-    conclusionRecords.data?.forEach((r) => uniqueRecordIds.add(r.record_id));
-    directRecords.data?.forEach((r) => uniqueRecordIds.add(r.id));
+    summaryRecords.forEach((r: any) => uniqueRecordIds.add(r.record_id));
+    conclusionRecords.forEach((r: any) => uniqueRecordIds.add(r.record_id));
+    directRecords.forEach((r: any) => uniqueRecordIds.add(r.id));
 
     if (uniqueRecordIds.size === 0) {
       return { data: [], count: 0, editHistory: {} };
     }
 
-    query = query.in("id", Array.from(uniqueRecordIds));
+    allowedRecordIds = Array.from(uniqueRecordIds);
   }
 
-  // Apply column filters
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value === null || value === undefined || value === "") return;
+  /** ------------------------------------------
+   * Step 2: fetch *all* records (no limit)
+   * ------------------------------------------ */
+  const records: any[] = await fetchAllRows(
+    "records",
+    `
+      *,
+      record_tags!left(tags(id, name)),
+      record_authors!left(authors(id, name))
+    `,
+    (q) => {
+      if (allowedRecordIds) q = q.in("id", allowedRecordIds);
+      // Apply filters
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value === null || value === undefined || value === "") return;
+        if (key === "id") {
+          q = q.filter("id", "gte", value);
+          q = q.filter("id", "lt", String(Number(value) + 1));
+        } else if (key === "tags" || key === "authors") {
+          // skip — handled later
+        } else if (typeof value === "string") {
+          q = q.ilike(key, `%${value}%`);
+        } else {
+          q = q.eq(key, value);
+        }
+      });
 
-    if (key === "id") {
-      // ID prefix filter
-      query = query.filter("id", "gte", value);
-      query = query.filter("id", "lt", String(Number(value) + 1));
-    } else if (key === "tags") {
-      // Special handling for tags - this needs a custom approach
-      // We'll handle this post-fetch for now
-    } else if (key === "authors") {
-      // Special handling for authors - this needs a custom approach
-      // We'll handle this post-fetch for now
-    } else if (typeof value === "string") {
-      query = query.ilike(key, `%${value}%`);
-    } else {
-      query = query.eq(key, value);
-    }
-  });
+      // Apply global filter if needed
+      if (globalFilter) {
+        q = q.or(
+          `name.ilike.%${globalFilter}%,summary.ilike.%${globalFilter}%,conclusion.ilike.%${globalFilter}%,title_name.ilike.%${globalFilter}%`,
+        );
+      }
 
-  // Apply global filter
-  if (globalFilter) {
-    query = query.or(
-      `name.ilike.%${globalFilter}%,summary.ilike.%${globalFilter}%,conclusion.ilike.%${globalFilter}%,title_name.ilike.%${globalFilter}%`,
-    );
-  }
+      // Sorting
+      q = q.order(sortBy, { ascending: sortOrder === "asc" });
+      return q;
+    },
+  );
 
-  // Apply sorting
-  query = query.order(sortBy, { ascending: sortOrder === "asc" });
+  const count = records.length;
 
-  // Apply pagination
+  /** ------------------------------------------
+   * Step 3: compute pagination slice (client-side)
+   * ------------------------------------------ */
   const from = page * pageSize;
-  const to = from + pageSize - 1;
-  query = query.range(from, to);
+  const to = from + pageSize;
+  const paginatedRecords = records.slice(from, to);
 
-  // Execute query
-  const { data: records, count, error } = await query;
-
-  if (error) {
-    throw error;
-  }
-
-  // Fetch edit history for the current page of records
-  const recordIds = records?.map((r) => r.id) || [];
+  /** ------------------------------------------
+   * Step 4: build edit history for these records
+   * ------------------------------------------ */
+  const recordIds = paginatedRecords.map((r) => r.id);
   const editHistory: Record<string, any> = {};
 
   if (recordIds.length > 0) {
-    const { data: summaries } = await supabase
-      .from("summaries")
-      .select("record_id, email, name, created_at")
-      .in("record_id", recordIds);
+    const summaries = await fetchAllRows("summaries", "record_id, email, name, created_at", (q) =>
+      q.in("record_id", recordIds),
+    );
 
-    if (summaries) {
-      summaries.forEach((summary) => {
-        const rid = formatValue(summary.record_id);
-        const name = formatValue(summary.name);
-        const email = formatValue(summary.email);
-        const createdAt = summary.created_at;
+    summaries.forEach((summary: any) => {
+      const rid = formatValue(summary.record_id);
+      const name = formatValue(summary.name);
+      const email = formatValue(summary.email);
+      const createdAt = summary.created_at;
 
-        if (!editHistory[rid]) {
-          editHistory[rid] = {
-            count: 0,
-            editors: [],
-            editorCounts: {},
-            latest: null,
-            latestTime: 0,
+      if (!editHistory[rid]) {
+        editHistory[rid] = {
+          count: 0,
+          editors: [],
+          editorCounts: {},
+          latest: null,
+          latestTime: 0,
+        };
+      }
+
+      editHistory[rid].count++;
+      if (email && name && !editHistory[rid].editors.includes(name)) {
+        editHistory[rid].editors.push(name);
+      }
+      if (name) {
+        editHistory[rid].editorCounts[name] = (editHistory[rid].editorCounts[name] || 0) + 1;
+      }
+      if (createdAt) {
+        const currentTime = new Date(createdAt).getTime();
+        if (currentTime > editHistory[rid].latestTime) {
+          editHistory[rid].latestTime = currentTime;
+          editHistory[rid].latest = {
+            name: name || "",
+            email: email || "",
+            editedAt: createdAt,
           };
         }
-
-        editHistory[rid].count++;
-
-        if (email && name && !editHistory[rid].editors.includes(name)) {
-          editHistory[rid].editors.push(name);
-        }
-
-        if (name) {
-          editHistory[rid].editorCounts[name] = (editHistory[rid].editorCounts[name] || 0) + 1;
-        }
-
-        if (createdAt) {
-          const currentTime = new Date(createdAt).getTime();
-          if (currentTime > editHistory[rid].latestTime) {
-            editHistory[rid].latestTime = currentTime;
-            editHistory[rid].latest = {
-              name: name || "",
-              email: email || "",
-              editedAt: createdAt,
-            };
-          }
-        }
-      });
-    }
+      }
+    });
   }
 
-  // Format records
-  const formattedRecords = (records || []).map((record) => {
+  /** ------------------------------------------
+   * Step 5: format records
+   * ------------------------------------------ */
+  const formattedRecords = paginatedRecords.map((record) => {
     const formatted: any = {};
 
-    // Handle tags
+    // Linked tags
     if (record.record_tags) {
       formatted.tags = record.record_tags.map((rt: any) => rt.tags).filter(Boolean);
     }
 
-    // Handle authors
+    // Linked authors
     if (record.record_authors) {
       formatted.authors_linked = record.record_authors.map((ra: any) => ra.authors).filter(Boolean);
     }
 
-    // Format other fields
+    // Other fields
     Object.keys(record).forEach((key) => {
       if (key !== "record_tags" && key !== "record_authors") {
         formatted[key] = formatValue(record[key]);
       }
     });
 
-    // Add edit history
+    // Edit history
     formatted.editHistory = editHistory[formatted.id]
       ? {
           count: editHistory[formatted.id].count,
@@ -263,7 +260,9 @@ async function fetchPaginatedRecords(params: FilterParams) {
     return formatted;
   });
 
-  // Post-process for special filters (tags, authors)
+  /** ------------------------------------------
+   * Step 6: post-filter for tags and authors
+   * ------------------------------------------ */
   let filteredRecords = formattedRecords;
 
   if (filters.tags) {
@@ -290,9 +289,12 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   }
 
+  /** ------------------------------------------
+   * Step 7: return final structured output
+   * ------------------------------------------ */
   return {
     data: filteredRecords,
-    count: count || 0,
+    count: count,
     editHistory,
   };
 }

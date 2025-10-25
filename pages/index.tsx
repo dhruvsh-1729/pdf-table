@@ -913,6 +913,9 @@ export default function Home() {
     setLoading(true);
     setError(null);
 
+    const email = JSON.parse(localStorage.getItem("user") || "{}").email || "";
+    const creatorName = JSON.parse(localStorage.getItem("user") || "{}").name || "";
+
     const formData = new FormData();
     formData.append("name", name);
     formData.append("summary", summary || "");
@@ -925,6 +928,8 @@ export default function Home() {
     formData.append("authors", authors);
     formData.append("language", language);
     formData.append("timestamp", timestamp);
+    formData.append("creator_name", `["${creatorName}"]`);
+    formData.append("email", `["${email}"]`);
 
     if (editingRecord) {
       formData.append("id", String(editingRecord.id));
