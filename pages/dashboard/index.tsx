@@ -225,16 +225,33 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
     users: usersCount.count ?? 0,
   };
 
-  // Records: only needed columns, newest first
-  const { data: recordsRaw } = await supabaseAdmin
-    .from("records")
-    .select(
-      `
-      id, name, timestamp, summary, pdf_url, volume, number, title_name,
-      page_numbers, authors, language, email, creator_name, conclusion
-    `,
-    )
-    .order("timestamp", { ascending: false });
+  // Fetch all records without limit (pagination loop)
+  let recordsRaw: any[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  let done = false;
+  while (!done) {
+    const { data, error, count } = await supabaseAdmin
+      .from("records")
+      .select(
+        `
+        id, name, timestamp, summary, pdf_url, volume, number, title_name,
+        page_numbers, authors, language, email, creator_name, conclusion
+      `,
+        { count: "exact" },
+      )
+      .order("timestamp", { ascending: false })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+    if (data && data.length > 0) {
+      recordsRaw = recordsRaw.concat(data);
+      from += pageSize;
+      if (data.length < pageSize) done = true;
+    } else {
+      done = true;
+    }
+  }
 
   // Summaries (only minimal columns)
   const { data: summariesRaw } = await supabaseAdmin.from("summaries").select("id, name, email, record_id");
