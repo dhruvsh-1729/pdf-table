@@ -380,7 +380,7 @@ export default function Home() {
         header: "ID",
         id: "id",
         cell: ({ row }) => (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200">
+          <span className="inline-flex items-center px-2.5 py-0.5 text-md font-bold rounded-full bg-slate-100 text-slate-800 border border-slate-200">
             #{row.original.id}
           </span>
         ),
