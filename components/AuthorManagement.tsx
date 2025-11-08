@@ -10,7 +10,7 @@ interface Author {
   description: string | null;
   cover_url: string | null;
   created_at: string;
-  national: "national" | "international" | null;
+  national: "national" | "international" | "jainmonk" | "jainnun" | null;
   designation: string | null; // New field
   short_name: string | null; // New field
   recordsCount?: number; // NEW
@@ -38,7 +38,7 @@ interface AuthorsPageProps {
     sortOrder: string;
     dateFrom: string;
     dateTo: string;
-    national?: "national" | "international" | "null" | "";
+    national?: "national" | "international" | "jainmonk" | "jainnun" | "null" | "";
     designation?: string; // New filter
   };
 }
@@ -114,7 +114,7 @@ const EnhancedAuthorFormModal = ({
     name: "",
     description: "",
     cover_url: "",
-    national: "" as "" | "national" | "international",
+    national: "" as "" | "national" | "international" | "jainmonk" | "jainnun",
     designation: "", // New field
     short_name: "", // New field
   });
@@ -127,7 +127,7 @@ const EnhancedAuthorFormModal = ({
         name: author.name || "",
         description: author.description || "",
         cover_url: author.cover_url || "",
-        national: (author.national as "national" | "international" | null) ?? "",
+        national: (author.national as "national" | "international" | "jainmonk" | "jainnun" | null) ?? "",
         designation: author.designation || "", // New field
         short_name: author.short_name || "", // New field
       });
@@ -622,10 +622,18 @@ const SelectableAuthorCard = ({
             className={
               author.national === "national"
                 ? "bg-green-100 text-green-800 px-1.5 py-0.5 rounded"
-                : "bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded"
+                : author.national === "international"
+                  ? "bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded"
+                  : author.national === "jainmonk"
+                    ? "bg-orange-100 text-orange-800 px-1.5 py-0.5 rounded"
+                    : "bg-pink-100 text-pink-800 px-1.5 py-0.5 rounded"
             }
           >
-            {author.national}
+            {author.national === "jainmonk"
+              ? "Jain Monk"
+              : author.national === "jainnun"
+                ? "Jain Nun"
+                : author.national}
           </span>
         )}
         {!author.national && <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">Unassigned</span>}

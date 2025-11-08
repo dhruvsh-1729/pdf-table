@@ -46,9 +46,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const normalizedNational =
-        national === "national" || national === "international"
+        national === "national" || national === "international" || national === "jainmonk" || national === "jainnun"
           ? national
-          : national === null || national === undefined || national === ""
+          : national === null || national === undefined || national === "" || national === "null"
             ? null
             : null;
 

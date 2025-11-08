@@ -53,6 +53,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       q = q.eq("national", "national");
     } else if (national === "international") {
       q = q.eq("national", "international");
+    } else if (national === "jainmonk") {
+      q = q.eq("national", "jainmonk");
+    } else if (national === "jainnun") {
+      q = q.eq("national", "jainnun");
     } else if (national === "null") {
       q = q.is("national", null);
     }

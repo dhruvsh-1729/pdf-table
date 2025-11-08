@@ -21,7 +21,7 @@ interface Author {
   description: string | null;
   cover_url: string | null;
   created_at: string;
-  national: "national" | "international" | null;
+  national: "national" | "international" | "jainmonk" | "jainnun" | null;
   designation: string | null;
   short_name: string | null;
   recordsCount?: number; // NEW
@@ -49,7 +49,7 @@ interface AuthorsPageProps {
     sortOrder: string;
     dateFrom: string;
     dateTo: string;
-    national?: "national" | "international" | "null" | "";
+    national?: "national" | "international" | "jainmonk" | "jainnun" | "";
     designation?: string;
     designationStatus?: "filled" | "empty" | "";
     descriptionStatus?: "filled" | "empty" | "";
@@ -151,7 +151,11 @@ const AuthorDetailsModal = ({
                     ? "bg-green-100 text-green-800"
                     : author.national === "international"
                       ? "bg-purple-100 text-purple-800"
-                      : "bg-gray-100 text-gray-600"
+                      : author.national === "jainmonk"
+                        ? "bg-orange-100 text-orange-800"
+                        : author.national === "jainnun"
+                          ? "bg-pink-100 text-pink-800"
+                          : "bg-gray-100 text-gray-600"
                 }`}
               >
                 {author.national}
@@ -1013,6 +1017,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     // National filter
     if (filters.national === "national") query = query.eq("national", "national");
     else if (filters.national === "international") query = query.eq("national", "international");
+    else if (filters.national === "jainmonk") query = query.eq("national", "jainmonk");
+    else if (filters.national === "jainnun") query = query.eq("national", "jainnun");
     else if (filters.national === "null") query = query.is("national", null);
 
     // Designation text filter
