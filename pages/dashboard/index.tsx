@@ -758,17 +758,163 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
             ...g,
             // sort volumes: named volumes first (alpha), null/— last
             volumes: g.volumes
-              .map((v) => ({
-                ...v,
-                // dedupe strings a bit for cleaner chips
-                titles: Array.from(new Set(v.titles)).slice(0, 100),
-                numbers: Array.from(new Set(v.numbers)).slice(0, 100),
-                pageNumbers: Array.from(new Set(v.pageNumbers)).slice(0, 100),
-                timestamps: Array.from(new Set(v.timestamps)).slice(0, 100),
-                languages: Array.from(new Set(v.languages)).slice(0, 100),
-                authors: Array.from(new Set(v.authors)).slice(0, 100),
-                records: v.records, // already compact
-              }))
+              .map((v) => {
+                // Create pairs of timestamp-number to maintain correspondence
+                const timestampNumberPairs = v.timestamps.map((timestamp, index) => ({
+                  timestamp,
+                  number: v.numbers[index] || null,
+                  recordId: v.recordIds[index] || null,
+                }));
+
+                // Sort pairs by timestamp
+                timestampNumberPairs.sort((a, b) => {
+                  const parseTimestamp = (ts: string): Date => {
+                    if (!ts) return new Date(0);
+
+                    // Try different date formats
+                    // Format 1: "Month - Year" (e.g., "January - 2023")
+                    const monthYearMatch = ts.match(/^([a-zA-Z]+)\s*-\s*(\d{4})$/i);
+                    if (monthYearMatch) {
+                      const [, monthStr, yearStr] = monthYearMatch;
+                      const monthMap: { [key: string]: number } = {
+                        january: 0,
+                        february: 1,
+                        march: 2,
+                        april: 3,
+                        may: 4,
+                        june: 5,
+                        july: 6,
+                        august: 7,
+                        september: 8,
+                        october: 9,
+                        november: 10,
+                        december: 11,
+                        jan: 0,
+                        feb: 1,
+                        mar: 2,
+                        apr: 3,
+                        jun: 5,
+                        jul: 6,
+                        aug: 7,
+                        sep: 8,
+                        oct: 9,
+                        nov: 10,
+                        dec: 11,
+                      };
+                      const month = monthMap[monthStr.toLowerCase()];
+                      const year = parseInt(yearStr, 10);
+                      return new Date(year, month ?? 0, 1);
+                    }
+
+                    // Format 2: "MM/YYYY" or "MM-YYYY"
+                    const mmYyyyMatch = ts.match(/^(\d{1,2})[-\/](\d{4})$/);
+                    if (mmYyyyMatch) {
+                      const [, monthStr, yearStr] = mmYyyyMatch;
+                      return new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1);
+                    }
+
+                    // Format 3: Standard date formats
+                    const standardDate = new Date(ts);
+                    if (!isNaN(standardDate.getTime())) {
+                      return standardDate;
+                    }
+
+                    // Format 4: Year only
+                    const yearOnlyMatch = ts.match(/^(\d{4})$/);
+                    if (yearOnlyMatch) {
+                      return new Date(parseInt(yearOnlyMatch[1], 10), 0, 1);
+                    }
+
+                    // Fallback: return epoch
+                    return new Date(0);
+                  };
+
+                  const dateA = parseTimestamp(a.timestamp);
+                  const dateB = parseTimestamp(b.timestamp);
+                  return dateA.getTime() - dateB.getTime();
+                });
+
+                // Extract sorted arrays while maintaining correspondence
+                const sortedTimestamps = timestampNumberPairs.map((pair) => pair.timestamp);
+                const sortedNumbers = timestampNumberPairs
+                  .map((pair) => pair.number)
+                  .filter((num): num is string => num !== null);
+                const sortedRecordIds = timestampNumberPairs
+                  .map((pair) => pair.recordId)
+                  .filter((id): id is number => id !== null);
+                return {
+                  ...v,
+                  // dedupe strings a bit for cleaner chips, but maintain sorted order
+                  titles: Array.from(new Set(v.titles)).slice(0, 100),
+                  numbers: Array.from(new Set(sortedNumbers)).slice(0, 100),
+                  pageNumbers: Array.from(new Set(v.pageNumbers)).slice(0, 100),
+                  timestamps: Array.from(new Set(sortedTimestamps)).slice(0, 100),
+                  languages: Array.from(new Set(v.languages)).slice(0, 100),
+                  authors: Array.from(new Set(v.authors)).slice(0, 100),
+                  recordIds: Array.from(new Set(sortedRecordIds)).slice(0, 100),
+                  records: v.records.sort((a, b) => {
+                    // Also sort records by timestamp
+                    const parseTimestamp = (ts: string | null | undefined): Date => {
+                      if (!ts) return new Date(0);
+
+                      const monthYearMatch = ts.match(/^([a-zA-Z]+)\s*-\s*(\d{4})$/i);
+                      if (monthYearMatch) {
+                        const [, monthStr, yearStr] = monthYearMatch;
+                        const monthMap: { [key: string]: number } = {
+                          january: 0,
+                          february: 1,
+                          march: 2,
+                          april: 3,
+                          may: 4,
+                          june: 5,
+                          july: 6,
+                          august: 7,
+                          september: 8,
+                          october: 9,
+                          november: 10,
+                          december: 11,
+                          jan: 0,
+                          feb: 1,
+                          mar: 2,
+                          apr: 3,
+                          jun: 5,
+                          jul: 6,
+                          aug: 7,
+                          sep: 8,
+                          oct: 9,
+                          nov: 10,
+                          dec: 11,
+                        };
+                        const month = monthMap[monthStr.toLowerCase()];
+                        const year = parseInt(yearStr, 10);
+                        return new Date(year, month ?? 0, 1);
+                      }
+
+                      const mmYyyyMatch = ts.match(/^(\d{1,2})[-\/](\d{4})$/);
+                      if (mmYyyyMatch) {
+                        const [, monthStr, yearStr] = mmYyyyMatch;
+                        return new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1);
+                      }
+
+                      const standardDate = new Date(ts);
+                      if (!isNaN(standardDate.getTime())) {
+                        return standardDate;
+                      }
+
+                      const yearOnlyMatch = ts.match(/^(\d{4})$/);
+                      if (yearOnlyMatch) {
+                        return new Date(parseInt(yearOnlyMatch[1], 10), 0, 1);
+                      }
+
+                      return new Date(0);
+                    };
+
+                    const dateA = parseTimestamp(a.timestamp);
+                    const dateB = parseTimestamp(b.timestamp);
+                    return dateA.getTime() - dateB.getTime();
+                  }),
+                };
+              })
               .sort((a, b) => {
                 const av = a.volume ?? "~~~";
                 const bv = b.volume ?? "~~~";
@@ -1194,7 +1340,7 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
                         {mag.recordsWithConclusions} Conclusions
                       </span>
                     </div>
-                    <BadgeList label="Top Authors" items={mag.authors} colorClass="bg-yellow-100 text-yellow-800" />
+                    {/* <BadgeList label="Top Authors" items={mag.authors} colorClass="bg-yellow-100 text-yellow-800" /> */}
                     <BadgeList label="Languages" items={mag.languages} colorClass="bg-indigo-100 text-indigo-700" />
                     <BadgeList label="Volumes" items={mag.volumes} colorClass="bg-purple-100 text-purple-700" />
                   </div>
@@ -1313,8 +1459,64 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 }
 
 function BadgeList({ label, items, colorClass }: { label: string; items: string[]; colorClass: string }) {
-  const maxVisible = 20;
-  const visibleItems = items.slice(0, maxVisible);
+  const maxVisible = 100;
+  const visibleItems = items
+    .sort((a, b) => {
+      // Helper function to convert roman numerals to numbers
+      const romanToNumber = (roman: string): number => {
+        const romanNumerals: { [key: string]: number } = {
+          I: 1,
+          V: 5,
+          X: 10,
+          L: 50,
+          C: 100,
+          D: 500,
+          M: 1000,
+        };
+
+        let result = 0;
+        for (let i = 0; i < roman.length; i++) {
+          const current = romanNumerals[roman[i]];
+          const next = romanNumerals[roman[i + 1]];
+
+          if (current < next) {
+            result -= current;
+          } else {
+            result += current;
+          }
+        }
+        return result;
+      };
+
+      // Helper function to extract and parse numbers (both arabic and roman)
+      const extractNumber = (str: string): number => {
+        // First try to extract regular numbers
+        const numberMatch = str.match(/\d+/);
+        if (numberMatch) {
+          return parseInt(numberMatch[0], 10);
+        }
+
+        // Then try to extract roman numerals (case insensitive)
+        const romanMatch = str.match(/\b([IVXLCDM]+)\b/i);
+        if (romanMatch) {
+          return romanToNumber(romanMatch[1].toUpperCase());
+        }
+
+        return 0; // Default if no number found
+      };
+
+      const numA = extractNumber(a);
+      const numB = extractNumber(b);
+
+      // If both have numbers, sort by number
+      if (numA !== 0 || numB !== 0) {
+        return numA - numB;
+      }
+
+      // Fall back to alphabetical sorting
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    })
+    .slice(0, maxVisible);
   const hiddenCount = items.length - maxVisible;
 
   return (
@@ -1413,8 +1615,10 @@ function MagSection({
                         <div>
                           <div className="text-sm text-gray-500">Timestamps</div>
                           <div className="font-semibold text-gray-900">
-                            {v.timestamps.slice(0, 3).join(", ")}
-                            {v.timestamps.length > 3 && ` +${v.timestamps.length - 3}`}
+                            {v.timestamps.slice(0, 10).join(", ")}
+                            <span className="flex items-center text-zinc-300">
+                              {v.timestamps.length > 10 && ` +${v.timestamps.length - 10} more`}
+                            </span>
                           </div>
                         </div>
                       )}
@@ -1426,8 +1630,10 @@ function MagSection({
                         <div>
                           <div className="text-sm text-gray-500">Numbers</div>
                           <div className="font-semibold text-gray-900">
-                            {v.numbers.slice(0, 3).join(", ")}
-                            {v.numbers.length > 3 && ` +${v.numbers.length - 3}`}
+                            {v.numbers.slice(0, 10).join(", ")}
+                            <span className="flex items-center text-zinc-300">
+                              {v.numbers.length > 10 && ` +${v.numbers.length - 10} more`}
+                            </span>
                           </div>
                         </div>
                       )}
