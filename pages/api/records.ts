@@ -135,6 +135,14 @@ async function fetchPaginatedRecords(params: FilterParams) {
           q = q.filter("id", "lt", String(Number(value) + 1));
         } else if (key === "tags" || key === "authors") {
           // skip — handled later
+        } else if (key === "summary" || key === "conclusion" || key === "language") {
+          if (value === "__EMPTY__") {
+            q = q.or(`${key}.is.null,${key}.eq.`);
+          } else if (value === "__NONEMPTY__") {
+            q = q.not(key, "is", null).neq(key, "");
+          } else if (typeof value === "string") {
+            q = q.ilike(key, `%${value}%`);
+          }
         } else if (typeof value === "string") {
           q = q.ilike(key, `%${value}%`);
         } else {

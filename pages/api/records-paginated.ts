@@ -166,6 +166,14 @@ async function fetchPaginatedRecords(params: FilterParams) {
     } else if (key === "tags" || key === "authors") {
       // handled below
       return;
+    } else if (key === "summary" || key === "conclusion" || key === "language") {
+      if (value === "__EMPTY__") {
+        query = query.or(`${key}.is.null,${key}.eq.`);
+      } else if (value === "__NONEMPTY__") {
+        query = query.not(key, "is", null).neq(key, "");
+      } else if (typeof value === "string") {
+        query = query.ilike(key, `%${value}%`);
+      }
     } else if (typeof value === "string") {
       query = query.ilike(key, `%${value}%`);
     } else {

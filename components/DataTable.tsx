@@ -8,7 +8,7 @@ import {
   SortingState,
 } from "@tanstack/react-table";
 import { MagazineRecord } from "../types";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import AsyncSelect from "react-select/async";
 
 interface ServerDataTableProps {
@@ -58,12 +58,6 @@ export default function ServerDataTable({
     return () => clearTimeout(timer);
   }, [localGlobalFilter]);
 
-  // Get unique values for dropdowns - only from current data
-  const getUnique = (arr: (string | null | undefined)[]) =>
-    Array.from(new Set(arr.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
-
-  const uniqueTitles = useMemo(() => getUnique(data.map((r) => r.title_name)), [data]);
-
   // Async load functions for select fields
   const loadMagazineOptions = async (inputValue: string) => {
     try {
@@ -76,58 +70,6 @@ export default function ServerDataTable({
       }));
     } catch (error) {
       console.error("Error loading magazine names:", error);
-      return [];
-    }
-  };
-
-  const loadTagOptions = async (inputValue: string) => {
-    try {
-      if (!inputValue) {
-        // Return special options when no input
-        return [
-          { label: "(No tags)", value: "__EMPTY__" },
-          { label: "(Has tags)", value: "__NONEMPTY__" },
-        ];
-      }
-      const response = await fetch(`/api/tags?q=${encodeURIComponent(inputValue)}`);
-      if (!response.ok) throw new Error("Failed to fetch tags");
-      const data = await response.json();
-      const options = data.map((tag: { id: number; name: string }) => ({
-        label: tag.name,
-        value: tag.name,
-      }));
-      // Add special options at the beginning
-      return [{ label: "(No tags)", value: "__EMPTY__" }, { label: "(Has tags)", value: "__NONEMPTY__" }, ...options];
-    } catch (error) {
-      console.error("Error loading tags:", error);
-      return [];
-    }
-  };
-
-  const loadAuthorOptions = async (inputValue: string) => {
-    try {
-      if (!inputValue) {
-        // Return special options when no input
-        return [
-          { label: "(No authors)", value: "__EMPTY__" },
-          { label: "(Has authors)", value: "__NONEMPTY__" },
-        ];
-      }
-      const response = await fetch(`/api/authors?q=${encodeURIComponent(inputValue)}`);
-      if (!response.ok) throw new Error("Failed to fetch authors");
-      const data = await response.json();
-      const options = data.map((author: { id: number; name: string; short_name: string }) => ({
-        label: author.name + (author.short_name ? ` [${author.short_name}]` : ""),
-        value: author.name,
-      }));
-      // Add special options at the beginning
-      return [
-        { label: "(No authors)", value: "__EMPTY__" },
-        { label: "(Has authors)", value: "__NONEMPTY__" },
-        ...options,
-      ];
-    } catch (error) {
-      console.error("Error loading authors:", error);
       return [];
     }
   };
@@ -287,129 +229,271 @@ export default function ServerDataTable({
                                   }}
                                 />
                               ) : header.column.id === "tags" ? (
-                                <AsyncSelect
-                                  isClearable
-                                  value={
-                                    header.column.getFilterValue()
-                                      ? {
-                                          label:
-                                            header.column.getFilterValue() === "__EMPTY__"
-                                              ? "(No tags)"
-                                              : header.column.getFilterValue() === "__NONEMPTY__"
-                                                ? "(Has tags)"
-                                                : (header.column.getFilterValue() as string),
-                                          value: header.column.getFilterValue() as string,
-                                        }
-                                      : null
-                                  }
-                                  onChange={(option) => {
-                                    header.column.setFilterValue(option ? option.value : "");
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  loadOptions={loadTagOptions}
-                                  defaultOptions={[
-                                    { label: "(No tags)", value: "__EMPTY__" },
-                                    { label: "(Has tags)", value: "__NONEMPTY__" },
-                                  ]}
-                                  classNamePrefix="react-select"
-                                  styles={{
-                                    control: (base) => ({
-                                      ...base,
-                                      minHeight: "28px",
-                                      fontSize: "12px",
-                                      borderColor: isFiltered ? "#f87171" : "#cbd5e1",
-                                      "&:hover": {
-                                        borderColor: "#6366f1",
-                                      },
-                                    }),
-                                    menu: (base) => ({
-                                      ...base,
-                                      zIndex: 9999,
-                                      fontSize: "12px",
-                                      width: "400px",
-                                      minWidth: "400px",
-                                    }),
-                                    dropdownIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                    clearIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                  }}
-                                />
+                                (() => {
+                                  const filterValue = (header.column.getFilterValue() as string) ?? "";
+                                  const isEmptySelected = filterValue === "__EMPTY__";
+                                  const isNonEmptySelected = filterValue === "__NONEMPTY__";
+                                  const inputValue = isEmptySelected || isNonEmptySelected ? "" : filterValue;
+                                  return (
+                                    <div className="space-y-1">
+                                      <input
+                                        type="text"
+                                        value={inputValue}
+                                        onChange={(e) => {
+                                          header.column.setFilterValue(e.target.value);
+                                          setPagination({ ...pagination, pageIndex: 0 });
+                                        }}
+                                        placeholder="Search tags…"
+                                        className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                          isFiltered ? "border-red-400" : "border-slate-300"
+                                        }`}
+                                      />
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__EMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isEmptySelected
+                                              ? "bg-rose-100 border-rose-200 text-rose-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Blank
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__NONEMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isNonEmptySelected
+                                              ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Has tags
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className="px-2 py-1 text-[10px] font-semibold rounded-md border bg-white text-slate-700 hover:border-slate-300 transition"
+                                        >
+                                          Reset
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()
                               ) : header.column.id === "authors" ? (
-                                <AsyncSelect
-                                  isClearable
-                                  value={
-                                    header.column.getFilterValue()
-                                      ? {
-                                          label:
-                                            header.column.getFilterValue() === "__EMPTY__"
-                                              ? "(No authors)"
-                                              : header.column.getFilterValue() === "__NONEMPTY__"
-                                                ? "(Has authors)"
-                                                : (header.column.getFilterValue() as string),
-                                          value: header.column.getFilterValue() as string,
-                                        }
-                                      : null
-                                  }
-                                  onChange={(option) => {
-                                    header.column.setFilterValue(option ? option.value : "");
-                                    setPagination({ ...pagination, pageIndex: 0 });
-                                  }}
-                                  loadOptions={loadAuthorOptions}
-                                  defaultOptions={[
-                                    { label: "(No authors)", value: "__EMPTY__" },
-                                    { label: "(Has authors)", value: "__NONEMPTY__" },
-                                  ]}
-                                  classNamePrefix="react-select"
-                                  styles={{
-                                    control: (base) => ({
-                                      ...base,
-                                      minHeight: "28px",
-                                      fontSize: "12px",
-                                      borderColor: isFiltered ? "#f87171" : "#cbd5e1",
-                                      "&:hover": {
-                                        borderColor: "#6366f1",
-                                      },
-                                    }),
-                                    menu: (base) => ({
-                                      ...base,
-                                      zIndex: 9999,
-                                      fontSize: "12px",
-                                      width: "400px",
-                                      minWidth: "400px",
-                                    }),
-                                    dropdownIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                    clearIndicator: (base) => ({
-                                      ...base,
-                                      padding: "0 4px",
-                                    }),
-                                  }}
-                                />
+                                (() => {
+                                  const filterValue = (header.column.getFilterValue() as string) ?? "";
+                                  const isEmptySelected = filterValue === "__EMPTY__";
+                                  const isNonEmptySelected = filterValue === "__NONEMPTY__";
+                                  const inputValue = isEmptySelected || isNonEmptySelected ? "" : filterValue;
+                                  return (
+                                    <div className="space-y-1">
+                                      <input
+                                        type="text"
+                                        value={inputValue}
+                                        onChange={(e) => {
+                                          header.column.setFilterValue(e.target.value);
+                                          setPagination({ ...pagination, pageIndex: 0 });
+                                        }}
+                                        placeholder="Search authors…"
+                                        className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                          isFiltered ? "border-red-400" : "border-slate-300"
+                                        }`}
+                                      />
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__EMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isEmptySelected
+                                              ? "bg-rose-100 border-rose-200 text-rose-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Blank
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__NONEMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isNonEmptySelected
+                                              ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Has authors
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className="px-2 py-1 text-[10px] font-semibold rounded-md border bg-white text-slate-700 hover:border-slate-300 transition"
+                                        >
+                                          Reset
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()
+                              ) : header.column.id === "summary" || header.column.id === "conclusion" ? (
+                                (() => {
+                                  const filterValue = (header.column.getFilterValue() as string) ?? "";
+                                  const isEmptySelected = filterValue === "__EMPTY__";
+                                  const isNonEmptySelected = filterValue === "__NONEMPTY__";
+                                  const inputValue = isEmptySelected || isNonEmptySelected ? "" : filterValue;
+                                  const label = header.column.id === "summary" ? "summary" : "conclusion";
+                                  return (
+                                    <div className="space-y-1">
+                                      <input
+                                        type="text"
+                                        value={inputValue}
+                                        onChange={(e) => {
+                                          header.column.setFilterValue(e.target.value);
+                                          setPagination({ ...pagination, pageIndex: 0 });
+                                        }}
+                                        placeholder={`Search ${label}…`}
+                                        className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                          isFiltered ? "border-red-400" : "border-slate-300"
+                                        }`}
+                                      />
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__EMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isEmptySelected
+                                              ? "bg-rose-100 border-rose-200 text-rose-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Blank
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__NONEMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isNonEmptySelected
+                                              ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Has text
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className="px-2 py-1 text-[10px] font-semibold rounded-md border bg-white text-slate-700 hover:border-slate-300 transition"
+                                        >
+                                          Reset
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()
+                              ) : header.column.id === "language" ? (
+                                (() => {
+                                  const filterValue = (header.column.getFilterValue() as string) ?? "";
+                                  const isEmptySelected = filterValue === "__EMPTY__";
+                                  const isNonEmptySelected = filterValue === "__NONEMPTY__";
+                                  const inputValue = isEmptySelected || isNonEmptySelected ? "" : filterValue;
+                                  return (
+                                    <div className="space-y-1">
+                                      <input
+                                        type="text"
+                                        value={inputValue}
+                                        onChange={(e) => {
+                                          header.column.setFilterValue(e.target.value);
+                                          setPagination({ ...pagination, pageIndex: 0 });
+                                        }}
+                                        placeholder="Search language…"
+                                        className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
+                                          isFiltered ? "border-red-400" : "border-slate-300"
+                                        }`}
+                                      />
+                                      <div className="flex gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__EMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isEmptySelected
+                                              ? "bg-rose-100 border-rose-200 text-rose-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Blank
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("__NONEMPTY__");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className={`px-2 py-1 text-[10px] font-semibold rounded-md border transition ${
+                                            isNonEmptySelected
+                                              ? "bg-emerald-100 border-emerald-200 text-emerald-800"
+                                              : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
+                                          }`}
+                                        >
+                                          Has text
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            header.column.setFilterValue("");
+                                            setPagination({ ...pagination, pageIndex: 0 });
+                                          }}
+                                          className="px-2 py-1 text-[10px] font-semibold rounded-md border bg-white text-slate-700 hover:border-slate-300 transition"
+                                        >
+                                          Reset
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()
                               ) : header.column.id === "title_name" ? (
-                                <select
+                                <input
+                                  type="text"
                                   value={(header.column.getFilterValue() as string) ?? ""}
                                   onChange={(e) => {
                                     header.column.setFilterValue(e.target.value);
                                     setPagination({ ...pagination, pageIndex: 0 });
                                   }}
+                                  placeholder="Search title…"
                                   className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
                                     isFiltered ? "border-red-400" : "border-slate-300"
                                   }`}
-                                >
-                                  <option value="">All</option>
-                                  {uniqueTitles.map((value) => (
-                                    <option key={value} value={value}>
-                                      {value}
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                               ) : (
                                 <input
                                   type="text"
