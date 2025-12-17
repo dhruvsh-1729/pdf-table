@@ -21,18 +21,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: "Error fetching tags", details: (error as Error).message });
     }
   } else if (req.method === "POST") {
-    try {
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ error: "Tag name is required" });
-
-      const { data, error } = await supabase.from("tags").upsert({ name }, { onConflict: "name" }).select().single();
-
-      if (error) throw error;
-      return res.status(200).json(data);
-    } catch (error) {
-      return res.status(500).json({ error: "Error creating tag", details: (error as Error).message });
-    }
-  } else if (req.method === "POST") {
     // Create new tag
     try {
       const { name, important } = req.body as {
@@ -44,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: "Name is required" });
       }
 
-      // Normalize the tag name (trim whitespace, lowercase for uniqueness check)
+      // Normalize the tag name (trim whitespace)
       const normalizedName = name.trim();
 
       if (normalizedName.length === 0) {
@@ -62,6 +50,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
+      // Enforce uniqueness without relying on DB constraint (not present in some envs)
+      const { data: existing, error: existingError } = await supabase
+        .from("tags")
+        .select("id")
+        .eq("name", normalizedName)
+        .limit(1);
+
+      if (existingError) {
+        throw existingError;
+      }
+
+      if (existing && existing.length > 0) {
+        return res.status(409).json({ message: "Tag name already exists" });
+      }
+
       const { data, error } = await supabase
         .from("tags")
         .insert([
@@ -70,17 +73,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             important: important === true || important === false ? important : null,
           },
         ])
-        .select();
+        .select()
+        .single();
 
       if (error) {
-        if (error.code === "23505") {
-          // Unique constraint violation
-          return res.status(409).json({ message: "Tag name already exists" });
-        }
         throw error;
       }
 
-      return res.status(201).json(data[0]);
+      return res.status(201).json(data);
     } catch (error) {
       console.error("Error creating tag:", error);
       return res.status(500).json({ message: "Internal server error" });
