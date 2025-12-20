@@ -92,12 +92,14 @@ const Header = memo<HeaderProps>(
                 Report Bug
               </button>
 
-              <button
-                onClick={exportToCSV}
-                className="px-3 py-1.5 text-sm font-bold text-black bg-emerald-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
-              >
-                Export
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={exportToCSV}
+                  className="px-3 py-1.5 text-sm font-bold text-black bg-emerald-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
+                >
+                  Export
+                </button>
+              )}
 
               {/* Logout Button */}
               <button

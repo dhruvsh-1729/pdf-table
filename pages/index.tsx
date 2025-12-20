@@ -725,58 +725,58 @@ export default function Home() {
               </svg>
               Update
             </button>
-            {/* {(user?.email === "dhruvshdarshansh@gmail.com" || user?.email === "dharmsasanwork99@gmail.com") && ( */}
-            <button
-              className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-red-200 to-rose-200 hover:from-red-300 hover:to-rose-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
-              onClick={async () => {
-                const record = row.original;
-                const confirmDelete = window.confirm(
-                  `Are you sure you want to delete this record?\n\nID: ${record.id}\nMagazine: ${record.name}\n\nThis action cannot be undone.`,
-                );
+            {(user?.email === "dhruvshdarshansh@gmail.com" || user?.email === "dharmsasanwork99@gmail.com") && (
+              <button
+                className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-red-200 to-rose-200 hover:from-red-300 hover:to-rose-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+                onClick={async () => {
+                  const record = row.original;
+                  const confirmDelete = window.confirm(
+                    `Are you sure you want to delete this record?\n\nID: ${record.id}\nMagazine: ${record.name}\n\nThis action cannot be undone.`,
+                  );
 
-                if (!confirmDelete) return;
+                  if (!confirmDelete) return;
 
-                const email = JSON.parse(localStorage.getItem("user") || "{}").email;
-                if (!email) {
-                  toast.error("You must be logged in to delete a record.");
-                  return;
-                }
-
-                if (email !== "dhruvshdarshansh@gmail.com" && email !== "dharmsasanwork99@gmail.com") {
-                  toast.error("You are not authorized to delete this record.");
-                  return;
-                }
-
-                try {
-                  const response = await fetch(`/api/records/${record.id}`, {
-                    method: "DELETE",
-                  });
-
-                  const result = await response.json();
-
-                  if (result.success) {
-                    toast.success("Record deleted successfully!");
-                    await refreshRecords();
-                  } else {
-                    throw new Error(result.message || "Failed to delete record");
+                  const email = JSON.parse(localStorage.getItem("user") || "{}").email;
+                  if (!email) {
+                    toast.error("You must be logged in to delete a record.");
+                    return;
                   }
-                } catch (error) {
-                  console.error("Error deleting record:", error);
-                  toast.error("Failed to delete record");
-                }
-              }}
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
-              Delete
-            </button>
-            {/* )} */}
+
+                  if (email !== "dhruvshdarshansh@gmail.com" && email !== "dharmsasanwork99@gmail.com") {
+                    toast.error("You are not authorized to delete this record.");
+                    return;
+                  }
+
+                  try {
+                    const response = await fetch(`/api/records/${record.id}`, {
+                      method: "DELETE",
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                      toast.success("Record deleted successfully!");
+                      await refreshRecords();
+                    } else {
+                      throw new Error(result.message || "Failed to delete record");
+                    }
+                  } catch (error) {
+                    console.error("Error deleting record:", error);
+                    toast.error("Failed to delete record");
+                  }
+                }}
+              >
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+                Delete
+              </button>
+            )}
           </div>
         ),
       },
