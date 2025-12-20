@@ -43,13 +43,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: "Name must be less than 100 characters" });
       }
 
-      // Check for valid characters
-      if (!/^[a-zA-Z0-9\s\-_]+$/.test(normalizedName)) {
-        return res.status(400).json({
-          message: "Name can only contain letters, numbers, spaces, hyphens, and underscores",
-        });
-      }
-
       // Enforce uniqueness without relying on DB constraint (not present in some envs)
       const { data: existing, error: existingError } = await supabase
         .from("tags")
