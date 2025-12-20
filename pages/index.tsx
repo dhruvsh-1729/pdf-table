@@ -975,7 +975,7 @@ export default function Home() {
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
     const selectedFile = e.target.files?.[0] || null;
-    if (selectedFile && selectedFile.size > 4 * 1024 * 1024) {
+    if (selectedFile && selectedFile.size > 30 * 1024 * 1024) {
       setShowFileSize(true);
       e.target.value = "";
       setFile(null);
