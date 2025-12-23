@@ -32,6 +32,7 @@ export interface MagazineRecord {
   email: string | null;
   creator_name: string | null;
   conclusion: string | null;
+  extracted_text?: string | null;
   editHistory?: EditHistory;
   tags?: Tag[];
   authors_linked?: Tag[];

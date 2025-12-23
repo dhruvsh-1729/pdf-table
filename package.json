@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "backfill:authors": "node --env-file=.env scripts/backfill-authors.mjs"
+    "backfill:authors": "node --env-file=.env scripts/backfill-authors.mjs",
+    "backfill:extracted-text": "node --env-file=.env scripts/backfill-extracted-text.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -8,6 +8,7 @@ import { Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { MagazineRecord, Tag, User } from "../types";
+import ExtractedTextModal from "@/components/ExtractedTextModal";
 import Header from "../components/Header";
 import ServerDataTable from "../components/DataTable";
 import RecordFormModal from "../components/RecordFormModal";
@@ -55,6 +56,11 @@ export default function Home() {
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
   const [showFileSize, setShowFileSize] = useState<boolean>(false);
+  const [extractedTextModalOpen, setExtractedTextModalOpen] = useState<boolean>(false);
+  const [extractedTextLoading, setExtractedTextLoading] = useState<boolean>(false);
+  const [extractedText, setExtractedText] = useState<string>("");
+  const [extractedTextError, setExtractedTextError] = useState<string | null>(null);
+  const [activeExtractedRecord, setActiveExtractedRecord] = useState<MagazineRecord | null>(null);
 
   // Table states - server-side
   const [pagination, setPagination] = useState({
@@ -256,6 +262,38 @@ export default function Home() {
       setTableLoading(false);
     }
   };
+
+  const handleViewExtractedText = useCallback(
+    async (record: MagazineRecord) => {
+      setActiveExtractedRecord(record);
+      setExtractedTextModalOpen(true);
+      setExtractedText("");
+      setExtractedTextError(null);
+      setExtractedTextLoading(true);
+
+      try {
+        const response = await fetch(`/api/records/extracted-text?id=${record.id}`);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to fetch extracted text.");
+        }
+
+        setExtractedText(payload.text || "");
+
+        if (!payload.text) {
+          setExtractedTextError("The PDF did not contain any extractable text.");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load extracted text.";
+        setExtractedTextError(message);
+        toast.error(message);
+      } finally {
+        setExtractedTextLoading(false);
+      }
+    },
+    [],
+  );
 
   const handleTagSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
@@ -696,6 +734,16 @@ export default function Home() {
         cell: ({ row }) => (
           <div className="flex flex-col gap-2">
             <button
+              className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-200 to-teal-200 hover:from-emerald-300 hover:to-teal-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+              onClick={() => handleViewExtractedText(row.original)}
+            >
+              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8M8 12h5M8 16h6" />
+              </svg>
+              View Text
+            </button>
+            <button
               className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-blue-200 to-indigo-200 hover:from-blue-300 hover:to-indigo-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
               onClick={() => {
                 const record = row.original;
@@ -781,7 +829,7 @@ export default function Home() {
         ),
       },
     ],
-    [],
+    [handleViewExtractedText, refreshRecords, user],
   );
 
   const exportableColumns = useMemo(() => {
@@ -1104,6 +1152,25 @@ export default function Home() {
           setSelectedColumnIds={setSelectedExportColumnIds}
           onExportCSV={exportToCSV}
           onExportXLSX={exportToXLSX}
+        />
+        <ExtractedTextModal
+          isOpen={extractedTextModalOpen}
+          onClose={() => {
+            setExtractedTextModalOpen(false);
+            setExtractedText("");
+            setExtractedTextError(null);
+            setActiveExtractedRecord(null);
+          }}
+          title={
+            activeExtractedRecord
+              ? `Extracted Text — ${activeExtractedRecord.title_name || activeExtractedRecord.name || "Record"} (ID ${
+                  activeExtractedRecord.id
+                })`
+              : "Extracted Text"
+          }
+          text={extractedText}
+          loading={extractedTextLoading}
+          error={extractedTextError}
         />
         <style jsx global>{`
           .custom-scrollbar::-webkit-scrollbar {

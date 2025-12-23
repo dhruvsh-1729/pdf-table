@@ -86,6 +86,9 @@ interface FilterParams {
   email?: string;
 }
 
+const RECORD_COLUMNS =
+  "id, name, timestamp, summary, pdf_public_id, pdf_url, volume, number, title_name, page_numbers, authors, language, email, creator_name, conclusion";
+
 // Fetch distinct IDs from a table with pagination (1,000 rows per page)
 async function fetchDistinctIds<T extends string>(
   table: string,
@@ -120,7 +123,7 @@ async function fetchPaginatedRecords(params: FilterParams) {
   // Start building the query
   let query = supabase.from("records").select(
     `
-      *,
+      ${RECORD_COLUMNS},
       record_tags:record_tags(
         tag_id,
         tags:tags(id, name)

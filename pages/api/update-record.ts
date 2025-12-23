@@ -119,6 +119,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let pdfUrl = existing?.pdf_url ?? null;
     let pdfPublicId = existing?.pdf_public_id ?? null;
+    let shouldResetExtractedText = false;
 
     // If a new file is posted, upload to Cloudinary & delete old
     const pdfAny = files.pdf as File | File[] | undefined;
@@ -139,6 +140,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { publicIdWithExt, version } = await uploadPdfBufferToCloudinary(fileBuffer, baseId, ext);
       pdfPublicId = publicIdWithExt; // e.g. "pdfs/foo-123.pdf"
       pdfUrl = buildViewerUrl(publicIdWithExt, version);
+      shouldResetExtractedText = true;
 
       // Delete old asset from Cloudinary if we can derive previous pid
       const { pid: oldPid } = publicIdAndExtFromUrl(existing?.pdf_url ?? null);
@@ -168,6 +170,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       language: getFirstString(fields.language),
       timestamp: getFirstString(fields.timestamp),
       conclusion: getFirstString(fields.conclusion),
+      extracted_text: shouldResetExtractedText ? null : undefined,
     };
     const updateFields: Record<string, any> = {};
     for (const [k, v] of Object.entries(updateFieldsRaw)) {
