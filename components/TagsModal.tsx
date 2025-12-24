@@ -1,7 +1,7 @@
 // components/TagsModal.tsx
 import { MouseEvent } from "react";
 import AsyncCreatableSelect from "react-select/async-creatable";
-import { TagIcon } from "@phosphor-icons/react";
+import { MagicWand, TagIcon } from "@phosphor-icons/react";
 import { Tag } from "../types";
 
 interface TagsModalProps {
@@ -13,6 +13,8 @@ interface TagsModalProps {
   setSelectedTags: (tags: { label: string; value: number }[]) => void;
   allTags: Tag[];
   handleTagSubmit: (e: MouseEvent<HTMLButtonElement>) => Promise<void>;
+  onRegenerate?: () => void;
+  regenLoading?: boolean;
 }
 
 export default function TagsModal({
@@ -24,6 +26,8 @@ export default function TagsModal({
   setSelectedTags,
   allTags,
   handleTagSubmit,
+  onRegenerate,
+  regenLoading,
 }: TagsModalProps) {
   if (!tagsModalOpen) return null;
 
@@ -55,6 +59,19 @@ export default function TagsModal({
           </div>
         )}
         <div className="space-y-6">
+          {onRegenerate && (
+            <button
+              type="button"
+              onClick={onRegenerate}
+              className="w-full py-3 px-4 rounded-xl bg-indigo-50 text-indigo-800 font-semibold border border-indigo-200 hover:bg-indigo-100 transition-all duration-200 disabled:opacity-60"
+              disabled={regenLoading}
+            >
+              <span className="inline-flex items-center gap-2 justify-center">
+                <MagicWand size={16} />
+                {regenLoading ? "Re-generating tags…" : "Re-generate tags with AI"}
+              </span>
+            </button>
+          )}
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">Tags</label>
             <AsyncCreatableSelect

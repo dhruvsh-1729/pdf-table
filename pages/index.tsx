@@ -4,10 +4,11 @@ import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-tab
 import { useRouter } from "next/router";
 import { debounce } from "lodash";
 import BugModal from "@/components/BugModal";
-import { Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
+import { MagicWand, Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { MagazineRecord, Tag, User } from "../types";
+import ExtractedTextModal from "@/components/ExtractedTextModal";
 import Header from "../components/Header";
 import ServerDataTable from "../components/DataTable";
 import RecordFormModal from "../components/RecordFormModal";
@@ -52,9 +53,22 @@ export default function Home() {
   const [selectedAuthors, setSelectedAuthors] = useState<{ label: string; value: number }[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [access, setAccess] = useState<string | null>(null);
+  const isAdmin = useMemo(() => {
+    const email = (user?.email || "").toLowerCase();
+    return email === "dhruvshdarshansh@gmail.com" || email === "dharmsasanwork99@gmail.com";
+  }, [user?.email]);
   const [bugModalOpen, setBugModalOpen] = useState<boolean>(false);
   const [tableLoading, setTableLoading] = useState<boolean>(false);
   const [showFileSize, setShowFileSize] = useState<boolean>(false);
+  const [extractedTextModalOpen, setExtractedTextModalOpen] = useState<boolean>(false);
+  const [extractedTextLoading, setExtractedTextLoading] = useState<boolean>(false);
+  const [extractedText, setExtractedText] = useState<string>("");
+  const [extractedTextError, setExtractedTextError] = useState<string | null>(null);
+  const [activeExtractedRecord, setActiveExtractedRecord] = useState<MagazineRecord | null>(null);
+  const [aiBusy, setAiBusy] = useState<{ mode: "summary" | "conclusion" | "tags" | null; recordId: number | null }>({
+    mode: null,
+    recordId: null,
+  });
 
   // Table states - server-side
   const [pagination, setPagination] = useState({
@@ -207,7 +221,7 @@ export default function Home() {
     await debouncedFetchRecords(0, 10000, columnFilters, globalFilter, sorting, selectedEmail, true);
   }, [columnFilters, globalFilter, sorting, selectedEmail, debouncedFetchRecords]);
 
-  const fetchAllTags = async (): Promise<void> => {
+  const fetchAllTags = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch("/api/tags");
       if (!response.ok) throw new Error("Failed to fetch tags");
@@ -216,7 +230,7 @@ export default function Home() {
     } catch (err) {
       console.error("Error fetching tags:", err);
     }
-  };
+  }, []);
 
   const fetchEmails = async (): Promise<void> => {
     try {
@@ -256,6 +270,126 @@ export default function Home() {
       setTableLoading(false);
     }
   };
+
+  const ensureExtractedText = useCallback(
+    async (recordId: number) => {
+      toast.info("Extracting text…");
+      const response = await fetch(`/api/records/extracted-text?id=${recordId}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to extract text for this record.");
+      }
+      toast.success("Text ready");
+      return payload.text as string;
+    },
+    [],
+  );
+
+  const primeEditingState = useCallback(
+    (record: MagazineRecord) => {
+      setEditingRecord(record);
+      setName(record.name || "");
+      setSummary(record.summary || "");
+      setConclusion(record.conclusion || "");
+      setVolume(record.volume || "");
+      setNumber(record.number || "");
+      setTitleName(record.title_name || "");
+      setPageNumbers(record.page_numbers || "");
+      setAuthors(record.authors || "");
+      setLanguage(record.language || "");
+      setTimestamp(record.timestamp || "");
+      setFile(null);
+    },
+    [setEditingRecord],
+  );
+
+  const handleAiGenerate = useCallback(
+    async (record: MagazineRecord, mode: "summary" | "conclusion" | "tags", variant: "primary" | "regen" = "primary") => {
+      setAiBusy({ mode, recordId: record.id });
+      primeEditingState(record);
+
+      try {
+        await ensureExtractedText(record.id);
+        toast.info("Generating with AI…");
+
+        const response = await fetch("/api/ai/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: record.id, mode, variant }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to generate with AI.");
+        }
+
+        if (mode === "summary") {
+          setSummary(payload.text || "");
+          setSummaryOpen(true);
+          toast.success("AI drafted a summary");
+        } else if (mode === "conclusion") {
+          setConclusion(payload.text || "");
+          setConclusionOpen(true);
+          toast.success("AI drafted a conclusion");
+        } else if (mode === "tags") {
+          const aiTags: string[] = Array.isArray(payload.tags) ? payload.tags : [];
+          const existing = record.tags?.map((t) => ({ label: t.name, value: t.id })) || [];
+          const suggestions = aiTags.map((tag: string, idx: number) => ({
+            label: tag,
+            value: 10000000 + idx,
+          }));
+
+          const merged = [...existing, ...suggestions].reduce((acc, tag) => {
+            if (!acc.some((t) => t.label.toLowerCase() === tag.label.toLowerCase())) acc.push(tag);
+            return acc;
+          }, [] as { label: string; value: number }[]);
+
+          setSelectedTags(merged);
+          fetchAllTags();
+          setTagsModalOpen(true);
+          toast.success("AI suggested tags");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "AI generation failed.";
+        toast.error(message);
+      } finally {
+        setAiBusy({ mode: null, recordId: null });
+      }
+    },
+    [ensureExtractedText, fetchAllTags, primeEditingState],
+  );
+
+  const handleViewExtractedText = useCallback(
+    async (record: MagazineRecord) => {
+      setActiveExtractedRecord(record);
+      setExtractedTextModalOpen(true);
+      setExtractedText("");
+      setExtractedTextError(null);
+      setExtractedTextLoading(true);
+
+      try {
+        const response = await fetch(`/api/records/extracted-text?id=${record.id}`);
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || "Failed to fetch extracted text.");
+        }
+
+        setExtractedText(payload.text || "");
+
+        if (!payload.text) {
+          setExtractedTextError("The PDF did not contain any extractable text.");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to load extracted text.";
+        setExtractedTextError(message);
+        toast.error(message);
+      } finally {
+        setExtractedTextLoading(false);
+      }
+    },
+    [],
+  );
 
   const handleTagSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
@@ -406,24 +540,36 @@ export default function Home() {
                   {isLong ? summary.slice(0, 50) + "..." : summary}
                 </span>
               ) : null}
-              <div
-                onClick={() => {
-                  setEditingRecord(row.original);
-                  setSummary(row.original.summary || "");
-                  setName(row.original.name || "");
-                  setVolume(row.original.volume || "");
-                  setNumber(row.original.number || "");
-                  setTitleName(row.original.title_name || "");
-                  setPageNumbers(row.original.page_numbers || "");
-                  setAuthors(row.original.authors || "");
-                  setLanguage(row.original.language || "");
-                  setTimestamp(row.original.timestamp || "");
-                  setConclusion(row.original.conclusion || "");
-                  setSummaryOpen(true);
-                }}
-                className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
-              >
-                <PencilCircleIcon className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setEditingRecord(row.original);
+                    setSummary(row.original.summary || "");
+                    setName(row.original.name || "");
+                    setVolume(row.original.volume || "");
+                    setNumber(row.original.number || "");
+                    setTitleName(row.original.title_name || "");
+                    setPageNumbers(row.original.page_numbers || "");
+                    setAuthors(row.original.authors || "");
+                    setLanguage(row.original.language || "");
+                    setTimestamp(row.original.timestamp || "");
+                    setConclusion(row.original.conclusion || "");
+                    setSummaryOpen(true);
+                  }}
+                  className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+                >
+                  <PencilCircleIcon className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleAiGenerate(row.original, "summary")}
+                    className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-xl border border-amber-200 hover:border-amber-300 transition-all duration-200 cursor-pointer hover:shadow-md"
+                    disabled={Boolean(aiBusy.mode)}
+                    title="AI Summary"
+                  >
+                    <MagicWand className="w-4 h-4 text-amber-600 group-hover:text-amber-700" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -444,24 +590,36 @@ export default function Home() {
                   {isLong ? conclusion.slice(0, 50) + "..." : conclusion}
                 </span>
               ) : null}
-              <div
-                onClick={() => {
-                  setEditingRecord(row.original);
-                  setName(row.original.name || "");
-                  setSummary(row.original.summary || "");
-                  setVolume(row.original.volume || "");
-                  setNumber(row.original.number || "");
-                  setTitleName(row.original.title_name || "");
-                  setPageNumbers(row.original.page_numbers || "");
-                  setAuthors(row.original.authors || "");
-                  setLanguage(row.original.language || "");
-                  setTimestamp(row.original.timestamp || "");
-                  setConclusion(row.original.conclusion || "");
-                  setConclusionOpen(true);
-                }}
-                className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
-              >
-                <PencilCircleIcon className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setEditingRecord(row.original);
+                    setName(row.original.name || "");
+                    setSummary(row.original.summary || "");
+                    setVolume(row.original.volume || "");
+                    setNumber(row.original.number || "");
+                    setTitleName(row.original.title_name || "");
+                    setPageNumbers(row.original.page_numbers || "");
+                    setAuthors(row.original.authors || "");
+                    setLanguage(row.original.language || "");
+                    setTimestamp(row.original.timestamp || "");
+                    setConclusion(row.original.conclusion || "");
+                    setConclusionOpen(true);
+                  }}
+                  className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100 hover:border-emerald-200 transition-all duration-200 cursor-pointer hover:shadow-md"
+                >
+                  <PencilCircleIcon className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleAiGenerate(row.original, "conclusion")}
+                    className="group w-8 h-8 flex items-center justify-center gap-2 bg-gradient-to-br from-indigo-50 to-violet-50 rounded-xl border border-indigo-200 hover:border-indigo-300 transition-all duration-200 cursor-pointer hover:shadow-md"
+                    disabled={Boolean(aiBusy.mode)}
+                    title="AI Conclusion"
+                  >
+                    <MagicWand className="w-4 h-4 text-indigo-600 group-hover:text-indigo-700" />
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -502,6 +660,16 @@ export default function Home() {
             >
               <TagIcon size={16} className="text-indigo-600 group-hover:text-indigo-700" />
             </button>
+            {isAdmin && (
+              <button
+                className="group flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 hover:border-emerald-300 hover:shadow-md transition-all duration-200"
+                onClick={() => handleAiGenerate(row.original, "tags")}
+                disabled={Boolean(aiBusy.mode)}
+                title="AI Tags"
+              >
+                <MagicWand className="w-4 h-4 text-emerald-600 group-hover:text-emerald-700" />
+              </button>
+            )}
           </div>
         ),
       },
@@ -696,6 +864,16 @@ export default function Home() {
         cell: ({ row }) => (
           <div className="flex flex-col gap-2">
             <button
+              className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-emerald-200 to-teal-200 hover:from-emerald-300 hover:to-teal-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+              onClick={() => handleViewExtractedText(row.original)}
+            >
+              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8M8 12h5M8 16h6" />
+              </svg>
+              Text
+            </button>
+            <button
               className="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-blue-200 to-indigo-200 hover:from-blue-300 hover:to-indigo-300 text-black text-sm font-bold rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 transform hover:scale-105"
               onClick={() => {
                 const record = row.original;
@@ -781,7 +959,7 @@ export default function Home() {
         ),
       },
     ],
-    [],
+    [aiBusy, handleAiGenerate, handleViewExtractedText, isAdmin, refreshRecords, user],
   );
 
   const exportableColumns = useMemo(() => {
@@ -1034,6 +1212,10 @@ export default function Home() {
           setSelectedTags={setSelectedTags}
           allTags={allTags}
           handleTagSubmit={handleTagSubmit}
+          onRegenerate={
+            isAdmin && editingRecord ? () => handleAiGenerate(editingRecord, "tags", "regen") : undefined
+          }
+          regenLoading={aiBusy.mode === "tags" && aiBusy.recordId === editingRecord?.id}
         />
         <AuthorsModal
           authorsModalOpen={authorsModalOpen}
@@ -1054,6 +1236,11 @@ export default function Home() {
           handleSubmit={handleSubmit}
           placeholder="Enter a detailed summary..."
           editingRecord={editingRecord}
+          onRegenerate={
+            isAdmin && editingRecord ? () => handleAiGenerate(editingRecord, "summary", "regen") : undefined
+          }
+          regenLabel="Re-generate summary with AI"
+          regenLoading={aiBusy.mode === "summary" && aiBusy.recordId === editingRecord?.id}
         />
         <EditTextModal
           isOpen={conclusionOpen}
@@ -1065,6 +1252,11 @@ export default function Home() {
           handleSubmit={handleSubmit}
           placeholder="Enter your conclusion..."
           editingRecord={editingRecord}
+          onRegenerate={
+            isAdmin && editingRecord ? () => handleAiGenerate(editingRecord, "conclusion", "regen") : undefined
+          }
+          regenLabel="Re-generate conclusion with AI"
+          regenLoading={aiBusy.mode === "conclusion" && aiBusy.recordId === editingRecord?.id}
         />
         <div className="w-full">
           <Header
@@ -1104,6 +1296,26 @@ export default function Home() {
           setSelectedColumnIds={setSelectedExportColumnIds}
           onExportCSV={exportToCSV}
           onExportXLSX={exportToXLSX}
+        />
+        <ExtractedTextModal
+          isOpen={extractedTextModalOpen}
+          onClose={() => {
+            setExtractedTextModalOpen(false);
+            setExtractedText("");
+            setExtractedTextError(null);
+            setActiveExtractedRecord(null);
+          }}
+          title={
+            activeExtractedRecord
+              ? `Extracted Text — ${activeExtractedRecord.title_name || activeExtractedRecord.name || "Record"} (ID ${
+                  activeExtractedRecord.id
+                })`
+              : "Extracted Text"
+          }
+          text={extractedText}
+          loading={extractedTextLoading}
+          error={extractedTextError}
+          pdfUrl={activeExtractedRecord?.pdf_url}
         />
         <style jsx global>{`
           .custom-scrollbar::-webkit-scrollbar {

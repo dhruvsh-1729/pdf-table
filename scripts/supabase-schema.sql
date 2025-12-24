@@ -6,6 +6,7 @@ create table if not exists public.records (
   name text not null,
   timestamp text,
   summary text,
+  extracted_text text,
   pdf_url text not null,
   volume text,
   number text,
