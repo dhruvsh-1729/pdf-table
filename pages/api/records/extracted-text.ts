@@ -9,15 +9,35 @@ type ExtractedTextResponse =
       error: string;
     };
 
-async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.js");
+async function loadPdfGetDocument() {
+  const globalAny = globalThis as any;
+
+  // pdfjs requires DOM-like globals even in Node; provide them via @napi-rs/canvas if available.
+  if (!globalAny.DOMMatrix || !globalAny.Path2D || !globalAny.ImageData) {
+    try {
+      const canvas = await import("@napi-rs/canvas");
+      if (!globalAny.DOMMatrix && canvas.DOMMatrix) globalAny.DOMMatrix = canvas.DOMMatrix;
+      if (!globalAny.Path2D && canvas.Path2D) globalAny.Path2D = canvas.Path2D;
+      if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
+    } catch (error) {
+      console.warn("Canvas polyfills unavailable; PDF text extraction may fail.", error);
+    }
+  }
+
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const getDocument = pdfjs.getDocument || pdfjs.default?.getDocument;
 
   if (!getDocument) {
     throw new Error("PDF parser is not available in the current environment.");
   }
 
-  const loadingTask = getDocument({ data: buffer, disableWorker: true });
+  return getDocument;
+}
+
+async function extractTextFromPdf(data: Uint8Array): Promise<string> {
+  const getDocument = await loadPdfGetDocument();
+
+  const loadingTask = getDocument({ data, disableWorker: true });
   const pdf = await loadingTask.promise;
 
   let fullText = "";
@@ -104,8 +124,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       throw new Error(`Failed to fetch PDF from ${targetUrl} (status ${response.status})`);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const extractedText = await extractTextFromPdf(buffer);
+    const pdfBytes = new Uint8Array(await response.arrayBuffer());
+    const extractedText = await extractTextFromPdf(pdfBytes);
 
     await supabase
       .from("records")

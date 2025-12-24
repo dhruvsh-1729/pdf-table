@@ -87,7 +87,7 @@ interface FilterParams {
 }
 
 const RECORD_COLUMNS =
-  "id, name, timestamp, summary, pdf_public_id, pdf_url, volume, number, title_name, page_numbers, authors, language, email, creator_name, conclusion";
+  "id, name, timestamp, summary, pdf_public_id, pdf_url, volume, number, title_name, page_numbers, authors, language, email, creator_name, conclusion, extracted_text";
 
 // Fetch distinct IDs from a table with pagination (1,000 rows per page)
 async function fetchDistinctIds<T extends string>(
@@ -338,8 +338,8 @@ async function fetchPaginatedRecords(params: FilterParams) {
   // -------------------------
   // Format records
   // -------------------------
-  const formattedRecords = (records || []).map((record) => {
-    const formatted: any = {};
+  const formattedRecords = (records || []).map((record: Record<string, any>) => {
+    const formatted: Record<string, any> = {};
 
     // Handle tags
     if (record.record_tags) {

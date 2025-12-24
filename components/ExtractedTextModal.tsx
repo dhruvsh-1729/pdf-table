@@ -7,9 +7,18 @@ interface ExtractedTextModalProps {
   text: string;
   loading: boolean;
   error: string | null;
+  pdfUrl?: string | null;
 }
 
-export default function ExtractedTextModal({ isOpen, onClose, title, text, loading, error }: ExtractedTextModalProps) {
+export default function ExtractedTextModal({
+  isOpen,
+  onClose,
+  title,
+  text,
+  loading,
+  error,
+  pdfUrl,
+}: ExtractedTextModalProps) {
   if (!isOpen) return null;
 
   const hasContent = Boolean(text?.trim());
@@ -29,18 +38,43 @@ export default function ExtractedTextModal({ isOpen, onClose, title, text, loadi
         </div>
 
         <div className="flex-1 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-          <div className="h-full overflow-y-auto">
-            {loading ? (
-              <div className="flex h-full items-center justify-center text-slate-600 font-semibold">Extracting text…</div>
-            ) : error ? (
-              <div className="p-6 text-red-700 bg-red-50 border-b border-red-200 font-semibold">{error}</div>
-            ) : hasContent ? (
-              <pre className="whitespace-pre-wrap break-words font-mono text-sm text-slate-800 p-6 leading-relaxed">
-                {text}
-              </pre>
-            ) : (
-              <div className="p-6 text-slate-600 font-semibold">No extracted text available for this PDF.</div>
-            )}
+          <div className="grid h-full grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="flex flex-col min-h-0 border-b border-slate-200 lg:border-b-0 lg:border-r bg-white">
+              <div className="px-4 py-3 border-b border-slate-200 font-semibold text-slate-800">Extracted Text</div>
+              <div className="flex-1 overflow-y-auto">
+                {loading ? (
+                  <div className="flex h-full items-center justify-center text-slate-600 font-semibold">
+                    Extracting text…
+                  </div>
+                ) : error ? (
+                  <div className="p-6 text-red-700 bg-red-50 border-b border-red-200 font-semibold">{error}</div>
+                ) : hasContent ? (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-sm text-slate-800 p-6 leading-relaxed">
+                    {text}
+                  </pre>
+                ) : (
+                  <div className="p-6 text-slate-600 font-semibold">No extracted text available for this PDF.</div>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col min-h-0 bg-slate-100 border-l border-slate-200">
+              <div className="px-4 py-3 border-b border-slate-200 font-semibold text-slate-800">PDF Preview</div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {pdfUrl ? (
+                  <iframe
+                    key={pdfUrl}
+                    src={pdfUrl}
+                    title="PDF preview"
+                    className="w-full h-full rounded-br-xl border-0"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="h-full flex items-center justify-center text-slate-600 font-semibold">
+                    No PDF available for preview.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 

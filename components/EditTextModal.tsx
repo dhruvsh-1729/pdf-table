@@ -12,6 +12,9 @@ interface EditTextModalProps {
   handleSubmit: (e: MouseEvent<HTMLButtonElement>) => Promise<void>;
   placeholder: string;
   editingRecord: MagazineRecord | null;
+  onRegenerate?: () => void;
+  regenLabel?: string;
+  regenLoading?: boolean;
 }
 
 export default function EditTextModal({
@@ -24,6 +27,9 @@ export default function EditTextModal({
   handleSubmit,
   placeholder,
   editingRecord,
+  onRegenerate,
+  regenLabel,
+  regenLoading,
 }: EditTextModalProps) {
   if (!isOpen) return null;
 
@@ -51,6 +57,18 @@ export default function EditTextModal({
           />
         </div>
         <div className="flex items-center justify-between gap-4 pt-4 border-t border-slate-200">
+          {onRegenerate ? (
+            <button
+              type="button"
+              onClick={onRegenerate}
+              className="px-4 py-3 rounded-xl shadow-lg text-indigo-800 bg-indigo-100 hover:bg-indigo-200 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:opacity-60"
+              disabled={loading || regenLoading}
+            >
+              {regenLoading ? "Re-generating…" : regenLabel || "Re-generate with AI"}
+            </button>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             onClick={onClose}

@@ -66,15 +66,34 @@ async function ensureColumnExists() {
   }
 }
 
-async function extractTextFromPdf(buffer) {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
+async function loadPdfGetDocument() {
+  const globalAny = globalThis;
+
+  if (!globalAny.DOMMatrix || !globalAny.Path2D || !globalAny.ImageData) {
+    try {
+      const canvas = await import("@napi-rs/canvas");
+      if (!globalAny.DOMMatrix && canvas.DOMMatrix) globalAny.DOMMatrix = canvas.DOMMatrix;
+      if (!globalAny.Path2D && canvas.Path2D) globalAny.Path2D = canvas.Path2D;
+      if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
+    } catch (error) {
+      console.warn("Canvas polyfills unavailable; PDF text extraction may fail.", error);
+    }
+  }
+
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const getDocument = pdfjs.getDocument || pdfjs.default?.getDocument;
 
   if (!getDocument) {
     throw new Error("PDF parser is not available in this environment.");
   }
 
-  const loadingTask = getDocument({ data: buffer, disableWorker: true });
+  return getDocument;
+}
+
+async function extractTextFromPdf(data) {
+  const getDocument = await loadPdfGetDocument();
+
+  const loadingTask = getDocument({ data, disableWorker: true });
   const pdf = await loadingTask.promise;
   let fullText = "";
 
@@ -170,8 +189,8 @@ async function main() {
       const response = await fetch(pdfUrl);
       if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.status}`);
 
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const text = await extractTextFromPdf(buffer);
+      const pdfBytes = new Uint8Array(await response.arrayBuffer());
+      const text = await extractTextFromPdf(pdfBytes);
 
       await supabase.from("records").update({ extracted_text: text }).eq("id", record.id).throwOnError();
       processed++;
