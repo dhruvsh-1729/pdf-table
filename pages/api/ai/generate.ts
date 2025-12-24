@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { SarvamAIClient } from "sarvamai";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
-
+// sarvam client
 const sarvamClient =
   process.env.SARVAM_API_KEY && process.env.SARVAM_API_KEY.trim()
     ? new SarvamAIClient({ apiSubscriptionKey: process.env.SARVAM_API_KEY.trim() })
@@ -51,9 +51,7 @@ function buildMessages(mode: AiMode, text: string, title?: string, name?: string
 
   // tags
   const regenNote =
-    variant === "regen"
-      ? "Generate an alternate set (avoid generic or previously suggested words). "
-      : "";
+    variant === "regen" ? "Generate an alternate set (avoid generic or previously suggested words). " : "";
   return [
     { role: "system" as const, content: baseInstruction },
     {
