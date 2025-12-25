@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { pathToFileURL } from "node:url";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -175,49 +174,14 @@ async function loadPdfGetDocument() {
   const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
-  // ✅ Prefer local worker file; avoid remote HTTPS (not supported by Node ESM import for workers)
-  const workerSrc = await (async () => {
-    try {
-      const req = await getNodeRequire();
-      const candidates = [
-        "pdfjs-dist/legacy/build/pdf.worker.mjs",
-        "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-        "pdfjs-dist/build/pdf.worker.mjs",
-        "pdfjs-dist/build/pdf.worker.min.mjs",
-      ];
-
-      for (const candidate of candidates) {
-        try {
-          const workerPath = req.resolve(candidate);
-          if (workerPath) return pathToFileURL(workerPath).href;
-        } catch {
-          // try next candidate
-        }
-      }
-    } catch {
-      // ignore and fall through to env-based fallback
-    }
-
-    if (process.env.PDFJS_WORKER_SRC) {
-      const allowed =
-        process.env.PDFJS_WORKER_SRC.startsWith("file:") || process.env.PDFJS_WORKER_SRC.startsWith("data:");
-      if (allowed) return process.env.PDFJS_WORKER_SRC;
-      throw new Error(
-        "PDFJS_WORKER_SRC must be a file: or data: URL in a Node environment (https workers are not supported).",
-      );
-    }
-
-    throw new Error("pdfjs-dist worker file could not be resolved; ensure pdfjs-dist is installed and bundled.");
-  })();
-
-  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+  // Running with disableWorker=true, so we don't set workerSrc in Node.
 
   return getDocument;
 }
 
 async function loadPdfDocument(data: Uint8Array) {
   const getDocument = await loadPdfGetDocument();
-  // keep disableWorker true — it still uses fake worker, but now workerSrc is correct
+  // keep disableWorker true — avoids loading worker in Node environments
   const loadingTask = getDocument({ data, disableWorker: true });
   return loadingTask.promise;
 }
