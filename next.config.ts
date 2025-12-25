@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
   experimental: {
     outputFileTracingIncludes: {
       "/api/records/extracted-text": [
-        "./node_modules/pdfjs-dist/**/pdf.worker.*",
+        "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+        "./node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+
         "./node_modules/tesseract.js/dist/worker.min.js",
         "./node_modules/tesseract.js-core/**",
       ],

@@ -83,6 +83,43 @@ async function loadTesseract() {
   return tesseractPromise;
 }
 
+async function importPdfJs() {
+  const tried: string[] = [];
+  const tryImport = async (p: string) => {
+    tried.push(p);
+    return import(p);
+  };
+
+  // Try the common pdfjs-dist entrypoints across versions
+  try {
+    const m: any = await tryImport("pdfjs-dist/legacy/build/pdf.mjs");
+    return m?.default || m;
+  } catch {}
+
+  try {
+    const m: any = await tryImport("pdfjs-dist/legacy/build/pdf.js");
+    return m?.default || m;
+  } catch {}
+
+  try {
+    const m: any = await tryImport("pdfjs-dist/build/pdf.mjs");
+    return m?.default || m;
+  } catch {}
+
+  try {
+    const m: any = await tryImport("pdfjs-dist/build/pdf.js");
+    return m?.default || m;
+  } catch {}
+
+  // last resort (browserish, can cause DOMMatrix errors)
+  try {
+    const m: any = await tryImport("pdfjs-dist");
+    return m?.default || m;
+  } catch {}
+
+  throw new Error(`Could not import pdfjs-dist from any known entrypoint: ${tried.join(", ")}`);
+}
+
 async function getFranc() {
   if (!francFnPromise) {
     francFnPromise = import("franc").then((mod) => (mod.franc || (mod as any).default) as any);
@@ -141,34 +178,43 @@ async function ensureGetBuiltinModule() {
   };
 }
 
+async function ensureDomLikeGlobals() {
+  const g: any = globalThis as any;
+  if (g.DOMMatrix && g.Path2D && g.ImageData) return;
+
+  try {
+    const canvas = await loadCanvasModule();
+    if (!g.DOMMatrix && canvas.DOMMatrix) g.DOMMatrix = canvas.DOMMatrix;
+    if (!g.Path2D && canvas.Path2D) g.Path2D = canvas.Path2D;
+    if (!g.ImageData && canvas.ImageData) g.ImageData = canvas.ImageData;
+  } catch (error) {
+    console.warn("Canvas polyfills unavailable; PDF parsing may fail.", error);
+  }
+}
+
 async function loadPdfGetDocument() {
+  const globalAny = globalThis as any;
+
   await ensureGetBuiltinModule();
 
-  // Use the standard build path
-  const imported: any = await import("pdfjs-dist");
+  // ✅ Polyfill DOMMatrix/Path2D/ImageData before importing pdfjs
+  if (!globalAny.DOMMatrix || !globalAny.Path2D || !globalAny.ImageData) {
+    const canvas = await loadCanvasModule();
+    if (!globalAny.DOMMatrix && canvas.DOMMatrix) globalAny.DOMMatrix = canvas.DOMMatrix;
+    if (!globalAny.Path2D && canvas.Path2D) globalAny.Path2D = canvas.Path2D;
+    if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
+  }
+
+  // ✅ Use the legacy ESM build you actually have
+  const imported: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const pdfjs: any = imported?.default || imported;
 
   const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
+  // ✅ Point workerSrc to the real file on disk (Vercel-safe when traced)
   const req = await getNodeRequire();
-
-  const workerFsPath = resolveFirst(req, [
-    // try standard build paths
-    "pdfjs-dist/build/pdf.worker.mjs",
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    "pdfjs-dist/build/pdf.worker.js",
-    "pdfjs-dist/build/pdf.worker.min.js",
-  ]);
-
-  if (!workerFsPath) {
-    // This means your installed pdfjs-dist truly doesn't ship a worker file.
-    // At that point the only fix is to change/pin pdfjs-dist version.
-    throw new Error(
-      "pdf.js worker file not found in pdfjs-dist package. Try updating/pinning pdfjs-dist and redeploy.",
-    );
-  }
-
+  const workerFsPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerFsPath).href;
 
   return getDocument;
