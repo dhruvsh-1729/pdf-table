@@ -4,10 +4,16 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
 
   experimental: {
-    // TS in some Next versions doesn’t have this typed yet, but Vercel/Next will use it.
     outputFileTracingIncludes: {
-      // 👇 change this to your real API file path (no extension)
-      "pages/api/records/extracted-text": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
+      // key must match your API file path under /pages (no extension)
+      "pages/api/records/extracted-text": [
+        // pdf.js worker
+        "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+
+        // tesseract worker + core (WASM + JS)
+        "./node_modules/tesseract.js/dist/worker.min.js",
+        "./node_modules/tesseract.js-core/**/*",
+      ],
     },
   } as any,
 };

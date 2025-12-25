@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { pathToFileURL } from "node:url";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -132,47 +133,16 @@ async function ensureGetBuiltinModule() {
 }
 
 async function loadPdfGetDocument() {
-  const globalAny = globalThis as any;
-
-  // patch for createRequire in some runtimes
   await ensureGetBuiltinModule();
 
-  // Canvas polyfills for pdf.js rendering (used by OCR render)
-  if (!globalAny.DOMMatrix || !globalAny.Path2D || !globalAny.ImageData) {
-    try {
-      const canvas = await loadCanvasModule();
-      if (!globalAny.DOMMatrix && canvas.DOMMatrix) globalAny.DOMMatrix = canvas.DOMMatrix;
-      if (!globalAny.Path2D && canvas.Path2D) globalAny.Path2D = canvas.Path2D;
-      if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
-    } catch (error) {
-      console.warn("Canvas polyfills unavailable; PDF rendering may fail.", error);
-    }
-  }
-
-  // ✅ Import pdf.js
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const getDocument = pdfjs.getDocument || pdfjs.default?.getDocument;
-
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
-  // ✅ Force worker into the bundle trace + set workerSrc explicitly
-  // This is the key to fixing Vercel production.
-  try {
-    await import("pdfjs-dist/legacy/build/pdf.worker.mjs"); // ensures Next traces it
-  } catch (e) {
-    // if this fails locally, we'll still try to resolve path below
-    console.warn("Worker module import failed (will try resolve):", e);
-  }
-
-  try {
-    const req = await getNodeRequire(); // your createRequire(import.meta.url)
-    const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-
-    const { pathToFileURL } = await import("node:url");
-    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-  } catch (e) {
-    console.warn("Could not set pdf.js workerSrc. pdf.js may fail on Vercel.", e);
-  }
+  // ✅ Ensure worker is trace-included AND resolvable at runtime
+  const req = await getNodeRequire();
+  const workerFsPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerFsPath).href;
 
   return getDocument;
 }
@@ -302,16 +272,14 @@ function hasMeaningfulText(text?: string | null) {
 }
 
 async function performOcrOnPdf(pdf: any, language: string) {
-  const canvasModule = await loadCanvasModule().catch((error) => {
-    console.error("Canvas module missing for OCR:", error);
-    return null;
-  });
-
-  if (!canvasModule) {
-    throw new Error("OCR is unavailable because @napi-rs/canvas could not be loaded.");
-  }
-
+  const canvasModule = await loadCanvasModule();
   const tesseract = await loadTesseract();
+  const req = await getNodeRequire();
+
+  const workerPath = req.resolve("tesseract.js/dist/worker.min.js");
+  const corePath = req.resolve("tesseract.js-core/tesseract-core-relaxedsimd.js");
+  // (the core JS will look for the .wasm next to itself — which we force-included)
+
   const pagesToProcess = Math.min(pdf.numPages, OCR_PAGE_LIMIT);
   let combined = "";
 
@@ -321,13 +289,12 @@ async function performOcrOnPdf(pdf: any, language: string) {
 
     const { data } = await tesseract.recognize(imageBuffer, language, {
       langPath: TESSDATA_URL,
+      workerPath,
+      corePath,
     });
 
     const pageText = (data?.text || "").replace(/\u0000/g, "").trim();
-    if (pageText) {
-      combined += pageText;
-      if (pageIndex < pagesToProcess) combined += "\n\n";
-    }
+    if (pageText) combined += (combined ? "\n\n" : "") + pageText;
 
     page.cleanup?.();
   }
