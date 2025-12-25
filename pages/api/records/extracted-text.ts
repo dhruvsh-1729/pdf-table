@@ -368,6 +368,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const force = String(req.query.force || "").toLowerCase() === "true";
+
   try {
     const id = req.query.id;
 
@@ -390,7 +392,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ error: "Record not found." });
     }
 
-    if (record.extracted_text && hasMeaningfulText(record.extracted_text)) {
+    if (!force && record.extracted_text && hasMeaningfulText(record.extracted_text)) {
       return res.status(200).json({ text: record.extracted_text });
     }
 

@@ -272,15 +272,22 @@ export default function Home() {
   };
 
   const ensureExtractedText = useCallback(
-    async (recordId: number) => {
+    async (record: MagazineRecord) => {
+      if (record.extracted_text && record.extracted_text.trim()) {
+        return record.extracted_text;
+      }
+
       toast.info("Extracting text…");
-      const response = await fetch(`/api/records/extracted-text?id=${recordId}`);
+      const response = await fetch(`/api/records/extracted-text?id=${record.id}`);
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || "Failed to extract text for this record.");
       }
+
+      const text = (payload.text as string) || "";
+      setRecords((prev) => prev.map((r) => (r.id === record.id ? { ...r, extracted_text: text } : r)));
       toast.success("Text ready");
-      return payload.text as string;
+      return text;
     },
     [],
   );
@@ -309,7 +316,7 @@ export default function Home() {
       primeEditingState(record);
 
       try {
-        await ensureExtractedText(record.id);
+        await ensureExtractedText(record);
         toast.info("Generating with AI…");
 
         const response = await fetch("/api/ai/generate", {
@@ -360,7 +367,7 @@ export default function Home() {
   );
 
   const handleViewExtractedText = useCallback(
-    async (record: MagazineRecord) => {
+    async (record: MagazineRecord, opts?: { forceReextract?: boolean }) => {
       setActiveExtractedRecord(record);
       setExtractedTextModalOpen(true);
       setExtractedText("");
@@ -368,7 +375,8 @@ export default function Home() {
       setExtractedTextLoading(true);
 
       try {
-        const response = await fetch(`/api/records/extracted-text?id=${record.id}`);
+        const url = `/api/records/extracted-text?id=${record.id}${opts?.forceReextract ? "&force=true" : ""}`;
+        const response = await fetch(url);
         const payload = await response.json();
 
         if (!response.ok) {
@@ -376,6 +384,9 @@ export default function Home() {
         }
 
         setExtractedText(payload.text || "");
+        if (payload.text) {
+          setRecords((prev) => prev.map((r) => (r.id === record.id ? { ...r, extracted_text: payload.text } : r)));
+        }
 
         if (!payload.text) {
           setExtractedTextError("The PDF did not contain any extractable text.");
@@ -389,6 +400,21 @@ export default function Home() {
       }
     },
     [],
+  );
+
+  const handleNavigateExtractedRecord = useCallback(
+    async (direction: "prev" | "next") => {
+      if (!activeExtractedRecord) return;
+      const idx = records.findIndex((r) => r.id === activeExtractedRecord.id);
+      if (idx === -1) return;
+
+      const targetIdx = direction === "prev" ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= records.length) return;
+
+      const target = records[targetIdx];
+      await handleViewExtractedText(target);
+    },
+    [activeExtractedRecord, records, handleViewExtractedText],
   );
 
   const handleTagSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
@@ -1316,6 +1342,26 @@ export default function Home() {
           loading={extractedTextLoading}
           error={extractedTextError}
           pdfUrl={activeExtractedRecord?.pdf_url}
+          onReextract={
+            activeExtractedRecord
+              ? async () => {
+                  if (!activeExtractedRecord) return;
+                  setExtractedTextLoading(true);
+                  try {
+                    await handleViewExtractedText(activeExtractedRecord, { forceReextract: true });
+                  } finally {
+                    setExtractedTextLoading(false);
+                  }
+                }
+              : undefined
+          }
+          reextracting={extractedTextLoading}
+          onPrev={records.length > 0 ? () => handleNavigateExtractedRecord("prev") : undefined}
+          onNext={records.length > 0 ? () => handleNavigateExtractedRecord("next") : undefined}
+          disablePrev={!activeExtractedRecord || records.findIndex((r) => r.id === activeExtractedRecord.id) <= 0}
+          disableNext={
+            !activeExtractedRecord || records.findIndex((r) => r.id === activeExtractedRecord.id) >= records.length - 1
+          }
         />
         <style jsx global>{`
           .custom-scrollbar::-webkit-scrollbar {
