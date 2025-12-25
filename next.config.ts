@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
         "./node_modules/pdfjs-dist/build/pdf.worker.mjs",
         "./node_modules/pdfjs-dist/build/pdf.worker.min.mjs",
         "./node_modules/tesseract.js/dist/worker.min.js",
+        "./node_modules/tesseract.js/src/worker-script/node/index.js",
         "./node_modules/tesseract.js-core/**",
       ],
     },

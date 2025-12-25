@@ -308,8 +308,16 @@ async function performOcrOnPdf(pdf: any, language: string) {
   const tesseract = await loadTesseract();
   const req = await getNodeRequire();
 
-  // Use the Node worker implementation so we don't rely on browser-style globals in Node runtimes.
-  const workerPath = req.resolve("tesseract.js/src/worker-script/node/index.js");
+  let workerPath: string | undefined;
+  try {
+    workerPath = req.resolve("tesseract.js/src/worker-script/node/index.js");
+  } catch {
+    try {
+      workerPath = req.resolve("tesseract.js/dist/worker.min.js");
+    } catch {
+      workerPath = undefined;
+    }
+  }
 
   const pagesToProcess = Math.min(pdf.numPages, OCR_PAGE_LIMIT);
   let combined = "";
