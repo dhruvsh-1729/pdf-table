@@ -134,9 +134,10 @@ async function ensureGetBuiltinModule() {
 async function loadPdfGetDocument() {
   const globalAny = globalThis as any;
 
-  // ✅ PATCH FIRST (before importing pdfjs)
+  // patch for createRequire in some runtimes
   await ensureGetBuiltinModule();
 
+  // Canvas polyfills for pdf.js rendering (used by OCR render)
   if (!globalAny.DOMMatrix || !globalAny.Path2D || !globalAny.ImageData) {
     try {
       const canvas = await loadCanvasModule();
@@ -144,15 +145,33 @@ async function loadPdfGetDocument() {
       if (!globalAny.Path2D && canvas.Path2D) globalAny.Path2D = canvas.Path2D;
       if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
     } catch (error) {
-      console.warn("Canvas polyfills unavailable; PDF text extraction may fail.", error);
+      console.warn("Canvas polyfills unavailable; PDF rendering may fail.", error);
     }
   }
 
+  // ✅ Import pdf.js
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const getDocument = pdfjs.getDocument || pdfjs.default?.getDocument;
 
-  if (!getDocument) {
-    throw new Error("PDF parser is not available in the current environment.");
+  if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
+
+  // ✅ Force worker into the bundle trace + set workerSrc explicitly
+  // This is the key to fixing Vercel production.
+  try {
+    await import("pdfjs-dist/legacy/build/pdf.worker.mjs"); // ensures Next traces it
+  } catch (e) {
+    // if this fails locally, we'll still try to resolve path below
+    console.warn("Worker module import failed (will try resolve):", e);
+  }
+
+  try {
+    const req = await getNodeRequire(); // your createRequire(import.meta.url)
+    const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+
+    const { pathToFileURL } = await import("node:url");
+    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  } catch (e) {
+    console.warn("Could not set pdf.js workerSrc. pdf.js may fail on Vercel.", e);
   }
 
   return getDocument;
@@ -160,6 +179,7 @@ async function loadPdfGetDocument() {
 
 async function loadPdfDocument(data: Uint8Array) {
   const getDocument = await loadPdfGetDocument();
+  // keep disableWorker true — it still uses fake worker, but now workerSrc is correct
   const loadingTask = getDocument({ data, disableWorker: true });
   return loadingTask.promise;
 }
