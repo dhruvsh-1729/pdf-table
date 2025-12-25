@@ -326,10 +326,12 @@ async function performOcrOnPdf(pdf: any, language: string) {
     const page = await pdf.getPage(pageIndex);
     const imageBuffer = await renderPageToImage(page, canvasModule);
 
-    const { data } = await tesseract.recognize(imageBuffer, language, {
-      langPath: TESSDATA_URL,
-      workerPath,
-    });
+    const recognizeOpts: Record<string, any> = { langPath: TESSDATA_URL };
+    if (typeof workerPath === "string" && workerPath.trim()) {
+      recognizeOpts.workerPath = workerPath;
+    }
+
+    const { data } = await tesseract.recognize(imageBuffer, language, recognizeOpts);
 
     const pageText = (data?.text || "").replace(/\u0000/g, "").trim();
     if (pageText) combined += (combined ? "\n\n" : "") + pageText;
