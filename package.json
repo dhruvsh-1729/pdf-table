@@ -24,6 +24,7 @@
     "csv-parse": "^6.1.0",
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
+    "pdfjs-dist": "^5.3.31",
     "formidable": "^3.5.4",
     "franc": "^6.2.0",
     "lodash": "^4.17.21",

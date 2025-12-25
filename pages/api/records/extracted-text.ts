@@ -15,6 +15,7 @@ const MIN_VALID_LETTER_COUNT = 40;
 const OCR_SCALE = 2;
 const OCR_PAGE_LIMIT = 50;
 const TESSDATA_URL = "https://tessdata.projectnaptha.com/4.0.0";
+const PDFJS_VERSION = "5.3.31";
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   en: "eng",
@@ -84,40 +85,12 @@ async function loadTesseract() {
 }
 
 async function importPdfJs() {
-  const tried: string[] = [];
-  const tryImport = async (p: string) => {
-    tried.push(p);
-    return import(p);
-  };
-
-  // Try the common pdfjs-dist entrypoints across versions
   try {
-    const m: any = await tryImport("pdfjs-dist/legacy/build/pdf.mjs");
+    const m: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     return m?.default || m;
-  } catch {}
-
-  try {
-    const m: any = await tryImport("pdfjs-dist/legacy/build/pdf.js");
-    return m?.default || m;
-  } catch {}
-
-  try {
-    const m: any = await tryImport("pdfjs-dist/build/pdf.mjs");
-    return m?.default || m;
-  } catch {}
-
-  try {
-    const m: any = await tryImport("pdfjs-dist/build/pdf.js");
-    return m?.default || m;
-  } catch {}
-
-  // last resort (browserish, can cause DOMMatrix errors)
-  try {
-    const m: any = await tryImport("pdfjs-dist");
-    return m?.default || m;
-  } catch {}
-
-  throw new Error(`Could not import pdfjs-dist from any known entrypoint: ${tried.join(", ")}`);
+  } catch (error) {
+    console.error("Failed to import pdfjs-dist:", error);
+  }
 }
 
 async function getFranc() {
@@ -125,15 +98,6 @@ async function getFranc() {
     francFnPromise = import("franc").then((mod) => (mod.franc || (mod as any).default) as any);
   }
   return francFnPromise;
-}
-
-function resolveFirst(req: NodeRequire, candidates: string[]) {
-  for (const c of candidates) {
-    try {
-      return req.resolve(c);
-    } catch {}
-  }
-  return null;
 }
 
 async function getNodeRequire() {
@@ -205,17 +169,39 @@ async function loadPdfGetDocument() {
     if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
   }
 
-  // ✅ Use the legacy ESM build you actually have
-  const imported: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  // ✅ Use the legacy ESM build (with a simple build fallback)
+  const imported: any = await importPdfJs();
   const pdfjs: any = imported?.default || imported;
 
   const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
-  // ✅ Point workerSrc to the real file on disk (Vercel-safe when traced)
-  const req = await getNodeRequire();
-  const workerFsPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerFsPath).href;
+  // ✅ Prefer local worker file; fall back to a minimal data URL to avoid https: errors in Node ESM
+  const workerSrc = await (async () => {
+    try {
+      const req = await getNodeRequire();
+      try {
+        const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+        if (workerPath) return pathToFileURL(workerPath).href;
+      } catch {
+        // ignore and try min version
+      }
+      try {
+        const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
+        if (workerPath) return pathToFileURL(workerPath).href;
+      } catch {
+        // ignore and fall through
+      }
+    } catch {
+      // ignore and fall through
+    }
+    if (process.env.PDFJS_WORKER_SRC) return process.env.PDFJS_WORKER_SRC;
+    const stub = `export default {};`;
+    const encoded = Buffer.from(stub, "utf8").toString("base64");
+    return `data:application/javascript;base64,${encoded}`;
+  })();
+
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
   return getDocument;
 }
@@ -349,9 +335,8 @@ async function performOcrOnPdf(pdf: any, language: string) {
   const tesseract = await loadTesseract();
   const req = await getNodeRequire();
 
-  const workerPath = req.resolve("tesseract.js/dist/worker.min.js");
-  const corePath = req.resolve("tesseract.js-core/tesseract-core-relaxedsimd.js");
-  // (the core JS will look for the .wasm next to itself — which we force-included)
+  // Use the Node worker implementation so we don't rely on browser-style globals in Node runtimes.
+  const workerPath = req.resolve("tesseract.js/src/worker-script/node/index.js");
 
   const pagesToProcess = Math.min(pdf.numPages, OCR_PAGE_LIMIT);
   let combined = "";
@@ -363,7 +348,6 @@ async function performOcrOnPdf(pdf: any, language: string) {
     const { data } = await tesseract.recognize(imageBuffer, language, {
       langPath: TESSDATA_URL,
       workerPath,
-      corePath,
     });
 
     const pageText = (data?.text || "").replace(/\u0000/g, "").trim();
