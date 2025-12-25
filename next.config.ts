@@ -5,17 +5,16 @@ const nextConfig: NextConfig = {
 
   experimental: {
     outputFileTracingIncludes: {
-      // key must match your API file path under /pages (no extension)
-      "pages/api/records/extracted-text": [
-        // pdf.js worker
+      // ✅ use the ROUTE path (not "pages/api/...")
+      "/api/records/extracted-text": [
         "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
 
-        // tesseract worker + core (WASM + JS)
+        // include tesseract worker + all core assets (wasm/js)
         "./node_modules/tesseract.js/dist/worker.min.js",
-        "./node_modules/tesseract.js-core/**/*",
+        "./node_modules/tesseract.js-core/**",
       ],
     },
-  } as any,
+  } as any, // TS types for your Next version don’t include this key yet
 };
 
 export default nextConfig;
