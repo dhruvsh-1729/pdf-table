@@ -15,7 +15,6 @@ const MIN_VALID_LETTER_COUNT = 40;
 const OCR_SCALE = 2;
 const OCR_PAGE_LIMIT = 50;
 const TESSDATA_URL = "https://tessdata.projectnaptha.com/4.0.0";
-const PDFJS_VERSION = "5.3.31";
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   en: "eng",
@@ -89,7 +88,7 @@ async function importPdfJs() {
     const m: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
     return m?.default || m;
   } catch (error) {
-    console.error("Failed to import pdfjs-dist:", error);
+    console.error("Failed to import pdfjs-dist (legacy and build):", error);
   }
 }
 
@@ -176,29 +175,39 @@ async function loadPdfGetDocument() {
   const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
-  // ✅ Prefer local worker file; fall back to a minimal data URL to avoid https: errors in Node ESM
+  // ✅ Prefer local worker file; avoid remote HTTPS (not supported by Node ESM import for workers)
   const workerSrc = await (async () => {
     try {
       const req = await getNodeRequire();
-      try {
-        const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-        if (workerPath) return pathToFileURL(workerPath).href;
-      } catch {
-        // ignore and try min version
-      }
-      try {
-        const workerPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
-        if (workerPath) return pathToFileURL(workerPath).href;
-      } catch {
-        // ignore and fall through
+      const candidates = [
+        "pdfjs-dist/legacy/build/pdf.worker.mjs",
+        "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+        "pdfjs-dist/build/pdf.worker.mjs",
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+      ];
+
+      for (const candidate of candidates) {
+        try {
+          const workerPath = req.resolve(candidate);
+          if (workerPath) return pathToFileURL(workerPath).href;
+        } catch {
+          // try next candidate
+        }
       }
     } catch {
-      // ignore and fall through
+      // ignore and fall through to env-based fallback
     }
-    if (process.env.PDFJS_WORKER_SRC) return process.env.PDFJS_WORKER_SRC;
-    const stub = `export default {};`;
-    const encoded = Buffer.from(stub, "utf8").toString("base64");
-    return `data:application/javascript;base64,${encoded}`;
+
+    if (process.env.PDFJS_WORKER_SRC) {
+      const allowed =
+        process.env.PDFJS_WORKER_SRC.startsWith("file:") || process.env.PDFJS_WORKER_SRC.startsWith("data:");
+      if (allowed) return process.env.PDFJS_WORKER_SRC;
+      throw new Error(
+        "PDFJS_WORKER_SRC must be a file: or data: URL in a Node environment (https workers are not supported).",
+      );
+    }
+
+    throw new Error("pdfjs-dist worker file could not be resolved; ensure pdfjs-dist is installed and bundled.");
   })();
 
   pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
