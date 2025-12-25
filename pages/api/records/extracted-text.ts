@@ -90,6 +90,15 @@ async function getFranc() {
   return francFnPromise;
 }
 
+function resolveFirst(req: NodeRequire, candidates: string[]) {
+  for (const c of candidates) {
+    try {
+      return req.resolve(c);
+    } catch {}
+  }
+  return null;
+}
+
 async function getNodeRequire() {
   if (!requirePromise) {
     requirePromise = import("module").then((m: any) => {
@@ -135,13 +144,31 @@ async function ensureGetBuiltinModule() {
 async function loadPdfGetDocument() {
   await ensureGetBuiltinModule();
 
-  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const getDocument = pdfjs.getDocument || pdfjs.default?.getDocument;
+  // Use the standard build path
+  const imported: any = await import("pdfjs-dist");
+  const pdfjs: any = imported?.default || imported;
+
+  const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
-  // ✅ Ensure worker is trace-included AND resolvable at runtime
   const req = await getNodeRequire();
-  const workerFsPath = req.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+
+  const workerFsPath = resolveFirst(req, [
+    // try standard build paths
+    "pdfjs-dist/build/pdf.worker.mjs",
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    "pdfjs-dist/build/pdf.worker.js",
+    "pdfjs-dist/build/pdf.worker.min.js",
+  ]);
+
+  if (!workerFsPath) {
+    // This means your installed pdfjs-dist truly doesn't ship a worker file.
+    // At that point the only fix is to change/pin pdfjs-dist version.
+    throw new Error(
+      "pdf.js worker file not found in pdfjs-dist package. Try updating/pinning pdfjs-dist and redeploy.",
+    );
+  }
+
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerFsPath).href;
 
   return getDocument;

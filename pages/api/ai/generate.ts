@@ -16,10 +16,9 @@ function trimContext(text: string, maxChars = 30000) {
   // return compact.slice(0, maxChars);
   return text;
 }
-
 function buildMessages(mode: AiMode, text: string, title?: string, name?: string, variant?: "primary" | "regen") {
   const baseInstruction =
-    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise.";
+    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise and accurate.";
 
   const label = title || name || "the article";
 
@@ -30,7 +29,7 @@ function buildMessages(mode: AiMode, text: string, title?: string, name?: string
       { role: "system" as const, content: baseInstruction },
       {
         role: "user" as const,
-        content: `${regenNote}Create a concise ~300-word paragraph summary of ${label}. Focus on the main arguments, findings, and scope. Avoid bullet points and avoid introductions like "Sure" or "Summary:".\n\nExtracted text:\n${text}`,
+        content: `${regenNote}Create a short accurate summary (~300 words) of all details mentioned in ${label}. Ensure no details are false, inaccurate, or hallucinated. After generating, review the summary against the PDF content to correct any mistakes, inaccuracies, or discrepancies. Use appropriate language for regular readers and research scholars - keep it sharp and concise without extra words. You may add relevant post-publication updates in brackets if applicable. Verify all information carefully before summarizing. Avoid bullet points and introductions like "Sure" or "Summary:".\n\nExtracted text:\n${text}`,
       },
     ];
   }
@@ -44,7 +43,7 @@ function buildMessages(mode: AiMode, text: string, title?: string, name?: string
       { role: "system" as const, content: baseInstruction },
       {
         role: "user" as const,
-        content: `${regenNote}Write a 110-140 word conclusion capturing key implications or takeaways from ${label}. Do not repeat the summary; emphasize outcomes and significance. Output only the conclusion paragraph.\n\nExtracted text:\n${text}`,
+        content: `${regenNote}Write a short, unique and distinctive conclusion (110-140 words) from ${label}. Focus on key implications, outcomes, and significance rather than repeating summary content. Ensure the conclusion is specific to this document's findings and contributions. Output only the conclusion paragraph.\n\nExtracted text:\n${text}`,
       },
     ];
   }
@@ -56,7 +55,7 @@ function buildMessages(mode: AiMode, text: string, title?: string, name?: string
     { role: "system" as const, content: baseInstruction },
     {
       role: "user" as const,
-      content: `${regenNote}Generate exactly 8 short, domain-specific tags for ${label} based on the extracted text. Each tag must be 2-3 words, Title Case (capitalize each word), and concise. Avoid generic words (article, pdf, document) and do not output lowercase lists. Return only a comma-separated list with no numbering or extra words.\n\nExtracted text:\n${text}`,
+      content: `${regenNote}Generate exactly 8 three-word tags that best capture the essence of ${label}. Each tag must be exactly 3 words, Title Case, and directly relevant to the PDF content only. Avoid generic words (article, pdf, document). For each tag, briefly explain which specific content/paragraph it relates to so the relevance is clear. Format as: "Tag Name - relates to [brief explanation]". Return only the tags with explanations.\n\nExtracted text:\n${text}`,
     },
   ];
 }
