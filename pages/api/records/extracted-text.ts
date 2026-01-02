@@ -363,6 +363,42 @@ function resolvePdfUrl(pdfUrl: string, req?: NextApiRequest) {
   return pdfUrl;
 }
 
+export async function extractTextFromBytes(pdfBytes: Uint8Array, language?: string | null) {
+  let pdf: any | null = null;
+  let finalText = "";
+  let usedOcr = false;
+  let languageHint = language || DEFAULT_LANG;
+
+  try {
+    pdf = await loadPdfDocument(pdfBytes);
+    let extractedText = "";
+    try {
+      extractedText = await extractTextFromPdf(pdf);
+    } catch (error) {
+      console.warn("Primary text extraction failed; falling back to OCR.", error);
+    }
+
+    languageHint = await detectLanguageHint(language, extractedText);
+    finalText = extractedText;
+
+    if (!hasMeaningfulText(extractedText)) {
+      finalText = await performOcrOnPdf(pdf, languageHint);
+      usedOcr = true;
+      languageHint = await detectLanguageHint(language, finalText);
+    }
+  } finally {
+    pdf?.cleanup?.();
+    pdf?.destroy?.();
+  }
+
+  const sanitized = (finalText || "").replace(/\u0000/g, "").trim();
+  if (!sanitized) {
+    throw new Error("Unable to extract text from this PDF.");
+  }
+
+  return { text: sanitized, languageHint, usedOcr };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ExtractedTextResponse>) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -408,38 +444,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const pdfBytes = new Uint8Array(await response.arrayBuffer());
-    let pdf: any | null = null;
-    let finalText = "";
-    let usedOcr = false;
-    let languageHint = record.language || DEFAULT_LANG;
-
-    try {
-      pdf = await loadPdfDocument(pdfBytes);
-      let extractedText = "";
-      try {
-        extractedText = await extractTextFromPdf(pdf);
-      } catch (error) {
-        console.warn("Primary text extraction failed; falling back to OCR.", error);
-      }
-
-      languageHint = await detectLanguageHint(record.language, extractedText);
-      finalText = extractedText;
-
-      if (!hasMeaningfulText(extractedText)) {
-        finalText = await performOcrOnPdf(pdf, languageHint);
-        usedOcr = true;
-        languageHint = await detectLanguageHint(record.language, finalText);
-      }
-    } finally {
-      pdf?.cleanup?.();
-      pdf?.destroy?.();
-    }
-
-    const sanitized = (finalText || "").replace(/\u0000/g, "").trim();
-
-    if (!sanitized) {
-      return res.status(500).json({ error: "Unable to extract text from this PDF." });
-    }
+    const { text: sanitized, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, record.language);
 
     const updatePayload: Record<string, any> = { extracted_text: sanitized };
     if (!record.language && languageHint) updatePayload.language = languageHint;
