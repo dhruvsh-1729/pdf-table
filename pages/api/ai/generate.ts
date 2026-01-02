@@ -55,7 +55,7 @@ function buildMessages(mode: AiMode, text: string, title?: string, name?: string
     { role: "system" as const, content: baseInstruction },
     {
       role: "user" as const,
-      content: `${regenNote}Generate exactly 8 three-word tags that best capture the essence of ${label}. Each tag must be exactly 3 words, Title Case, and directly relevant to the PDF content only. Avoid generic words (article, pdf, document). For each tag, briefly explain which specific content/paragraph it relates to so the relevance is clear. Format as: "Tag Name - relates to [brief explanation]". Return only the tags with explanations.\n\nExtracted text:\n${text}`,
+      content: `${regenNote}Generate exactly 5 tags that best capture the essence of ${label}. Each tag must be exactly 3 words, Title Case, and directly relevant to the PDF content only. Use only proper English letters (A-Z, a-z) and spaces - absolutely no special characters, symbols, asterisks, dashes, dots, or any punctuation marks in the tags. Avoid generic words (article, pdf, document). Return exactly 5 tags, one per line, with no additional text, explanations, or formatting.\n\nExtracted text:\n${text}`,
     },
   ];
 }
