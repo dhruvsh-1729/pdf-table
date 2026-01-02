@@ -1,12 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { runOcrForRecord } from "@/lib/ocrPipeline";
 
-const logger = {
-  info: (...args: any[]) => console.log("[api/records/ocr]", ...args),
-  error: (...args: any[]) => console.error("[api/records/ocr]", ...args),
-  warn: (...args: any[]) => console.warn("[api/records/ocr]", ...args),
-};
-
 function toBool(value: any) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.toLowerCase() === "true";
@@ -39,11 +33,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       recordId,
       deleteOldAsset: deleteOld,
       resetExtractedText: !keepExtractedText,
-      logger,
+      logger: console,
     });
     return res.status(200).json({ success: true, ...result });
   } catch (error: any) {
-    logger.error(error?.message || error);
+    console.error("[api/records/ocr]", error?.message || error);
     return res.status(500).json({ error: error?.message || "Failed to OCR PDF for record." });
   }
 }
