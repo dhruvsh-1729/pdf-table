@@ -41,6 +41,7 @@ export default function OcrTool() {
   const [deleteOld, setDeleteOld] = useState(false);
   const [keepExtractedText, setKeepExtractedText] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [removingWatermark, setRemovingWatermark] = useState(false);
   const [checkingPdf, setCheckingPdf] = useState(false);
   const [result, setResult] = useState<OcrResult | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -131,6 +132,35 @@ export default function OcrTool() {
       toast.error(message);
     } finally {
       setCheckingPdf(false);
+    }
+  };
+
+  const handleRemoveWatermark = async () => {
+    const idNum = validateRecordId();
+    if (idNum === null) return;
+
+    setRemovingWatermark(true);
+    setResult(null);
+    setLastError(null);
+
+    try {
+      const resp = await fetch("/api/records/watermark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: idNum }),
+      });
+
+      const data: OcrResult & { error?: string } = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || "Failed to remove watermark.");
+
+      setResult(data as OcrResult);
+      toast.success("Watermark removed and PDF updated.");
+    } catch (error: any) {
+      const message = error?.message || "Failed to remove watermark.";
+      setLastError(message);
+      toast.error(message);
+    } finally {
+      setRemovingWatermark(false);
     }
   };
 
@@ -237,8 +267,22 @@ export default function OcrTool() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button type="button" disabled={loading || checkingPdf} onClick={handleCheckPdf} className="w-full sm:w-auto">
+                <Button
+                  type="button"
+                  disabled={loading || checkingPdf || removingWatermark}
+                  onClick={handleCheckPdf}
+                  className="w-full sm:w-auto"
+                >
                   {checkingPdf ? "Checking PDF..." : "Check PDF for this record"}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={loading || checkingPdf || removingWatermark}
+                  onClick={handleRemoveWatermark}
+                  className="w-full sm:w-auto"
+                  variant="outline"
+                >
+                  {removingWatermark ? "Removing watermark..." : "Remove watermark"}
                 </Button>
                 <Button type="submit" disabled={loading || checkingPdf} className="w-full sm:w-auto">
                   {loading ? "Running OCR..." : "Run OCR"}
