@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createClient } from "@supabase/supabase-js";
+import { v2 as cloudinary } from "cloudinary";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -14,6 +15,19 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+const hasCloudinary =
+  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
+
+if (hasCloudinary) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+} else {
+  console.warn("Cloudinary env vars missing; will fall back to pdf_url only.");
+}
 
 async function runSql(statement) {
   const endpoints = [
@@ -95,11 +109,14 @@ async function extractTextFromPdf(data) {
 
   const loadingTask = getDocument({ data, disableWorker: true });
   const pdf = await loadingTask.promise;
+  await new Promise((resolve) => setTimeout(resolve, 4000)); // allow load/render to settle
   let fullText = "";
+  let glyphCount = 0;
 
   for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex++) {
     const page = await pdf.getPage(pageIndex);
     const textContent = await page.getTextContent();
+    glyphCount += textContent.items?.length || 0;
 
     const pageText = textContent.items
       .map((item) => {
@@ -116,10 +133,29 @@ async function extractTextFromPdf(data) {
     }
   }
 
-  return fullText.replace(/\u0000/g, "").trim();
+  return {
+    text: fullText.replace(/\u0000/g, "").trim(),
+    glyphCount,
+  };
 }
 
-function resolvePdfUrl(pdfUrl) {
+function buildCloudinaryRawUrl(publicIdWithExt) {
+  return cloudinary.url(publicIdWithExt, {
+    resource_type: "raw",
+    type: "upload",
+    sign_url: true,
+    secure: true,
+  });
+}
+
+function resolvePdfUrl(record) {
+  if (record?.pdf_public_id && hasCloudinary) {
+    return buildCloudinaryRawUrl(record.pdf_public_id);
+  }
+
+  const pdfUrl = record?.pdf_url;
+  if (!pdfUrl) return null;
+
   if (!pdfUrl.startsWith("http")) {
     const base =
       process.env.NEXT_PUBLIC_SITE_URL ||
@@ -145,7 +181,7 @@ async function fetchAllRecords() {
   while (true) {
     const { data, error } = await supabase
       .from("records")
-      .select("id, pdf_url, extracted_text")
+      .select("id, pdf_url, pdf_public_id, extracted_text")
       .range(from, from + pageSize - 1);
 
     if (error) throw error;
@@ -163,6 +199,7 @@ async function main() {
   const force = process.argv.includes("--force");
   const limitArg = process.argv.find((arg) => arg.startsWith("--limit="));
   const limit = limitArg ? Number(limitArg.split("=")[1]) : Infinity;
+  const verbose = process.argv.includes("--verbose");
 
   await ensureColumnExists();
 
@@ -178,23 +215,36 @@ async function main() {
       continue;
     }
 
-    if (!record.pdf_url) {
-      console.warn(`Skipping record ${record.id}: missing pdf_url`);
+    const pdfUrl = resolvePdfUrl(record);
+    if (!pdfUrl) {
+      console.warn(`Skipping record ${record.id}: missing pdf url/public id`);
       failed++;
       continue;
     }
 
     try {
-      const pdfUrl = resolvePdfUrl(record.pdf_url);
       const response = await fetch(pdfUrl);
       if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.status}`);
 
       const pdfBytes = new Uint8Array(await response.arrayBuffer());
-      const text = await extractTextFromPdf(pdfBytes);
+      const { text, glyphCount } = await extractTextFromPdf(pdfBytes);
 
-      await supabase.from("records").update({ extracted_text: text }).eq("id", record.id).throwOnError();
+      if (verbose) {
+        console.log("\n--- Extracted text for record", record.id, "---");
+        console.log(text ? text.slice(0, 2000) : "[no text]");
+        console.log("--- end excerpt ---");
+      }
+
+      const { error: updateError } = await supabase
+        .from("records")
+        .update({ extracted_text: text })
+        .eq("id", record.id);
+      if (updateError) throw updateError;
+
       processed++;
-      console.log(`✅ Stored extracted text for record ${record.id}`);
+      console.log(
+        `✅ Stored extracted text for record ${record.id} (chars=${text?.length || 0}, glyphs=${glyphCount})`,
+      );
     } catch (error) {
       failed++;
       console.error(`❌ Failed to process record ${record.id}:`, error.message || error);

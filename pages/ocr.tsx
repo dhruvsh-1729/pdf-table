@@ -5,11 +5,35 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 
+type CompressionEvent = {
+  type: "compression-start" | "compression-complete" | "cloudinary-upload";
+  attempt?: number;
+  level?: string;
+  bytes_before?: number;
+  bytes_after?: number;
+  from_compression?: boolean;
+  status?: string;
+  message?: string;
+  timestamp?: string;
+};
+
 type OcrResult = {
   recordId: number;
   pdf_url: string;
   pdf_public_id: string;
   source_url?: string;
+  extracted_text?: string;
+  text_extraction_error?: string;
+  compression_events?: CompressionEvent[];
+};
+
+const formatBytes = (bytes?: number) => {
+  if (!bytes && bytes !== 0) return "unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(2)} MB`;
 };
 
 export default function OcrTool() {
@@ -41,6 +65,28 @@ export default function OcrTool() {
       return null;
     }
     return idNum;
+  };
+
+  const notifyCompressionEvents = (events?: CompressionEvent[]) => {
+    if (!events?.length) return;
+
+    events.forEach((event) => {
+      if (event.type === "compression-start") {
+        const attemptLabel = event.attempt ? ` (attempt ${event.attempt})` : "";
+        const levelLabel = event.level ? ` [${event.level}]` : "";
+        toast.info(`Cloudinary size limit hit. Compressing${levelLabel}${attemptLabel} before retrying...`);
+      } else if (event.type === "compression-complete") {
+        const levelLabel = event.level ? ` (${event.level})` : "";
+        const attemptLabel = event.attempt ? `Attempt ${event.attempt}` : "Compression";
+        const sizeText =
+          event.bytes_before !== undefined && event.bytes_after !== undefined
+            ? `${formatBytes(event.bytes_before)} → ${formatBytes(event.bytes_after)}`
+            : "finished";
+        toast.success(`${attemptLabel}${levelLabel}: ${sizeText}. Retrying upload...`);
+      } else if (event.type === "cloudinary-upload" && event.status === "success" && event.from_compression) {
+        toast.success("Upload succeeded after compressing the PDF.");
+      }
+    });
   };
 
   const handleCheckPdf = async () => {
@@ -108,14 +154,24 @@ export default function OcrTool() {
         }),
       });
 
-      const data = await resp.json();
+      const data: OcrResult & { error?: string } = await resp.json();
       if (!resp.ok) {
-        throw new Error(data?.error || "Failed to OCR this record.");
+        const err: any = new Error(data?.error || "Failed to OCR this record.");
+        err.compression_events = (data as any)?.compression_events;
+        throw err;
       }
 
+      notifyCompressionEvents(data?.compression_events);
       setResult(data as OcrResult);
       toast.success("OCR complete and uploaded to Cloudinary.");
+      if ((data as OcrResult)?.extracted_text) {
+        toast.success("Text extracted and saved to this record.");
+      } else if ((data as OcrResult)?.text_extraction_error) {
+        toast.warning("OCR done, but text extraction failed — check logs.");
+      }
     } catch (error: any) {
+      const compressionEvents = error?.compression_events || error?.compressionEvents;
+      if (compressionEvents) notifyCompressionEvents(compressionEvents);
       const message = error?.message || "Failed to process OCR.";
       setLastError(message);
       toast.error(message);
@@ -199,6 +255,16 @@ export default function OcrTool() {
               {result && (
                 <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                   <div className="font-semibold text-emerald-900">Record {result.recordId}</div>
+                  {result.extracted_text && (
+                    <div className="text-emerald-700">
+                      Extracted text saved ({result.extracted_text.length.toLocaleString()} chars)
+                    </div>
+                  )}
+                  {!result.extracted_text && result.text_extraction_error && (
+                    <div className="text-amber-800">
+                      Text extraction failed: <span className="font-medium">{result.text_extraction_error}</span>
+                    </div>
+                  )}
                   {result.source_url && (
                     <div className="text-emerald-700">
                       Source:{" "}

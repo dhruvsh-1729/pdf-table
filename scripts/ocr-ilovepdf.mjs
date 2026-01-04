@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import dotenv from "dotenv";
-import { runOcrForRecord } from "../lib/ocrPipeline.js";
+import * as ocrPipeline from "../lib/ocrPipeline.js";
 
 dotenv.config();
 
@@ -12,6 +12,14 @@ function readRecordId() {
   if (!value) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+const runOcrForRecord =
+  ocrPipeline.runOcrForRecord || (ocrPipeline.default && ocrPipeline.default.runOcrForRecord);
+
+if (!runOcrForRecord) {
+  console.error("Could not load runOcrForRecord from lib/ocrPipeline.js");
+  process.exit(1);
 }
 
 const recordId = readRecordId();
@@ -41,6 +49,13 @@ runOcrForRecord({
     console.log(`- Source URL: ${result.source_url}`);
     console.log(`- Cloudinary ID: ${result.pdf_public_id}`);
     console.log(`- Viewer URL: ${result.pdf_url}`);
+    if (result.extracted_text) {
+      console.log(`- Extracted text stored (${result.extracted_text.length} chars)`);
+    } else if (result.text_extraction_error) {
+      console.log(`- Text extraction failed: ${result.text_extraction_error}`);
+    } else {
+      console.log("- Text extraction produced no content.");
+    }
   })
   .catch((error) => {
     console.error("Failed to OCR record:", error?.message || error);

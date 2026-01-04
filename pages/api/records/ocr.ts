@@ -38,6 +38,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ success: true, ...result });
   } catch (error: any) {
     console.error("[api/records/ocr]", error?.message || error);
-    return res.status(500).json({ error: error?.message || "Failed to OCR PDF for record." });
+    const payload: Record<string, any> = { error: error?.message || "Failed to OCR PDF for record." };
+    if (error?.compression_events || error?.compressionEvents) {
+      payload.compression_events = error.compression_events || error.compressionEvents;
+    }
+    return res.status(500).json(payload);
   }
 }
