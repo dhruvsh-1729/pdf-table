@@ -208,14 +208,15 @@ function Add() {
       const volume = commonVolume.trim();
       const number = commonNumber.trim();
       const timestamp = commonTimestamp.trim();
+      const statusFor = (val: string): FieldState<string>["status"] => (val ? "ready" : "idle");
       return {
         ...split,
         fields: {
           ...split.fields,
-          name: { value: name, status: name ? "ready" : "idle" },
-          volume: { value: volume, status: volume ? "ready" : "idle" },
-          number: { value: number, status: number ? "ready" : "idle" },
-          timestamp: { value: timestamp, status: timestamp ? "ready" : "idle" },
+          name: { value: name, status: statusFor(name) },
+          volume: { value: volume, status: statusFor(volume) },
+          number: { value: number, status: statusFor(number) },
+          timestamp: { value: timestamp, status: statusFor(timestamp) },
         },
       };
     },
