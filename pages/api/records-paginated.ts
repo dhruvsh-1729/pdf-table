@@ -88,6 +88,26 @@ interface FilterParams {
 
 const RECORD_COLUMNS =
   "id, name, timestamp, summary, pdf_public_id, pdf_url, volume, number, title_name, page_numbers, authors, language, email, creator_name, conclusion, extracted_text";
+const RECORD_SELECT = `
+  ${RECORD_COLUMNS},
+  record_tags:record_tags!left(
+    tag_id,
+    tags:tags(id, name)
+  ),
+  record_authors:record_authors!left(
+    author_id,
+    authors:authors(id, name)
+  )
+`;
+const VALID_SORT_COLUMNS = new Set(RECORD_COLUMNS.split(",").map((col) => col.trim()));
+const RELATION_SORT_COLUMNS = new Set(["tags", "authors", "authors_linked"]);
+
+function normalizeSortBy(sortBy?: string) {
+  if (!sortBy) return "id";
+  if (RELATION_SORT_COLUMNS.has(sortBy)) return "id";
+  const trimmed = sortBy.trim();
+  return VALID_SORT_COLUMNS.has(trimmed) ? trimmed : "id";
+}
 
 // Fetch distinct IDs from a table with pagination (1,000 rows per page)
 async function fetchDistinctIds<T extends string>(
@@ -117,58 +137,14 @@ async function fetchDistinctIds<T extends string>(
   return Array.from(ids);
 }
 
-async function fetchPaginatedRecords(params: FilterParams) {
-  const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
-
-  // Start building the query
-  let query = supabase.from("records").select(
-    `
-      ${RECORD_COLUMNS},
-      record_tags:record_tags(
-        tag_id,
-        tags:tags(id, name)
-      ),
-      record_authors:record_authors(
-        author_id,
-        authors:authors(id, name)
-      )
-    `,
-    { count: "exact" },
-  );
-
-  // -------------------------
-  // Email filtering
-  // -------------------------
-  if (email) {
-    const formattedEmail = `["${email.trim()}"]`;
-
-    const [summaryRecords, conclusionRecords, directRecords] = await Promise.all([
-      supabase.from("summaries").select("record_id").eq("email", formattedEmail),
-      supabase.from("conclusions").select("record_id").eq("email", formattedEmail),
-      supabase.from("records").select("id").eq("email", formattedEmail),
-    ]);
-
-    const uniqueRecordIds = new Set<string>();
-    summaryRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
-    conclusionRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
-    directRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.id)));
-
-    if (uniqueRecordIds.size === 0) return { data: [], count: 0, editHistory: {} };
-    query = query.in("id", Array.from(uniqueRecordIds));
-  }
-
-  // -------------------------
-  // Other column filters
-  // -------------------------
+function applyBaseFilters(query: any, filters: Record<string, any>) {
   Object.entries(filters).forEach(([key, value]) => {
     if (value === null || value === undefined || value === "") return;
+    if (key === "tags" || key === "authors") return;
 
     if (key === "id") {
       query = query.filter("id", "gte", value);
       query = query.filter("id", "lt", String(Number(value) + 1));
-    } else if (key === "tags" || key === "authors") {
-      // handled below
-      return;
     } else if (key === "summary" || key === "conclusion" || key === "language") {
       if (value === "__EMPTY__") {
         query = query.or(`${key}.is.null,${key}.eq.`);
@@ -184,102 +160,203 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   });
 
-  // -------------------------
-  // Global filter
-  // -------------------------
-  if (globalFilter) {
-    query = query.or(
-      `name.ilike.%${globalFilter}%,summary.ilike.%${globalFilter}%,conclusion.ilike.%${globalFilter}%,title_name.ilike.%${globalFilter}%`,
-    );
-  }
+  return query;
+}
 
-  // -------------------------
-  // Tags filtering (server side)
-  // -------------------------
-  if (filters.tags) {
-    if (filters.tags === "__EMPTY__" || filters.tags === "__NONEMPTY__") {
-      const idsWithTags = new Set(await fetchDistinctIds("record_tags", "record_id"));
+function applyGlobalFilter(query: any, globalFilter?: string) {
+  if (!globalFilter) return query;
+  return query.or(
+    `name.ilike.%${globalFilter}%,summary.ilike.%${globalFilter}%,conclusion.ilike.%${globalFilter}%,title_name.ilike.%${globalFilter}%`,
+  );
+}
 
-      if (filters.tags === "__EMPTY__") {
-        // records NOT present in idsWithTags
-        query = query.not("id", "in", `(${Array.from(idsWithTags).join(",") || "NULL"})`);
-      } else {
-        // only records present in idsWithTags
-        const arr = Array.from(idsWithTags);
-        if (arr.length === 0) return { data: [], count: 0, editHistory: {} };
-        query = query.in("id", arr);
-      }
-    } else {
-      // name search: ilike needs wildcards
-      const { data: tagRows, error: tagErr } = await supabase
-        .from("tags")
-        .select("id, name")
-        .ilike("name", `%${filters.tags}%`);
-      if (tagErr) throw tagErr;
+async function fetchOrderedRecordIds({
+  filters,
+  globalFilter,
+  emailRecordIds,
+  sortBy,
+  sortOrder,
+  pageSize = 1000,
+}: {
+  filters: Record<string, any>;
+  globalFilter?: string;
+  emailRecordIds?: string[] | null;
+  sortBy: string;
+  sortOrder: "asc" | "desc";
+  pageSize?: number;
+}): Promise<string[]> {
+  const ids: string[] = [];
+  let offset = 0;
 
-      const tagIds = (tagRows ?? []).map((t) => t.id);
-      if (tagIds.length === 0) return { data: [], count: 0, editHistory: {} };
+  while (true) {
+    let q = supabase.from("records").select("id");
+    q = applyBaseFilters(q, filters);
+    q = applyGlobalFilter(q, globalFilter);
 
-      // collect record_ids for all matching tag_ids (paginated)
-      const recIds = await fetchDistinctIds("record_tags", "record_id", (q) => q.in("tag_id", tagIds));
-
-      if (recIds.length === 0) return { data: [], count: 0, editHistory: {} };
-      query = query.in("id", recIds);
+    if (emailRecordIds && emailRecordIds.length > 0) {
+      q = q.in("id", emailRecordIds);
     }
-  }
 
-  // -------------------------
-  // Authors filtering (server side)
-  // -------------------------
-  if (filters.authors) {
-    if (filters.authors === "__EMPTY__" || filters.authors === "__NONEMPTY__") {
-      const idsWithAuthors = new Set(await fetchDistinctIds("record_authors", "record_id"));
-
-      if (filters.authors === "__EMPTY__") {
-        query = query.not("id", "in", `(${Array.from(idsWithAuthors).join(",") || "NULL"})`);
-      } else {
-        const arr = Array.from(idsWithAuthors);
-        if (arr.length === 0) return { data: [], count: 0, editHistory: {} };
-        query = query.in("id", arr);
-      }
-    } else {
-      const { data: aRows, error: aErr } = await supabase
-        .from("authors")
-        .select("id, name")
-        .ilike("name", `%${filters.authors}%`);
-      if (aErr) throw aErr;
-
-      const authorIds = (aRows ?? []).map((a) => a.id);
-      if (authorIds.length === 0) return { data: [], count: 0, editHistory: {} };
-
-      const recIds = await fetchDistinctIds("record_authors", "record_id", (q) => q.in("author_id", authorIds));
-
-      if (recIds.length === 0) return { data: [], count: 0, editHistory: {} };
-      query = query.in("id", recIds);
+    q = q.order(sortBy, { ascending: sortOrder === "asc" });
+    if (sortBy !== "id") {
+      q = q.order("id", { ascending: sortOrder === "asc" });
     }
+
+    const { data, error } = await q.range(offset, offset + pageSize - 1);
+    if (error) throw error;
+
+    if (!data || data.length === 0) break;
+    ids.push(...data.map((row: any) => String(row.id)));
+
+    if (data.length < pageSize) break;
+    offset += pageSize;
   }
 
+  return ids;
+}
+
+async function fetchPaginatedRecords(params: FilterParams) {
+  const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
+  const normalizedSortBy = normalizeSortBy(sortBy);
+  const hasRelationFilters = Boolean(filters.tags) || Boolean(filters.authors);
+  let records: any[] = [];
+  let totalCount = 0;
+
   // -------------------------
-  // Sorting
+  // Email filtering
   // -------------------------
-  if (sortBy === "tags" || sortBy === "authors" || sortBy === "authors_linked") {
-    query = query.order("id", { ascending: sortOrder === "asc" });
+  let emailRecordIds: string[] | null = null;
+  if (email) {
+    const formattedEmail = `["${email.trim()}"]`;
+
+    const [summaryRecords, conclusionRecords, directRecords] = await Promise.all([
+      supabase.from("summaries").select("record_id").eq("email", formattedEmail),
+      supabase.from("conclusions").select("record_id").eq("email", formattedEmail),
+      supabase.from("records").select("id").eq("email", formattedEmail),
+    ]);
+
+    const uniqueRecordIds = new Set<string>();
+    summaryRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
+    conclusionRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.record_id)));
+    directRecords.data?.forEach((r) => uniqueRecordIds.add(String(r.id)));
+
+    if (uniqueRecordIds.size === 0) return { data: [], count: 0, editHistory: {} };
+    emailRecordIds = Array.from(uniqueRecordIds);
+  }
+
+  if (hasRelationFilters) {
+    const baseIds = await fetchOrderedRecordIds({
+      filters,
+      globalFilter,
+      emailRecordIds,
+      sortBy: normalizedSortBy,
+      sortOrder,
+    });
+
+    if (baseIds.length === 0) return { data: [], count: 0, editHistory: {} };
+
+    let filteredIds = baseIds;
+
+    if (filters.tags) {
+      if (filters.tags === "__EMPTY__" || filters.tags === "__NONEMPTY__") {
+        const idsWithTags = new Set(await fetchDistinctIds("record_tags", "record_id"));
+        if (filters.tags === "__EMPTY__") {
+          if (idsWithTags.size > 0) {
+            filteredIds = filteredIds.filter((id) => !idsWithTags.has(id));
+          }
+        } else {
+          if (idsWithTags.size === 0) return { data: [], count: 0, editHistory: {} };
+          filteredIds = filteredIds.filter((id) => idsWithTags.has(id));
+        }
+      } else {
+        const { data: tagRows, error: tagErr } = await supabase
+          .from("tags")
+          .select("id, name")
+          .ilike("name", `%${filters.tags}%`);
+        if (tagErr) throw tagErr;
+
+        const tagIds = (tagRows ?? []).map((t) => t.id);
+        if (tagIds.length === 0) return { data: [], count: 0, editHistory: {} };
+
+        const recIds = await fetchDistinctIds("record_tags", "record_id", (q) => q.in("tag_id", tagIds));
+        if (recIds.length === 0) return { data: [], count: 0, editHistory: {} };
+
+        const tagRecordSet = new Set(recIds);
+        filteredIds = filteredIds.filter((id) => tagRecordSet.has(id));
+      }
+    }
+
+    if (filters.authors) {
+      if (filters.authors === "__EMPTY__" || filters.authors === "__NONEMPTY__") {
+        const idsWithAuthors = new Set(await fetchDistinctIds("record_authors", "record_id"));
+        if (filters.authors === "__EMPTY__") {
+          if (idsWithAuthors.size > 0) {
+            filteredIds = filteredIds.filter((id) => !idsWithAuthors.has(id));
+          }
+        } else {
+          if (idsWithAuthors.size === 0) return { data: [], count: 0, editHistory: {} };
+          filteredIds = filteredIds.filter((id) => idsWithAuthors.has(id));
+        }
+      } else {
+        const { data: aRows, error: aErr } = await supabase
+          .from("authors")
+          .select("id, name")
+          .ilike("name", `%${filters.authors}%`);
+        if (aErr) throw aErr;
+
+        const authorIds = (aRows ?? []).map((a) => a.id);
+        if (authorIds.length === 0) return { data: [], count: 0, editHistory: {} };
+
+        const recIds = await fetchDistinctIds("record_authors", "record_id", (q) => q.in("author_id", authorIds));
+        if (recIds.length === 0) return { data: [], count: 0, editHistory: {} };
+
+        const authorRecordSet = new Set(recIds);
+        filteredIds = filteredIds.filter((id) => authorRecordSet.has(id));
+      }
+    }
+
+    totalCount = filteredIds.length;
+    if (totalCount === 0) return { data: [], count: 0, editHistory: {} };
+
+    const from = page * pageSize;
+    const pageIds = filteredIds.slice(from, from + pageSize);
+    if (pageIds.length === 0) {
+      return { data: [], count: totalCount, editHistory: {} };
+    }
+
+    let pageQuery = supabase.from("records").select(RECORD_SELECT);
+    pageQuery = pageQuery.in("id", pageIds);
+    pageQuery = pageQuery.order(normalizedSortBy, { ascending: sortOrder === "asc" });
+    if (normalizedSortBy !== "id") {
+      pageQuery = pageQuery.order("id", { ascending: sortOrder === "asc" });
+    }
+
+    const { data, error } = await pageQuery;
+    if (error) throw error;
+    records = data || [];
   } else {
-    query = query.order(sortBy, { ascending: sortOrder === "asc" });
+    let query = supabase.from("records").select(RECORD_SELECT, { count: "exact" });
+    if (emailRecordIds) {
+      query = query.in("id", emailRecordIds);
+    }
+
+    query = applyBaseFilters(query, filters);
+    query = applyGlobalFilter(query, globalFilter);
+
+    query = query.order(normalizedSortBy, { ascending: sortOrder === "asc" });
+    if (normalizedSortBy !== "id") {
+      query = query.order("id", { ascending: sortOrder === "asc" });
+    }
+
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+    query = query.range(from, to);
+
+    const { data, count, error } = await query;
+    if (error) throw error;
+    records = data || [];
+    totalCount = count || 0;
   }
-
-  // -------------------------
-  // Pagination
-  // -------------------------
-  const from = page * pageSize;
-  const to = from + pageSize - 1;
-  query = query.range(from, to);
-
-  // -------------------------
-  // Execute query
-  // -------------------------
-  const { data: records, count, error } = await query;
-  if (error) throw error;
 
   // -------------------------
   // Edit history aggregation
@@ -385,7 +462,7 @@ async function fetchPaginatedRecords(params: FilterParams) {
 
   return {
     data: formattedRecords,
-    count: count || 0,
+    count: totalCount,
     editHistory,
   };
 }
