@@ -82,13 +82,42 @@ async function loadTesseract() {
   return tesseractPromise;
 }
 
+const PDFJS_CANDIDATES = [
+  "pdfjs-dist/legacy/build/pdf.mjs",
+  "pdfjs-dist/legacy/build/pdf.js",
+  "pdfjs-dist/legacy/build/pdf",
+  "pdfjs-dist/build/pdf.mjs",
+  "pdfjs-dist/build/pdf.js",
+  "pdfjs-dist/build/pdf",
+];
+
 async function importPdfJs() {
-  try {
-    const m: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    return m?.default || m;
-  } catch (error) {
-    console.error("Failed to import pdfjs-dist (legacy and build):", error);
+  for (const candidate of PDFJS_CANDIDATES) {
+    try {
+      const m: any = await import(candidate);
+      const pdfjs = m?.default || m;
+      if (pdfjs?.getDocument || pdfjs?.default?.getDocument) return pdfjs;
+    } catch {
+      // try next candidate
+    }
   }
+
+  try {
+    const req = await getNodeRequire();
+    for (const candidate of PDFJS_CANDIDATES) {
+      try {
+        const m: any = req(candidate);
+        const pdfjs = m?.default || m;
+        if (pdfjs?.getDocument || pdfjs?.default?.getDocument) return pdfjs;
+      } catch {
+        // try next candidate
+      }
+    }
+  } catch (error) {
+    console.error("Failed to load pdfjs-dist via require fallback:", error);
+  }
+
+  return null;
 }
 
 async function getFranc() {
@@ -167,11 +196,9 @@ async function loadPdfGetDocument() {
     if (!globalAny.ImageData && canvas.ImageData) globalAny.ImageData = canvas.ImageData;
   }
 
-  // ✅ Use the legacy ESM build (with a simple build fallback)
-  const imported: any = await importPdfJs();
-  const pdfjs: any = imported?.default || imported;
-
-  const getDocument = pdfjs.getDocument || pdfjs?.default?.getDocument;
+  // ✅ Load pdfjs with multiple fallbacks.
+  const pdfjs: any = await importPdfJs();
+  const getDocument = pdfjs?.getDocument || pdfjs?.default?.getDocument;
   if (!getDocument) throw new Error("PDF parser is not available in the current environment.");
 
   // Running with disableWorker=true, so we don't set workerSrc in Node.
@@ -363,11 +390,17 @@ function resolvePdfUrl(pdfUrl: string, req?: NextApiRequest) {
   return pdfUrl;
 }
 
-export async function extractTextFromBytes(pdfBytes: Uint8Array, language?: string | null) {
+export async function extractTextFromBytes(
+  pdfBytes: Uint8Array,
+  language?: string | null,
+  opts?: { allowOcr?: boolean; allowEmpty?: boolean },
+) {
   let pdf: any | null = null;
   let finalText = "";
   let usedOcr = false;
   let languageHint = language || DEFAULT_LANG;
+  const allowOcr = opts?.allowOcr !== false;
+  const allowEmpty = opts?.allowEmpty === true;
 
   try {
     pdf = await loadPdfDocument(pdfBytes);
@@ -381,7 +414,7 @@ export async function extractTextFromBytes(pdfBytes: Uint8Array, language?: stri
     languageHint = await detectLanguageHint(language, extractedText);
     finalText = extractedText;
 
-    if (!hasMeaningfulText(extractedText)) {
+    if (!hasMeaningfulText(extractedText) && allowOcr) {
       finalText = await performOcrOnPdf(pdf, languageHint);
       usedOcr = true;
       languageHint = await detectLanguageHint(language, finalText);
@@ -393,7 +426,10 @@ export async function extractTextFromBytes(pdfBytes: Uint8Array, language?: stri
 
   const sanitized = (finalText || "").replace(/\u0000/g, "").trim();
   if (!sanitized) {
-    throw new Error("Unable to extract text from this PDF.");
+    if (allowEmpty) {
+      return { text: "", languageHint, usedOcr };
+    }
+    throw new Error(allowOcr ? "Unable to extract text from this PDF." : "No extractable text found (OCR disabled).");
   }
 
   return { text: sanitized, languageHint, usedOcr };

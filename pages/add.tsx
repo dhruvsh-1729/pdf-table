@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import dynamic from "next/dynamic";
 import { PDFDocument, degrees } from "pdf-lib";
 import JSZip from "jszip";
+import AsyncCreatableSelect from "react-select/async-creatable";
 import {
   ChevronLeft,
   ChevronRight,
@@ -36,7 +37,8 @@ type FieldKey =
   | "page_numbers"
   | "summary"
   | "conclusion"
-  | "tags";
+  | "tags"
+  | "authors";
 
 type FieldState<T> = {
   value: T;
@@ -73,6 +75,7 @@ const buildInitialFields = (pageRange: string): Record<FieldKey, FieldState<stri
   summary: { value: "", status: "idle" },
   conclusion: { value: "", status: "idle" },
   tags: { value: [], status: "idle" },
+  authors: { value: [], status: "idle" },
 });
 
 function Add() {
@@ -97,6 +100,10 @@ function Add() {
   const splitRecordsRef = useRef<SplitRecord[]>([]);
   const [savingAll, setSavingAll] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number } | null>(null);
+  const [commonName, setCommonName] = useState("");
+  const [commonVolume, setCommonVolume] = useState("");
+  const [commonNumber, setCommonNumber] = useState("");
+  const [commonTimestamp, setCommonTimestamp] = useState("");
   const DocumentComp = reactPdf?.Document;
   const PageComp = reactPdf?.Page;
 
@@ -147,6 +154,18 @@ function Add() {
     }
   }, []);
 
+  const loadMagazineOptions = useCallback(async (inputValue: string) => {
+    try {
+      const response = await fetch(`/api/magazine-names?q=${encodeURIComponent(inputValue || "")}`);
+      if (!response.ok) throw new Error("Failed to fetch magazine names");
+      const data = await response.json();
+      return (data || []).map((name: string) => ({ label: name, value: name }));
+    } catch (error) {
+      console.error("Error loading magazine names:", error);
+      return [];
+    }
+  }, []);
+
   const sections = useMemo(() => {
     if (!pageOrder.length) return [] as number[][];
     if (autoSplitEnabled && autoSplitInterval > 0) {
@@ -183,6 +202,26 @@ function Add() {
     return meta;
   }, [sections]);
 
+  const applyCommonFields = useCallback(
+    (split: SplitRecord) => {
+      const name = commonName.trim();
+      const volume = commonVolume.trim();
+      const number = commonNumber.trim();
+      const timestamp = commonTimestamp.trim();
+      return {
+        ...split,
+        fields: {
+          ...split.fields,
+          name: { value: name, status: name ? "ready" : "idle" },
+          volume: { value: volume, status: volume ? "ready" : "idle" },
+          number: { value: number, status: number ? "ready" : "idle" },
+          timestamp: { value: timestamp, status: timestamp ? "ready" : "idle" },
+        },
+      };
+    },
+    [commonName, commonVolume, commonNumber, commonTimestamp],
+  );
+
   const resetSkips = useCallback(() => setSkippedSections(new Set()), []);
 
   const resetSplits = useCallback(() => {
@@ -192,6 +231,11 @@ function Add() {
     });
     setSavingAll(false);
   }, []);
+
+  useEffect(() => {
+    if (!splitRecords.length) return;
+    setSplitRecords((prev) => prev.map((split) => applyCommonFields(split)));
+  }, [applyCommonFields, splitRecords.length]);
 
   const onDocumentLoadSuccess = useCallback(
     ({ numPages: nextNumPages }: { numPages: number }) => {
@@ -321,7 +365,12 @@ function Add() {
           throw new Error(payload.error || "AI generation failed.");
         }
 
-        const value = field === "tags" ? (payload.tags as string[]) : (payload.value as string);
+        const value =
+          field === "tags"
+            ? (payload.tags as string[])
+            : field === "authors"
+              ? (payload.authors as string[])
+              : (payload.value as string);
 
         setSplitRecords((prev) =>
           prev.map((s) =>
@@ -331,7 +380,7 @@ function Add() {
                   fields: {
                     ...s.fields,
                     [field]: {
-                      value: field === "tags" ? value || [] : value || "",
+                      value: field === "tags" || field === "authors" ? value || [] : value || "",
                       status: "ready",
                     },
                   },
@@ -356,17 +405,7 @@ function Add() {
 
   const runInitialAi = useCallback(
     async (splitId: string, text: string, label?: string) => {
-      const order: FieldKey[] = [
-        "name",
-        "volume",
-        "number",
-        "timestamp",
-        "title_name",
-        "page_numbers",
-        "summary",
-        "conclusion",
-        "tags",
-      ];
+      const order: FieldKey[] = ["title_name", "summary", "conclusion", "authors", "tags"];
       for (const field of order) {
         await runFieldGeneration(splitId, field, text, "primary");
       }
@@ -391,11 +430,13 @@ function Add() {
       try {
         const formData = new FormData();
         formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
+        formData.append("allowOcr", "false");
 
         const response = await fetch("/api/extract-text-file", { method: "POST", body: formData });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "Failed to extract text.");
 
+        const extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
         setSplitRecords((prev) =>
           prev.map((s) =>
             s.id === split.id
@@ -403,7 +444,7 @@ function Add() {
                   ...s,
                   extraction: {
                     status: "done",
-                    text: payload.text,
+                    text: extractedText,
                     error: undefined,
                     language: payload.language || null,
                   },
@@ -412,7 +453,12 @@ function Add() {
           ),
         );
 
-        await runInitialAi(split.id, payload.text, split.fileName);
+        if (!extractedText) {
+          toast.warning("No extractable text found (OCR is disabled for uploads).");
+          return;
+        }
+
+        await runInitialAi(split.id, extractedText, split.fileName);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Text extraction failed.";
         setSplitRecords((prev) =>
@@ -488,7 +534,7 @@ function Add() {
 
         setSplitRecords((prev) => {
           prev.forEach((split) => split.objectUrl && URL.revokeObjectURL(split.objectUrl));
-          return next;
+          return next.map((split) => applyCommonFields(split));
         });
 
         toast.success(`Created ${next.length} split${next.length === 1 ? "" : "s"}. Starting extraction...`);
@@ -517,7 +563,7 @@ function Add() {
         setGeneratingSplits(false);
       }
     },
-    [file, sections, skippedSections, rotations, runExtraction],
+    [file, sections, skippedSections, rotations, runExtraction, applyCommonFields],
   );
 
   const setFieldValue = (splitId: string, field: FieldKey, value: string | string[]) => {
@@ -531,9 +577,9 @@ function Add() {
       const split = splitRecordsRef.current.find((s) => s.id === splitId);
       if (!split) return;
       const fields = split.fields;
-      const name = (fields.name.value as string)?.trim();
+      const name = commonName.trim();
       if (!name) {
-        toast.error("Name is required before saving.");
+        toast.error("Magazine name is required before saving.");
         return;
       }
       if (!split.blob) {
@@ -547,13 +593,17 @@ function Add() {
         const formData = new FormData();
         const jsonPayload = {
           name,
-          volume: (fields.volume.value as string) || null,
-          number: (fields.number.value as string) || null,
-          timestamp: (fields.timestamp.value as string) || null,
+          volume: commonVolume.trim() || null,
+          number: commonNumber.trim() || null,
+          timestamp: commonTimestamp.trim() || null,
           title_name: (fields.title_name.value as string) || null,
           page_numbers: (fields.page_numbers.value as string) || null,
           summary: (fields.summary.value as string) || null,
           conclusion: (fields.conclusion.value as string) || null,
+          authors:
+            Array.isArray(fields.authors.value) && fields.authors.value.length
+              ? (fields.authors.value as string[]).join(", ")
+              : null,
           language: split.extraction.language || null,
           email: user?.email || null,
           creator_name: user?.name || null,
@@ -608,6 +658,48 @@ function Add() {
           }
         }
 
+        const authorsList = Array.isArray(fields.authors.value)
+          ? (fields.authors.value as string[])
+              .map((a) => a.trim())
+              .filter(Boolean)
+              .filter((a, idx, arr) => arr.findIndex((b) => b.toLowerCase() === a.toLowerCase()) === idx)
+          : [];
+
+        if (recordId && authorsList.length) {
+          const resolvedAuthorIds: number[] = [];
+          for (const author of authorsList) {
+            const createResp = await fetch("/api/authors", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: author }),
+            });
+
+            if (createResp.status === 409) {
+              const lookup = await fetch(`/api/authors?q=${encodeURIComponent(author)}`);
+              const lookupData = await lookup.json();
+              const match = Array.isArray(lookupData)
+                ? lookupData.find((a: any) => (a.name || "").toLowerCase() === author.toLowerCase())
+                : null;
+              if (match?.id) resolvedAuthorIds.push(match.id);
+            } else if (createResp.ok) {
+              const authorPayload = await createResp.json();
+              if (authorPayload?.id) resolvedAuthorIds.push(authorPayload.id);
+            }
+          }
+
+          if (resolvedAuthorIds.length) {
+            const authorResp = await fetch("/api/record-authors", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ recordId, authorIds: resolvedAuthorIds }),
+            });
+            if (!authorResp.ok) {
+              const authorPayload = await authorResp.json();
+              throw new Error(authorPayload?.error || "Failed to attach authors to record.");
+            }
+          }
+        }
+
         setSplitRecords((prev) =>
           prev.map((s) => (s.id === split.id ? { ...s, saving: "saved", recordId: recordId || undefined } : s)),
         );
@@ -620,7 +712,7 @@ function Add() {
         toast.error(message);
       }
     },
-    [user],
+    [user, commonName, commonVolume, commonNumber, commonTimestamp],
   );
 
   const saveAllRecords = useCallback(async () => {
@@ -942,6 +1034,69 @@ function Add() {
             </div>
           </div>
 
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">Common fields</h3>
+                <p className="text-xs text-zinc-500">Applied automatically to every split record.</p>
+              </div>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-4">
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-xs font-semibold text-zinc-700">Magazine name</label>
+                <AsyncCreatableSelect
+                  isClearable
+                  cacheOptions
+                  defaultOptions
+                  loadOptions={loadMagazineOptions}
+                  value={commonName ? { label: commonName, value: commonName } : null}
+                  onChange={(option) => setCommonName(option ? option.value : "")}
+                  onCreateOption={(inputValue) => setCommonName(inputValue)}
+                  placeholder="Select or enter magazine name"
+                  classNamePrefix="react-select"
+                  styles={{
+                    control: (base) => ({
+                      ...base,
+                      minHeight: "36px",
+                      borderColor: "#e4e4e7",
+                      boxShadow: "none",
+                      fontSize: "14px",
+                      "&:hover": { borderColor: "#a1a1aa" },
+                    }),
+                    menu: (base) => ({ ...base, zIndex: 40 }),
+                  }}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-zinc-700">Volume</label>
+                <input
+                  value={commonVolume}
+                  onChange={(e) => setCommonVolume(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
+                  placeholder="e.g., 12"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-zinc-700">Number</label>
+                <input
+                  value={commonNumber}
+                  onChange={(e) => setCommonNumber(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
+                  placeholder="e.g., 4"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-zinc-700">Timestamp</label>
+                <input
+                  value={commonTimestamp}
+                  onChange={(e) => setCommonTimestamp(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
+                  placeholder="e.g., 1992-04-15"
+                />
+              </div>
+            </div>
+          </div>
+
           {splitRecords.length === 0 ? (
             <div className="flex items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white p-10 text-sm text-zinc-600">
               Generate splits to start AI extraction and record creation.
@@ -950,6 +1105,9 @@ function Add() {
             <div className="space-y-6">
               {splitRecords.map((split) => {
                 const tagsValue = Array.isArray(split.fields.tags.value) ? (split.fields.tags.value as string[]) : [];
+                const authorsValue = Array.isArray(split.fields.authors.value)
+                  ? (split.fields.authors.value as string[])
+                  : [];
                 return (
                   <div
                     key={split.id}
@@ -1029,24 +1187,6 @@ function Add() {
 
                     <div className="grid gap-4 p-4 lg:grid-cols-3">
                       <div className="space-y-3">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          {(["name", "volume", "number", "timestamp"] as FieldKey[]).map((field) => (
-                            <div key={field} className="space-y-1">
-                              <div className="flex items-center justify-between text-xs font-semibold text-zinc-700">
-                                <span className="capitalize">{field.replace("_", " ")}</span>
-                                {split.fields[field].status === "loading" && (
-                                  <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
-                                )}
-                              </div>
-                              <input
-                                value={split.fields[field].value as string}
-                                onChange={(e) => setFieldValue(split.id, field, e.target.value)}
-                                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
-                                placeholder={`Enter ${field.replace("_", " ")}`}
-                              />
-                            </div>
-                          ))}
-                        </div>
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-xs font-semibold text-zinc-700">
                             <span>Title</span>
@@ -1067,9 +1207,19 @@ function Add() {
                         </div>
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-xs font-semibold text-zinc-700">
-                            <span>Page number range</span>
+                            <span>Page number range (auto)</span>
+                          </div>
+                          <input
+                            value={split.fields.page_numbers.value as string}
+                            readOnly
+                            className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 shadow-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs font-semibold text-zinc-700">
+                            <span>Authors (comma separated)</span>
                             <button
-                              onClick={() => runFieldGeneration(split.id, "page_numbers")}
+                              onClick={() => runFieldGeneration(split.id, "authors")}
                               className="inline-flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300"
                             >
                               <Repeat2 className="h-3 w-3" />
@@ -1077,10 +1227,19 @@ function Add() {
                             </button>
                           </div>
                           <input
-                            value={split.fields.page_numbers.value as string}
-                            onChange={(e) => setFieldValue(split.id, "page_numbers", e.target.value)}
+                            value={authorsValue.join(", ")}
+                            onChange={(e) =>
+                              setFieldValue(
+                                split.id,
+                                "authors",
+                                e.target.value
+                                  .split(",")
+                                  .map((t) => t.trim())
+                                  .filter(Boolean),
+                              )
+                            }
                             className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none"
-                            placeholder="e.g., 12-18"
+                            placeholder="Author 1, Author 2"
                           />
                         </div>
                         <div className="space-y-1">
@@ -1166,11 +1325,9 @@ function Add() {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => {
-                            runFieldGeneration(split.id, "name", undefined, "regen");
-                            runFieldGeneration(split.id, "volume", undefined, "regen");
-                            runFieldGeneration(split.id, "number", undefined, "regen");
-                            runFieldGeneration(split.id, "timestamp", undefined, "regen");
                             runFieldGeneration(split.id, "title_name", undefined, "regen");
+                            runFieldGeneration(split.id, "authors", undefined, "regen");
+                            runFieldGeneration(split.id, "tags", undefined, "regen");
                           }}
                           className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50"
                         >

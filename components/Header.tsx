@@ -31,7 +31,7 @@ const Header = memo<HeaderProps>(
       { label: "Dashboard", path: "/dashboard", colors: "bg-blue-200" },
       { label: "Authors", path: "/authors", colors: "bg-green-200" },
       { label: "Tags", path: "/tags", colors: "bg-purple-200" },
-      { label: "Bulk Add", path: "/bulkadd", colors: "bg-indigo-200" },
+      { label: "Bulk Add", path: "/add", colors: "bg-indigo-200" },
     ];
 
     return (

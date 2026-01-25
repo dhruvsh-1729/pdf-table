@@ -15,7 +15,8 @@ type FieldKey =
   | "page_numbers"
   | "summary"
   | "conclusion"
-  | "tags";
+  | "tags"
+  | "authors";
 
 type Variant = "primary" | "regen";
 
@@ -114,6 +115,17 @@ function buildMessages(field: FieldKey, text: string, label?: string, variant: V
     ];
   }
 
+  if (field === "authors") {
+    const regenNote = variant === "regen" ? "Return a fresh list. " : "";
+    return [
+      { role: "system" as const, content: baseInstruction },
+      {
+        role: "user" as const,
+        content: `${regenNote}Extract the author(s) ${subject} from the text. Return only author names, one per line. Use the exact name spellings from the text. If no author is present, return "Unknown".\n\nExtracted text:\n${text}`,
+      },
+    ];
+  }
+
   const regenNote = variant === "regen" ? "Suggest an alternate set without repeating prior wording. " : "";
   return [
     { role: "system" as const, content: baseInstruction },
@@ -151,6 +163,29 @@ function normalizeTags(rawText: string) {
   return tags;
 }
 
+function normalizeAuthors(rawText: string) {
+  const cleaned = rawText
+    .split(/[\n,;]+/g)
+    .map((t) => t.replace(/^[-•\d.)\s]+/, "").trim())
+    .filter(Boolean);
+
+  const authors: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of cleaned) {
+    if (!item || /^unknown$/i.test(item)) continue;
+    const normalized = item.replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    authors.push(normalized);
+    if (authors.length >= 12) break;
+  }
+
+  return authors;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -183,6 +218,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         "summary",
         "conclusion",
         "tags",
+        "authors",
       ].includes(field)
     ) {
       return res.status(400).json({ error: "Unsupported field." });
@@ -192,11 +228,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const messages = buildMessages(field, context, label, variant === "regen" ? "regen" : "primary");
 
     const isLongForm = field === "summary" || field === "conclusion";
+    const isListField = field === "tags" || field === "authors";
     const response = await sarvamClient.chat.completions({
       messages,
-      temperature: field === "tags" ? 0.1 : isLongForm ? 0.25 : 0.15,
+      temperature: isListField ? 0.1 : isLongForm ? 0.25 : 0.15,
       top_p: 0.9,
-      max_tokens: field === "summary" ? 420 : field === "conclusion" ? 200 : field === "tags" ? 96 : 80,
+      max_tokens: field === "summary" ? 420 : field === "conclusion" ? 200 : isListField ? 96 : 80,
       n: 1,
     });
 
@@ -209,6 +246,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const tags = normalizeTags(content);
       if (!tags.length) return res.status(500).json({ error: "No tags returned." });
       return res.status(200).json({ tags });
+    }
+
+    if (field === "authors") {
+      const authors = normalizeAuthors(content);
+      if (!authors.length) return res.status(500).json({ error: "No authors returned." });
+      return res.status(200).json({ authors });
     }
 
     return res.status(200).json({ value: content });
