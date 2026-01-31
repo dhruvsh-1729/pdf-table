@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createClient } from "@supabase/supabase-js";
-import { v2 as cloudinary } from "cloudinary";
+import { getUploadThingUrl } from "../lib/uploadthing.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -15,18 +15,8 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-const hasCloudinary =
-  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
-
-if (hasCloudinary) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-} else {
-  console.warn("Cloudinary env vars missing; will fall back to pdf_url only.");
+if (!process.env.UPLOADTHING_TOKEN) {
+  console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
 }
 
 async function runSql(statement) {
@@ -139,38 +129,31 @@ async function extractTextFromPdf(data) {
   };
 }
 
-function buildCloudinaryRawUrl(publicIdWithExt) {
-  return cloudinary.url(publicIdWithExt, {
-    resource_type: "raw",
-    type: "upload",
-    sign_url: true,
-    secure: true,
-  });
-}
-
-function resolvePdfUrl(record) {
-  if (record?.pdf_public_id && hasCloudinary) {
-    return buildCloudinaryRawUrl(record.pdf_public_id);
-  }
-
+async function resolvePdfUrl(record) {
   const pdfUrl = record?.pdf_url;
-  if (!pdfUrl) return null;
+  if (pdfUrl) {
+    if (!pdfUrl.startsWith("http")) {
+      const base =
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        process.env.SITE_URL ||
+        process.env.NEXTAUTH_URL ||
+        `http://localhost:${process.env.PORT || 3000}`;
 
-  if (!pdfUrl.startsWith("http")) {
-    const base =
-      process.env.NEXT_PUBLIC_SITE_URL ||
-      process.env.SITE_URL ||
-      process.env.NEXTAUTH_URL ||
-      `http://localhost:${process.env.PORT || 3000}`;
-
-    try {
-      return new URL(pdfUrl, base).toString();
-    } catch {
-      return pdfUrl;
+      try {
+        return new URL(pdfUrl, base).toString();
+      } catch {
+        return pdfUrl;
+      }
     }
+
+    return pdfUrl;
   }
 
-  return pdfUrl;
+  if (record?.pdf_public_id && process.env.UPLOADTHING_TOKEN) {
+    return await getUploadThingUrl(record.pdf_public_id);
+  }
+
+  return null;
 }
 
 async function fetchAllRecords() {
@@ -215,7 +198,7 @@ async function main() {
       continue;
     }
 
-    const pdfUrl = resolvePdfUrl(record);
+    const pdfUrl = await resolvePdfUrl(record);
     if (!pdfUrl) {
       console.warn(`Skipping record ${record.id}: missing pdf url/public id`);
       failed++;

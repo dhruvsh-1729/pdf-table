@@ -14,7 +14,7 @@
 
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { v2 as cloudinary } from "cloudinary";
+import { getUploadThingUrl } from "../lib/uploadthing.js";
 import { SarvamAIClient } from "sarvamai";
 
 dotenv.config();
@@ -22,7 +22,6 @@ dotenv.config();
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
-const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "pdfs";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
@@ -36,15 +35,8 @@ if (!SARVAM_API_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const sarvamClient = new SarvamAIClient({ apiSubscriptionKey: SARVAM_API_KEY.trim() });
 
-const hasCloudinary =
-  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
-if (hasCloudinary) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
+if (!process.env.UPLOADTHING_TOKEN) {
+  console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
 }
 
 function numberFlag(name, fallback) {
@@ -67,25 +59,20 @@ function getBaseSiteUrl() {
   );
 }
 
-function buildCloudinaryRawUrl(publicIdWithExt) {
-  return cloudinary.url(publicIdWithExt, {
-    resource_type: "raw",
-    type: "upload",
-    sign_url: true,
-    secure: true,
-  });
-}
-
-function resolvePdfUrl(record) {
-  if (record?.pdf_public_id && hasCloudinary) return buildCloudinaryRawUrl(record.pdf_public_id);
+async function resolvePdfUrl(record) {
   const pdfUrl = record?.pdf_url;
-  if (!pdfUrl) return null;
-  if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
-  try {
-    return new URL(pdfUrl, getBaseSiteUrl()).toString();
-  } catch {
-    return pdfUrl;
+  if (pdfUrl) {
+    if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
+    try {
+      return new URL(pdfUrl, getBaseSiteUrl()).toString();
+    } catch {
+      return pdfUrl;
+    }
   }
+  if (record?.pdf_public_id && process.env.UPLOADTHING_TOKEN) {
+    return await getUploadThingUrl(record.pdf_public_id);
+  }
+  return null;
 }
 
 async function downloadPdfBuffer(url) {
@@ -200,7 +187,7 @@ async function fetchRecordsPage(from, pageSize) {
 }
 
 async function processRecord(record) {
-  const pdfUrl = resolvePdfUrl(record);
+  const pdfUrl = await resolvePdfUrl(record);
   if (!pdfUrl) {
     console.log(`${record.id}: NO_PDF`);
     return { status: "no_pdf" };

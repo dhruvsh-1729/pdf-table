@@ -4,26 +4,21 @@ const fs = require("fs");
 const path = require("path");
 const { parse } = require("csv-parse/sync");
 const { createClient } = require("@supabase/supabase-js");
-const { v2: cloudinary } = require("cloudinary");
+const { UTApi, UTFile } = require("uploadthing/server");
 const dotenv = require("dotenv");
+
 dotenv.config();
 
 /* ======================= CONFIG ======================= */
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "pdfs";
+const UPLOADTHING_TOKEN = process.env.UPLOADTHING_TOKEN;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error("Missing Supabase env vars.");
-if (!process.env.CLOUDINARY_CLOUD_NAME) throw new Error("Missing Cloudinary env vars.");
+if (!UPLOADTHING_TOKEN) throw new Error("Missing UPLOADTHING_TOKEN.");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true,
-});
+const utapi = new UTApi({ apiKey: UPLOADTHING_TOKEN });
 
 /* ======================= HELPERS ======================= */
 function buildBaseId(title) {
@@ -35,26 +30,14 @@ function buildBaseId(title) {
   return `${base}-${Date.now()}`;
 }
 
-function buildViewerUrl(publicIdWithExt, version) {
-  const params = new URLSearchParams({ id: publicIdWithExt });
-  if (version) params.set("v", String(version));
-  return `/api/pdf/view?${params.toString()}`;
-}
-
-async function uploadToCloudinary(buffer, baseId, ext = ".pdf") {
-  const public_id = `${CLOUDINARY_FOLDER}/${baseId}${ext}`;
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: "raw",
-        public_id,
-        overwrite: false,
-        access_mode: "public",
-      },
-      (err, res) => (err || !res ? reject(err) : resolve(res)),
-    );
-    stream.end(buffer);
-  });
+async function uploadToUploadThing(buffer, filename) {
+  const file = new UTFile([buffer], filename, { type: "application/pdf" });
+  const result = await utapi.uploadFiles(file, { contentDisposition: "inline" });
+  const item = Array.isArray(result) ? result[0] : result;
+  if (!item) throw new Error("UploadThing returned an empty response.");
+  if (item.error) throw new Error(item.error.message || item.error.code || "UploadThing upload failed.");
+  if (!item.data) throw new Error("UploadThing returned no data.");
+  return item.data;
 }
 
 /* ======================= MAIN SCRIPT ======================= */
@@ -64,16 +47,18 @@ async function migrate() {
 
   const csvPath = path.join(process.cwd(), "records_rows.csv");
   const rows = parse(fs.readFileSync(csvPath), { columns: true, skip_empty_lines: true });
-  const candidates = rows.filter((r) => r.pdf_url?.includes("supabase"));
+  const candidates = rows.filter((r) => r.pdf_url);
   const toProcess = candidates.slice(0, limit);
 
   console.log(`Loaded ${rows.length} total rows.`);
-  console.log(`Found ${candidates.length} Supabase PDFs.`);
+  console.log(`Found ${candidates.length} PDFs with a url.`);
   console.log(`Processing ${toProcess.length} (limit = ${limit}).`);
 
   for (const [i, row] of toProcess.entries()) {
     try {
       const pdfUrl = row.pdf_url?.trim();
+      if (!pdfUrl) continue;
+
       console.log(`\n[${i + 1}] ${row.name || row.title_name}`);
       console.log(`→ Downloading from: ${pdfUrl}`);
 
@@ -83,11 +68,12 @@ async function migrate() {
       const buffer = Buffer.from(arrayBuffer);
 
       const baseId = buildBaseId(row.title_name || row.name);
-      console.log(`→ Uploading to Cloudinary...`);
-      const uploaded = await uploadToCloudinary(buffer, baseId, ".pdf");
+      const filename = `${baseId}.pdf`;
+      console.log(`→ Uploading to UploadThing...`);
+      const uploaded = await uploadToUploadThing(buffer, filename);
 
-      const newPdfPublicId = uploaded.public_id;
-      const newPdfUrl = buildViewerUrl(newPdfPublicId, uploaded.version);
+      const newPdfPublicId = uploaded.key;
+      const newPdfUrl = uploaded.ufsUrl || uploaded.url;
 
       console.log(`→ Updating Supabase record...`);
       const { error: updateError } = await supabase
@@ -101,7 +87,7 @@ async function migrate() {
       if (updateError) throw updateError;
       console.log(`✅ Migration complete for: ${row.name}`);
     } catch (err) {
-      console.error(`❌ Error on record ${i + 1}:`, err.message);
+      console.error(`❌ Error on record ${i + 1}:`, err.message || err);
     }
   }
 

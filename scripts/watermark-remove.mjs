@@ -9,7 +9,7 @@
  * Requirements:
  * - LIGHTPDF_API_KEY env var (or pass --key).
  * - SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to fetch the record.
- * - If Cloudinary env vars are present and the record has pdf_public_id, the script will use Cloudinary raw URL.
+ * - If the record has pdf_public_id and no pdf_url, the script will resolve it via UploadThing.
  * - Saves the processed PDF next to this script by default.
  */
 
@@ -18,7 +18,7 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
-import { v2 as cloudinary } from "cloudinary";
+import { getUploadThingUrl } from "../lib/uploadthing.js";
 
 dotenv.config();
 
@@ -52,7 +52,7 @@ function parseArgs() {
 }
 
 /* -----------------------------
- * Supabase + Cloudinary helpers
+ * Supabase helpers
  * ----------------------------- */
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -65,17 +65,6 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
-const hasCloudinary =
-  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
-
-if (hasCloudinary) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-}
 
 function getBaseSiteUrl() {
   return (
@@ -87,28 +76,22 @@ function getBaseSiteUrl() {
   );
 }
 
-function buildCloudinaryRawUrl(publicIdWithExt) {
-  return cloudinary.url(publicIdWithExt, {
-    resource_type: "raw",
-    type: "upload",
-    sign_url: true,
-    secure: true,
-  });
-}
-
-function resolvePdfUrl(record) {
-  if (record?.pdf_public_id && hasCloudinary) return buildCloudinaryRawUrl(record.pdf_public_id);
-
+async function resolvePdfUrl(record) {
   const pdfUrl = record?.pdf_url;
-  if (!pdfUrl) return null;
-
-  if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
-
-  try {
-    return new URL(pdfUrl, getBaseSiteUrl()).toString();
-  } catch {
-    return pdfUrl;
+  if (pdfUrl) {
+    if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
+    try {
+      return new URL(pdfUrl, getBaseSiteUrl()).toString();
+    } catch {
+      return pdfUrl;
+    }
   }
+
+  if (record?.pdf_public_id && process.env.UPLOADTHING_TOKEN) {
+    return await getUploadThingUrl(record.pdf_public_id);
+  }
+
+  return null;
 }
 
 async function fetchRecord(recordId) {
@@ -204,7 +187,7 @@ async function main() {
     console.log(`Loading record ${recordId} from Supabase...`);
     const record = await fetchRecord(recordId);
 
-    const pdfUrl = resolvePdfUrl(record);
+    const pdfUrl = await resolvePdfUrl(record);
     if (!pdfUrl) throw new Error("Record has no pdf_url or pdf_public_id.");
 
     const inputName = new URL(pdfUrl, "http://dummy").pathname.split("/").pop() || `record-${recordId}.pdf`;

@@ -47,7 +47,7 @@ runOcrForRecord({
     console.log("\nOCR complete:");
     console.log(`- Record ID: ${result.recordId}`);
     console.log(`- Source URL: ${result.source_url}`);
-    console.log(`- Cloudinary ID: ${result.pdf_public_id}`);
+    console.log(`- UploadThing key: ${result.pdf_public_id}`);
     console.log(`- Viewer URL: ${result.pdf_url}`);
     if (result.extracted_text) {
       console.log(`- Extracted text stored (${result.extracted_text.length} chars)`);
