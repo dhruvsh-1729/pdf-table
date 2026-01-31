@@ -11,7 +11,10 @@ type CompressionEvent = {
   level?: string;
   bytes_before?: number;
   bytes_after?: number;
+  bytes?: number;
   from_compression?: boolean;
+  reason?: string;
+  max_bytes?: number;
   status?: string;
   message?: string;
   timestamp?: string;
@@ -75,7 +78,11 @@ export default function OcrTool() {
       if (event.type === "compression-start") {
         const attemptLabel = event.attempt ? ` (attempt ${event.attempt})` : "";
         const levelLabel = event.level ? ` [${event.level}]` : "";
-        toast.info(`Cloudinary size limit hit. Compressing${levelLabel}${attemptLabel} before retrying...`);
+        const reasonText =
+          event.reason === "max-bytes" ? "File exceeds the size limit" : "Cloudinary size limit hit";
+        const limitText = event.max_bytes ? ` (${formatBytes(event.max_bytes)} limit)` : "";
+        const tail = event.reason === "max-bytes" ? "..." : " before retrying...";
+        toast.info(`${reasonText}${limitText}. Compressing${levelLabel}${attemptLabel}${tail}`);
       } else if (event.type === "compression-complete") {
         const levelLabel = event.level ? ` (${event.level})` : "";
         const attemptLabel = event.attempt ? `Attempt ${event.attempt}` : "Compression";
@@ -151,11 +158,18 @@ export default function OcrTool() {
       });
 
       const data: OcrResult & { error?: string } = await resp.json();
-      if (!resp.ok) throw new Error(data?.error || "Failed to remove watermark.");
+      if (!resp.ok) {
+        const err: any = new Error(data?.error || "Failed to remove watermark.");
+        err.compression_events = (data as any)?.compression_events;
+        throw err;
+      }
 
+      notifyCompressionEvents(data?.compression_events);
       setResult(data as OcrResult);
       toast.success("Watermark removed and PDF updated.");
     } catch (error: any) {
+      const compressionEvents = error?.compression_events || error?.compressionEvents;
+      if (compressionEvents) notifyCompressionEvents(compressionEvents);
       const message = error?.message || "Failed to remove watermark.";
       setLastError(message);
       toast.error(message);

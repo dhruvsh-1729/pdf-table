@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { v2 as cloudinary } from "cloudinary";
+import { uploadWithCompressFallback } from "@/lib/ocrPipeline";
 
 const LIGHTPDF_API_KEY = process.env.LIGHTPDF_API_KEY;
 const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "pdfs";
@@ -124,23 +125,6 @@ function deriveCleanPublicId(record: any) {
   return `${withSuffix}${ext || ".pdf"}`;
 }
 
-async function uploadToCloudinary(buffer: Buffer, publicIdWithExt: string) {
-  const result = await new Promise<{ version: number; public_id: string }>((resolve, reject) => {
-    const upload = cloudinary.uploader.upload_stream(
-      {
-        resource_type: "raw",
-        public_id: publicIdWithExt,
-        overwrite: true,
-        invalidate: true,
-        access_mode: "public",
-      },
-      (error, res) => (error || !res ? reject(error || new Error("Unknown Cloudinary error")) : resolve(res as any)),
-    );
-    upload.end(buffer);
-  });
-  return { publicIdWithExt, version: result.version };
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -173,24 +157,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const cleanedBuffer = await downloadResult(taskData.file);
 
     const newPublicId = deriveCleanPublicId(record);
-    const uploadResult = await uploadToCloudinary(cleanedBuffer, newPublicId);
-    const viewerUrl = buildCloudinaryRawUrl(newPublicId);
+    const { publicIdWithExt, version, compression_events } = await uploadWithCompressFallback(
+      cleanedBuffer,
+      newPublicId,
+      inputName,
+      { logger: console },
+    );
+    const viewerUrl = buildCloudinaryRawUrl(publicIdWithExt);
 
     await supabaseAdmin
       .from("records")
-      .update({ pdf_url: viewerUrl, pdf_public_id: newPublicId })
+      .update({ pdf_url: viewerUrl, pdf_public_id: publicIdWithExt })
       .eq("id", id)
       .throwOnError();
+
+    const compressionCount =
+      compression_events?.filter((evt) => evt?.type === "compression-start" || evt?.from_compression)?.length || 0;
+    const hasCompression = compressionCount > 0;
 
     return res.status(200).json({
       recordId: id,
       pdf_url: viewerUrl,
-      pdf_public_id: newPublicId,
+      pdf_public_id: publicIdWithExt,
       source_url: sourceUrl,
-      cloudinary_version: uploadResult.version,
+      cloudinary_version: version,
+      compression_events: hasCompression ? compression_events : undefined,
     });
   } catch (err: any) {
     const message = err?.message || "Watermark removal failed.";
-    return res.status(500).json({ error: message });
+    const payload: Record<string, any> = { error: message };
+    if (err?.compression_events || err?.compressionEvents) {
+      payload.compression_events = err.compression_events || err.compressionEvents;
+    }
+    return res.status(500).json(payload);
   }
 }
