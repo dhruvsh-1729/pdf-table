@@ -1,5 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { getUploadThingUrl } from "@/lib/uploadthing";
+
+export const config = {
+  runtime: "nodejs",
+};
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -92,6 +97,15 @@ const PDFJS_CANDIDATES = [
 ];
 
 async function importPdfJs() {
+  // Use a static import first so Vercel file tracing bundles pdfjs in production.
+  try {
+    const m: any = await import("pdfjs-dist/legacy/build/pdf.js");
+    const pdfjs = m?.default || m;
+    if (pdfjs?.getDocument || pdfjs?.default?.getDocument) return pdfjs;
+  } catch {
+    // fall through to dynamic candidates
+  }
+
   for (const candidate of PDFJS_CANDIDATES) {
     try {
       const m: any = await import(candidate);
@@ -456,7 +470,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const { data: record, error: fetchError } = await supabase
       .from("records")
-      .select("id, pdf_url, extracted_text, name, title_name, language")
+      .select("id, pdf_url, pdf_public_id, extracted_text, name, title_name, language")
       .eq("id", recordId)
       .single();
 
@@ -468,11 +482,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ text: record.extracted_text });
     }
 
-    if (!record.pdf_url) {
+    let pdfUrl = record.pdf_url;
+    if (!pdfUrl && record.pdf_public_id) {
+      pdfUrl = await getUploadThingUrl(record.pdf_public_id);
+    }
+    if (!pdfUrl) {
       return res.status(400).json({ error: "PDF URL is missing for this record." });
     }
 
-    const targetUrl = resolvePdfUrl(record.pdf_url, req);
+    const targetUrl = resolvePdfUrl(pdfUrl, req);
     const response = await fetch(targetUrl);
 
     if (!response.ok) {

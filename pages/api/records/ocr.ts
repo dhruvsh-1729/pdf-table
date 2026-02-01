@@ -1,6 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { runOcrForRecord } from "@/lib/ocrPipeline";
 
+export const config = {
+  runtime: "nodejs",
+};
+
 function toBool(value: any) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.toLowerCase() === "true";

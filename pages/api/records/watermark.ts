@@ -1,25 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { v2 as cloudinary } from "cloudinary";
 import { uploadWithCompressFallback } from "@/lib/ocrPipeline";
+import { ensureUploadThingToken, getUploadThingUrl } from "@/lib/uploadthing";
 
 const LIGHTPDF_API_KEY = process.env.LIGHTPDF_API_KEY;
-const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "pdfs";
-
-if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-}
 
 function ensureEnv() {
   if (!LIGHTPDF_API_KEY) throw new Error("Missing LIGHTPDF_API_KEY");
-  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
-    throw new Error("Missing Cloudinary configuration.");
-  }
+  ensureUploadThingToken();
 }
 
 function getBaseSiteUrl() {
@@ -32,25 +20,20 @@ function getBaseSiteUrl() {
   );
 }
 
-function buildCloudinaryRawUrl(publicIdWithExt: string) {
-  return cloudinary.url(publicIdWithExt, {
-    resource_type: "raw",
-    type: "upload",
-    sign_url: true,
-    secure: true,
-  });
-}
-
-function resolvePdfUrl(record: any) {
-  if (record?.pdf_public_id) return buildCloudinaryRawUrl(record.pdf_public_id);
+async function resolvePdfUrl(record: any) {
   const pdfUrl = record?.pdf_url;
-  if (!pdfUrl) return null;
-  if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
-  try {
-    return new URL(pdfUrl, getBaseSiteUrl()).toString();
-  } catch {
-    return pdfUrl;
+  if (pdfUrl) {
+    if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
+    try {
+      return new URL(pdfUrl, getBaseSiteUrl()).toString();
+    } catch {
+      return pdfUrl;
+    }
   }
+  if (record?.pdf_public_id) {
+    return await getUploadThingUrl(record.pdf_public_id);
+  }
+  return null;
 }
 
 async function downloadPdfBuffer(url: string) {
@@ -65,7 +48,7 @@ async function downloadPdfBuffer(url: string) {
 async function createTask(pdfBuffer: Buffer, filename = "input.pdf") {
   const form = new FormData();
   form.append("format", "doc-repair");
-  form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), filename);
+  form.append("file", new Blob([bufferToArrayBuffer(pdfBuffer)], { type: "application/pdf" }), filename);
 
   const resp = await fetch("https://techhk.aoscdn.com/api/tasks/document/conversion", {
     method: "POST",
@@ -109,20 +92,28 @@ async function downloadResult(fileUrl: string) {
   return Buffer.from(await resp.arrayBuffer());
 }
 
-function splitPublicIdAndExt(publicId?: string | null) {
-  if (!publicId) return { base: null, ext: ".pdf" };
-  const dot = publicId.lastIndexOf(".");
-  if (dot === -1) return { base: publicId, ext: ".pdf" };
-  return { base: publicId.slice(0, dot), ext: publicId.slice(dot) || ".pdf" };
+function sanitizeFilenameSegment(value: string) {
+  const safe = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return safe || "record";
 }
 
-function deriveCleanPublicId(record: any) {
-  const { base, ext } = splitPublicIdAndExt(
-    record?.pdf_public_id || `${CLOUDINARY_FOLDER}/record-${record?.id || "file"}.pdf`,
-  );
-  const cleanBase = base || `${CLOUDINARY_FOLDER}/record-${record?.id || "file"}`;
-  const withSuffix = cleanBase.endsWith("-clean") ? cleanBase : `${cleanBase}-clean`;
-  return `${withSuffix}${ext || ".pdf"}`;
+function bufferToArrayBuffer(buffer: Buffer) {
+  if (buffer.buffer instanceof ArrayBuffer) {
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  }
+  const copy = new Uint8Array(buffer.byteLength);
+  copy.set(buffer);
+  return copy.buffer;
+}
+
+function deriveCleanFilename(record: any) {
+  const baseLabel = record?.title_name || record?.name || `record-${record?.id || "file"}`;
+  const base = sanitizeFilenameSegment(baseLabel);
+  return `${base}-clean.pdf`;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -138,14 +129,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { data: record, error } = await supabaseAdmin
       .from("records")
-      .select("id, pdf_url, pdf_public_id")
+      .select("id, pdf_url, pdf_public_id, title_name, name")
       .eq("id", id)
       .single();
 
     if (error) throw new Error(`Failed to load record ${id}: ${error.message}`);
     if (!record) return res.status(404).json({ error: "Record not found." });
 
-    const sourceUrl = resolvePdfUrl(record);
+    const sourceUrl = await resolvePdfUrl(record);
     if (!sourceUrl) return res.status(400).json({ error: "Record has no pdf_url or pdf_public_id." });
 
     const pdfBuffer = await downloadPdfBuffer(sourceUrl);
@@ -156,18 +147,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!taskData?.file) throw new Error("LightPDF returned no file URL.");
     const cleanedBuffer = await downloadResult(taskData.file);
 
-    const newPublicId = deriveCleanPublicId(record);
-    const { publicIdWithExt, version, compression_events } = await uploadWithCompressFallback(
+    const outputFilename = deriveCleanFilename(record);
+    const { key, ufsUrl, url, compression_events } = await uploadWithCompressFallback(
       cleanedBuffer,
-      newPublicId,
+      outputFilename,
       inputName,
       { logger: console },
     );
-    const viewerUrl = buildCloudinaryRawUrl(publicIdWithExt);
+    const finalUrl = ufsUrl || url;
+    if (!finalUrl) throw new Error("UploadThing returned no URL for the cleaned PDF.");
 
     await supabaseAdmin
       .from("records")
-      .update({ pdf_url: viewerUrl, pdf_public_id: publicIdWithExt })
+      .update({ pdf_url: finalUrl, pdf_public_id: key })
       .eq("id", id)
       .throwOnError();
 
@@ -177,10 +169,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       recordId: id,
-      pdf_url: viewerUrl,
-      pdf_public_id: publicIdWithExt,
+      pdf_url: finalUrl,
+      pdf_public_id: key,
       source_url: sourceUrl,
-      cloudinary_version: version,
       compression_events: hasCompression ? compression_events : undefined,
     });
   } catch (err: any) {

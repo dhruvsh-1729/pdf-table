@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
 
 type CompressionEvent = {
-  type: "compression-start" | "compression-complete" | "cloudinary-upload";
+  type: "compression-start" | "compression-complete" | "storage-upload";
   attempt?: number;
   level?: string;
   bytes_before?: number;
@@ -79,7 +79,7 @@ export default function OcrTool() {
         const attemptLabel = event.attempt ? ` (attempt ${event.attempt})` : "";
         const levelLabel = event.level ? ` [${event.level}]` : "";
         const reasonText =
-          event.reason === "max-bytes" ? "File exceeds the size limit" : "Cloudinary size limit hit";
+          event.reason === "max-bytes" ? "File exceeds the size limit" : "Upload size limit hit";
         const limitText = event.max_bytes ? ` (${formatBytes(event.max_bytes)} limit)` : "";
         const tail = event.reason === "max-bytes" ? "..." : " before retrying...";
         toast.info(`${reasonText}${limitText}. Compressing${levelLabel}${attemptLabel}${tail}`);
@@ -91,7 +91,7 @@ export default function OcrTool() {
             ? `${formatBytes(event.bytes_before)} → ${formatBytes(event.bytes_after)}`
             : "finished";
         toast.success(`${attemptLabel}${levelLabel}: ${sizeText}. Retrying upload...`);
-      } else if (event.type === "cloudinary-upload" && event.status === "success" && event.from_compression) {
+      } else if (event.type === "storage-upload" && event.status === "success" && event.from_compression) {
         toast.success("Upload succeeded after compressing the PDF.");
       }
     });
@@ -207,7 +207,7 @@ export default function OcrTool() {
 
       notifyCompressionEvents(data?.compression_events);
       setResult(data as OcrResult);
-      toast.success("OCR complete and uploaded to Cloudinary.");
+      toast.success("OCR complete and uploaded to UploadThing.");
       if ((data as OcrResult)?.extracted_text) {
         toast.success("Text extracted and saved to this record.");
       } else if ((data as OcrResult)?.text_extraction_error) {
@@ -232,7 +232,7 @@ export default function OcrTool() {
           <p className="text-xs uppercase tracking-[0.2em] text-slate-500">OCR Utility</p>
           <h1 className="text-3xl font-semibold text-slate-900">Run iLovePDF OCR for a record</h1>
           <p className="text-sm text-slate-600">
-            Fetch the current PDF from Supabase/Cloudinary, OCR it via iLovePDF, upload the new PDF to Cloudinary, and
+            Fetch the current PDF, OCR it via iLovePDF, upload the new PDF to UploadThing, and
             update the record.
           </p>
         </div>
@@ -242,7 +242,7 @@ export default function OcrTool() {
             <CardHeader>
               <CardTitle>Record OCR Runner</CardTitle>
               <CardDescription>
-                Requires Supabase service key, Cloudinary keys, and iLovePDF keys in env.
+                Requires Supabase service key, UploadThing token, and iLovePDF keys in env.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -267,7 +267,7 @@ export default function OcrTool() {
                       checked={deleteOld}
                       onChange={(e) => setDeleteOld(e.target.checked)}
                     />
-                    Delete old Cloudinary asset if the public ID changes
+                    Delete old UploadThing file if the key changes
                   </label>
                   <label className="flex items-center gap-2">
                     <input
@@ -336,7 +336,7 @@ export default function OcrTool() {
                       </a>
                     </div>
                   )}
-                  <div>Cloudinary ID: {result.pdf_public_id}</div>
+                  <div>UploadThing key: {result.pdf_public_id}</div>
                   {resolvedViewerUrl && (
                     <div>
                       Viewer URL:{" "}

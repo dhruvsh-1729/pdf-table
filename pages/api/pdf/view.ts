@@ -1,37 +1,36 @@
 // pages/api/pdf/view.ts
 import type { NextApiRequest, NextApiResponse } from "next";
-import { v2 as cloudinary } from "cloudinary";
-
-// Configure once
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
-  api_key: process.env.CLOUDINARY_API_KEY || "",
-  api_secret: process.env.CLOUDINARY_API_SECRET || "",
-  secure: true,
-});
+import { getUploadThingUrl } from "@/lib/uploadthing";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    // Expect ?id=pdfs/your-file-123.pdf (public_id **WITH** extension)
-    // Optionally accept ?v=<version> to be extra cache-stable; not required.
+    // Expect ?id=<uploadthing-key> or ?id=<absolute-url>
     const id = (req.query.id as string) || "";
-    const v = (req.query.v as string) || undefined;
-
-    if (!id || !id.endsWith(".pdf")) {
-      return res.status(400).json({ error: "Missing or invalid 'id' (must include .pdf)" });
+    if (!id) {
+      return res.status(400).json({ error: "Missing 'id' parameter." });
     }
 
-    // Build a signed (no transformations) raw URL. (We do NOT add fl_inline here.)
-    const cloudUrl = cloudinary.url(id, {
-      resource_type: "raw",
-      type: "upload",
-      sign_url: true,
-      secure: true,
-      ...(v ? { version: v } : {}),
-    });
+    let fileUrl: string | null = null;
+    if (/^https?:\/\//i.test(id)) {
+      try {
+        const parsed = new URL(id);
+        const host = parsed.hostname;
+        if (!/utfs\.io|ufs\.sh|uploadthing\.com/i.test(host)) {
+          return res.status(400).json({ error: "Unsupported file host." });
+        }
+        fileUrl = id;
+      } catch {
+        return res.status(400).json({ error: "Invalid URL." });
+      }
+    } else {
+      fileUrl = await getUploadThingUrl(id);
+    }
+    if (!fileUrl) {
+      return res.status(404).json({ error: "Unable to resolve file URL." });
+    }
 
-    // Stream from Cloudinary to client
-    const resp = await fetch(cloudUrl);
+    // Stream from UploadThing to client
+    const resp = await fetch(fileUrl);
     if (!resp.ok || !resp.body) {
       return res.status(resp.status).end(await resp.text());
     }
@@ -39,7 +38,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Forward headers but force inline PDF
     res.setHeader("Content-Type", "application/pdf");
     // inline + filename fallback
-    const filename = id.split("/").pop() || "file.pdf";
+    let filename = "file.pdf";
+    try {
+      const parsed = new URL(fileUrl);
+      filename = parsed.pathname.split("/").pop() || filename;
+    } catch {
+      filename = id.split("/").pop() || filename;
+    }
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
 
     // Optional cache headers (adjust as needed)
@@ -47,7 +52,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Pipe the body
     const reader = resp.body.getReader();
-    const encoder = new TextEncoder();
     res.status(200);
     // Use a manual pipe since Next doesn't support res.flush() by default
     while (true) {

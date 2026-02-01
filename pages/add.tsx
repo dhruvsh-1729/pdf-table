@@ -99,6 +99,7 @@ function Add() {
   const [splitRecords, setSplitRecords] = useState<SplitRecord[]>([]);
   const splitRecordsRef = useRef<SplitRecord[]>([]);
   const [savingAll, setSavingAll] = useState(false);
+  const [removingWatermark, setRemovingWatermark] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number } | null>(null);
   const [commonName, setCommonName] = useState("");
   const [commonVolume, setCommonVolume] = useState("");
@@ -726,6 +727,81 @@ function Add() {
     setSavingAll(false);
   }, [saveRecord]);
 
+  const removeWatermarkForAll = useCallback(async () => {
+    if (removingWatermark) return;
+    const currentSplits = [...splitRecordsRef.current].sort((a, b) => a.sectionIndex - b.sectionIndex);
+    if (!currentSplits.length) {
+      toast.error("No split PDFs available to clean.");
+      return;
+    }
+
+    setRemovingWatermark(true);
+    try {
+      const mergedPdf = await PDFDocument.create();
+      for (const split of currentSplits) {
+        if (!split.blob) throw new Error("One or more split PDFs are missing.");
+        const bytes = await split.blob.arrayBuffer();
+        const pdf = await PDFDocument.load(bytes);
+        const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+        pages.forEach((p) => mergedPdf.addPage(p));
+      }
+
+      const mergedBytes = await mergedPdf.save();
+      const baseName = (file?.name || "merged").replace(/\.pdf$/i, "") || "merged";
+      const mergedFilename = `${baseName}-merged.pdf`;
+
+      const formData = new FormData();
+      const mergedBlob = new Blob([mergedBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      formData.append("pdf", mergedBlob, mergedFilename);
+
+      const response = await fetch("/api/pdf/remove-watermark", { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Watermark removal failed.");
+
+      const cleanedUrl = payload.cleaned_url as string | undefined;
+      if (!cleanedUrl) throw new Error("No cleaned PDF URL returned.");
+
+      const cleanedResp = await fetch(cleanedUrl);
+      if (!cleanedResp.ok) {
+        throw new Error(`Failed to download cleaned PDF (status ${cleanedResp.status}).`);
+      }
+      const cleanedBytes = await cleanedResp.arrayBuffer();
+      const cleanedPdf = await PDFDocument.load(cleanedBytes);
+
+      const expectedPages = currentSplits.reduce((sum, split) => sum + (split.pages?.length || 0), 0);
+      if (cleanedPdf.getPageCount() < expectedPages) {
+        throw new Error(`Cleaned PDF has ${cleanedPdf.getPageCount()} pages but ${expectedPages} were expected.`);
+      }
+
+      let cursor = 0;
+      const next: SplitRecord[] = [];
+      for (const split of currentSplits) {
+        const count = split.pages?.length || 0;
+        const pageIndices = Array.from({ length: count }, (_, i) => cursor + i);
+        const newPdf = await PDFDocument.create();
+        const copied = await newPdf.copyPages(cleanedPdf, pageIndices);
+        copied.forEach((p) => newPdf.addPage(p));
+        const bytes = await newPdf.save();
+        const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+        const objectUrl = URL.createObjectURL(blob);
+        next.push({ ...split, blob, objectUrl });
+        cursor += count;
+      }
+
+      setSplitRecords((prev) => {
+        prev.forEach((split) => split.objectUrl && URL.revokeObjectURL(split.objectUrl));
+        return next;
+      });
+
+      toast.success("Watermark removed. Splits refreshed with cleaned PDFs.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Watermark removal failed.";
+      toast.error(message);
+    } finally {
+      setRemovingWatermark(false);
+    }
+  }, [file, removingWatermark]);
+
   const extractionInProgress = splitRecords.some((s) => s.extraction.status === "running");
   const aiBusy = splitRecords.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
 
@@ -1022,11 +1098,26 @@ function Add() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={saveAllRecords}
-                  disabled={!splitRecords.length || savingAll}
+                  disabled={!splitRecords.length || savingAll || removingWatermark}
                   className="inline-flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {savingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   <span>{savingAll ? "Saving..." : "Save all to Supabase"}</span>
+                </button>
+                <button
+                  onClick={removeWatermarkForAll}
+                  disabled={
+                    !splitRecords.length ||
+                    removingWatermark ||
+                    savingAll ||
+                    generatingSplits ||
+                    extractionInProgress ||
+                    aiBusy
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-amber-600 bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {removingWatermark ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  <span>{removingWatermark ? "Removing..." : "Remove watermark (all)"}</span>
                 </button>
                 <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
                   Splits ready: {splitRecords.length || 0}
