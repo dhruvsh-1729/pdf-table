@@ -164,7 +164,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .throwOnError();
 
     const compressionCount =
-      compression_events?.filter((evt) => evt?.type === "compression-start" || evt?.from_compression)?.length || 0;
+      compression_events?.filter(
+        (evt: { type?: string; from_compression?: boolean }) =>
+          evt?.type === "compression-start" || evt?.from_compression,
+      )?.length || 0;
     const hasCompression = compressionCount > 0;
 
     return res.status(200).json({
