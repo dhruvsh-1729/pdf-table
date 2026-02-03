@@ -23,6 +23,7 @@ export type RecordRow = {
   email?: string | null;
   creator_name?: string | null;
   conclusion?: string | null;
+  extracted_text?: string | null;
   pdf_url?: string | null; // UploadThing URL
   pdf_public_id?: string | null; // UploadThing file key
 };
@@ -82,6 +83,7 @@ async function parseForm(req: NextApiRequest): Promise<{ row: RecordRow; pdf: Fi
           email: fromJson.email ?? toNullIfEmpty(getStr("email")),
           creator_name: fromJson.creator_name ?? toNullIfEmpty(getStr("creator_name")),
           conclusion: fromJson.conclusion ?? toNullIfEmpty(getStr("conclusion")),
+          extracted_text: fromJson.extracted_text ?? toNullIfEmpty(getStr("extracted_text")),
         };
 
         const pdfAny = files.pdf as File | File[] | undefined;
@@ -131,6 +133,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       email: toNullIfEmpty(row.email),
       creator_name: toNullIfEmpty(row.creator_name),
       conclusion: toNullIfEmpty(row.conclusion),
+      extracted_text: toNullIfEmpty(row.extracted_text),
       pdf_public_id: uploaded.key,
       pdf_url: finalUrl,
     };

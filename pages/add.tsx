@@ -559,7 +559,6 @@ function Add() {
           const combined = parts.join("\n\n").trim();
           if (!combined) {
             emptySplits.push(split.sectionIndex);
-            return split;
           }
 
           updatedSplitIds.add(split.id);
@@ -732,18 +731,18 @@ function Add() {
   };
 
   const saveRecord = useCallback(
-    async (splitId: string) => {
+    async (splitId: string): Promise<boolean> => {
       const split = splitRecordsRef.current.find((s) => s.id === splitId);
-      if (!split) return;
+      if (!split) return false;
       const fields = split.fields;
       const name = commonName.trim();
       if (!name) {
         toast.error("Magazine name is required before saving.");
-        return;
+        return false;
       }
       if (!split.blob) {
         toast.error("Split PDF blob is missing.");
-        return;
+        return false;
       }
 
       setSplitRecords((prev) => prev.map((s) => (s.id === split.id ? { ...s, saving: "saving", saveError: null } : s)));
@@ -863,12 +862,14 @@ function Add() {
           prev.map((s) => (s.id === split.id ? { ...s, saving: "saved", recordId: recordId || undefined } : s)),
         );
         toast.success(`Saved split ${split.sectionIndex} to Supabase${recordId ? ` (ID ${recordId})` : ""}.`);
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to save record.";
         setSplitRecords((prev) =>
           prev.map((s) => (s.id === split.id ? { ...s, saving: "error", saveError: message } : s)),
         );
         toast.error(message);
+        return false;
       }
     },
     [user, commonName, commonVolume, commonNumber, commonTimestamp],
@@ -876,10 +877,15 @@ function Add() {
 
   const saveAllRecords = useCallback(async () => {
     setSavingAll(true);
-    for (const split of splitRecordsRef.current) {
+    const currentSplits = splitRecordsRef.current;
+    for (const split of currentSplits) {
       if (split.saving === "saved") continue;
 
-      await saveRecord(split.id);
+      const ok = await saveRecord(split.id);
+      if (!ok) {
+        toast.error("Stopping save-all due to an error.");
+        break;
+      }
     }
     setSavingAll(false);
   }, [saveRecord]);
