@@ -1,7 +1,7 @@
-import fs from 'fs';
-import { PDFDocument } from 'pdf-lib';
-import PDFKit from 'pdfkit';
-import puppeteer from 'puppeteer';
+import fs from "fs";
+import { PDFDocument } from "pdf-lib";
+import PDFKit from "pdfkit";
+import puppeteer from "puppeteer";
 
 async function renderPDFPageToImage(pdfPath, pageNum, quality = 0.6) {
   // Use Puppeteer to render the specific PDF page as an image using PDF.js
@@ -16,7 +16,7 @@ async function renderPDFPageToImage(pdfPath, pageNum, quality = 0.6) {
         <canvas id="pdf-canvas"></canvas>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
         <script>
-          const pdfData = atob("${pdfData.toString('base64')}");
+          const pdfData = atob("${pdfData.toString("base64")}");
           const uint8Array = new Uint8Array(pdfData.length);
           for (let i = 0; i < pdfData.length; i++) {
             uint8Array[i] = pdfData.charCodeAt(i);
@@ -38,21 +38,21 @@ async function renderPDFPageToImage(pdfPath, pageNum, quality = 0.6) {
     </html>
   `;
 
-  await page.setContent(html, { waitUntil: 'domcontentloaded' });
+  await page.setContent(html, { waitUntil: "domcontentloaded" });
   // Wait for PDF.js to finish rendering
-  await page.waitForFunction('window.renderDone === true');
+  await page.waitForFunction("window.renderDone === true");
 
   // Get canvas size for screenshot
   const clip = await page.evaluate(() => {
-    const canvas = document.getElementById('pdf-canvas');
+    const canvas = document.getElementById("pdf-canvas");
     return { x: 0, y: 0, width: canvas.width, height: canvas.height };
   });
 
   // Screenshot the canvas region
   const screenshot = await page.screenshot({
     clip,
-    type: 'jpeg',
-    quality: Math.round(quality * 100)
+    type: "jpeg",
+    quality: Math.round(quality * 100),
   });
 
   await browser.close();
@@ -66,7 +66,7 @@ async function compressPDF(inputPath, outputPath, quality = 0.6) {
   console.log(`Original PDF size: ${originalSizeMB.toFixed(2)} MB`);
 
   // Extract page count using pdf-lib
-  const pdfDoc = await PDFDocument.load(originalBytes);
+  const pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
   const pageCount = pdfDoc.getPages().length;
 
   // Create a new PDF using PDFKit
@@ -87,7 +87,7 @@ async function compressPDF(inputPath, outputPath, quality = 0.6) {
 
   doc.end();
 
-  await new Promise(res => output.on('finish', res));
+  await new Promise((res) => output.on("finish", res));
   const newSize = fs.statSync(outputPath).size;
   console.log(`Compressed PDF size: ${(newSize / (1024 * 1024)).toFixed(2)} MB`);
   console.log(`Compressed file saved to: ${outputPath}`);
@@ -95,7 +95,7 @@ async function compressPDF(inputPath, outputPath, quality = 0.6) {
 
 // Usage example
 (async () => {
-  const inputFile = 'input.pdf';      // <-- your input file
-  const outputFile = 'compressed.pdf';// <-- your output file
+  const inputFile = "input.pdf"; // <-- your input file
+  const outputFile = "compressed.pdf"; // <-- your output file
   await compressPDF(inputFile, outputFile, 0.9); // quality: 0.1~1.0 (lower = more compression)
 })();

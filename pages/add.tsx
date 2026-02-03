@@ -484,7 +484,7 @@ function Add() {
       setGeneratingSplits(true);
       try {
         const arrayBuffer = await file.arrayBuffer();
-        const originalPdf = await PDFDocument.load(arrayBuffer);
+        const originalPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
         const activeSections = sections
           .map((pages, idx) => ({ pages, idx }))
           .filter(({ idx }) => !skippedSections.has(idx));
@@ -741,7 +741,7 @@ function Add() {
       for (const split of currentSplits) {
         if (!split.blob) throw new Error("One or more split PDFs are missing.");
         const bytes = await split.blob.arrayBuffer();
-        const pdf = await PDFDocument.load(bytes);
+        const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
         const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
         pages.forEach((p) => mergedPdf.addPage(p));
       }
@@ -766,7 +766,7 @@ function Add() {
         throw new Error(`Failed to download cleaned PDF (status ${cleanedResp.status}).`);
       }
       const cleanedBytes = await cleanedResp.arrayBuffer();
-      const cleanedPdf = await PDFDocument.load(cleanedBytes);
+      const cleanedPdf = await PDFDocument.load(cleanedBytes, { ignoreEncryption: true });
 
       const expectedPages = currentSplits.reduce((sum, split) => sum + (split.pages?.length || 0), 0);
       if (cleanedPdf.getPageCount() < expectedPages) {
