@@ -78,6 +78,42 @@ const buildInitialFields = (pageRange: string): Record<FieldKey, FieldState<stri
   authors: { value: [], status: "idle" },
 });
 
+type PageTextMap = Record<number, string>;
+
+const PAGE_MARKER_RE = /^\s*-*\s*Page\s+(\d+)\s*-*\s*$/i;
+
+const parseExtractedTextFile = (raw: string): PageTextMap => {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const byPage: Record<number, string[]> = {};
+  let currentPage: number | null = null;
+
+  for (const line of lines) {
+    const match = line.match(PAGE_MARKER_RE);
+    if (match) {
+      const pageNum = Number.parseInt(match[1], 10);
+      if (Number.isFinite(pageNum) && pageNum > 0) {
+        currentPage = pageNum;
+        if (!byPage[currentPage]) byPage[currentPage] = [];
+      } else {
+        currentPage = null;
+      }
+      continue;
+    }
+
+    if (currentPage !== null) {
+      byPage[currentPage].push(line);
+    }
+  }
+
+  const pageText: PageTextMap = {};
+  Object.entries(byPage).forEach(([page, linesForPage]) => {
+    pageText[Number(page)] = linesForPage.join("\n").trim();
+  });
+
+  return pageText;
+};
+
 function Add() {
   const [isClient, setIsClient] = useState(false);
   const [reactPdf, setReactPdf] = useState<{ Document: any; Page: any } | null>(null);
@@ -98,6 +134,9 @@ function Add() {
   // Step 2 state
   const [splitRecords, setSplitRecords] = useState<SplitRecord[]>([]);
   const splitRecordsRef = useRef<SplitRecord[]>([]);
+  const manualTextInputRef = useRef<HTMLInputElement | null>(null);
+  const [manualTextBusy, setManualTextBusy] = useState(false);
+  const [manualTextInfo, setManualTextInfo] = useState<{ fileName: string; pageCount: number } | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [removingWatermark, setRemovingWatermark] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number } | null>(null);
@@ -474,6 +513,123 @@ function Add() {
     [runInitialAi],
   );
 
+  const applyManualExtractedText = useCallback(
+    async (uploaded: File) => {
+      if (manualTextBusy) return;
+      if (!splitRecordsRef.current.length) {
+        toast.error("Generate splits before uploading extracted text.");
+        return;
+      }
+
+      const hasRunningExtraction = splitRecordsRef.current.some((s) => s.extraction.status === "running");
+      const hasAiBusy = splitRecordsRef.current.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
+      if (hasRunningExtraction || hasAiBusy) {
+        toast.error("Wait for extraction and AI tasks to finish before applying manual text.");
+        return;
+      }
+
+      setManualTextBusy(true);
+      try {
+        const raw = await uploaded.text();
+        const pageTextMap = parseExtractedTextFile(raw);
+        const pageCount = Object.keys(pageTextMap).length;
+        if (!pageCount) {
+          throw new Error('No page markers found. Use lines like "--- Page 1 ---".');
+        }
+
+        const missingPages = new Set<number>();
+        const emptySplits: number[] = [];
+        const updatedSplitIds = new Set<string>();
+
+        const nextSplits = splitRecordsRef.current.map((split) => {
+          const parts: string[] = [];
+          split.pages.forEach((page) => {
+            if (!Object.prototype.hasOwnProperty.call(pageTextMap, page)) {
+              missingPages.add(page);
+              return;
+            }
+            const pageText = pageTextMap[page];
+            if (!pageText) {
+              missingPages.add(page);
+              return;
+            }
+            parts.push(`--- Page ${page} ---\n${pageText}`);
+          });
+
+          const combined = parts.join("\n\n").trim();
+          if (!combined) {
+            emptySplits.push(split.sectionIndex);
+            return split;
+          }
+
+          updatedSplitIds.add(split.id);
+          return {
+            ...split,
+            extraction: {
+              status: "done",
+              text: combined,
+              error: undefined,
+              language: split.extraction.language || null,
+            },
+          };
+        });
+
+        setSplitRecords(() => nextSplits);
+        setManualTextInfo({ fileName: uploaded.name, pageCount });
+
+        const missingList = Array.from(missingPages).sort((a, b) => a - b);
+        if (missingList.length) {
+          const preview = missingList.slice(0, 12).join(", ");
+          toast.warning(
+            `Missing text for ${missingList.length} page${missingList.length === 1 ? "" : "s"}: ${preview}${
+              missingList.length > 12 ? "…" : ""
+            }`,
+          );
+        }
+
+        if (emptySplits.length) {
+          toast.warning(
+            `No text found for split${emptySplits.length === 1 ? "" : "s"}: ${emptySplits
+              .sort((a, b) => a - b)
+              .join(", ")}.`,
+          );
+        }
+
+        if (!updatedSplitIds.size) {
+          toast.warning("No splits were updated. Check that page markers match your PDF page numbers.");
+          return;
+        }
+
+        toast.success(
+          `Applied extracted text for ${updatedSplitIds.size} split${updatedSplitIds.size === 1 ? "" : "s"}.`,
+        );
+
+        for (const split of nextSplits) {
+          if (!updatedSplitIds.has(split.id)) continue;
+          const text = split.extraction.text || "";
+          if (!text.trim()) continue;
+          await runInitialAi(split.id, text, split.fileName);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to apply extracted text.";
+        toast.error(message);
+      } finally {
+        setManualTextBusy(false);
+      }
+    },
+    [manualTextBusy, runInitialAi],
+  );
+
+  const handleManualTextUpload = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const uploaded = event.target.files?.[0];
+      if (!uploaded) return;
+      await applyManualExtractedText(uploaded);
+      if (manualTextInputRef.current) manualTextInputRef.current.value = "";
+    },
+    [applyManualExtractedText],
+  );
+
   const generateSplits = useCallback(
     async (opts?: { downloadZip?: boolean }) => {
       if (!file) {
@@ -804,6 +960,14 @@ function Add() {
 
   const extractionInProgress = splitRecords.some((s) => s.extraction.status === "running");
   const aiBusy = splitRecords.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
+  const manualUploadDisabled =
+    manualTextBusy ||
+    generatingSplits ||
+    savingAll ||
+    removingWatermark ||
+    extractionInProgress ||
+    aiBusy ||
+    splitRecords.length === 0;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -1187,6 +1351,69 @@ function Add() {
                 />
               </div>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">Manual extracted text (fallback)</h3>
+                <p className="text-xs text-zinc-500">
+                  If text extraction fails, upload a .txt file with page markers to continue AI generation.
+                </p>
+              </div>
+              <a
+                href="https://ihatepdf.cv/extract-text"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-semibold text-blue-700 transition hover:text-blue-800"
+              >
+                ihatepdf.cv/extract-text
+              </a>
+            </div>
+            <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label
+                className={`inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 ${
+                  manualUploadDisabled ? "cursor-not-allowed opacity-60" : ""
+                }`}
+              >
+                <Upload className="h-4 w-4" />
+                <span>
+                  {manualTextBusy
+                    ? "Applying..."
+                    : splitRecords.length
+                      ? "Upload extracted .txt"
+                      : "Generate splits first"}
+                </span>
+                <input
+                  ref={manualTextInputRef}
+                  type="file"
+                  accept=".txt,text/plain"
+                  disabled={manualUploadDisabled}
+                  onChange={handleManualTextUpload}
+                  className="hidden"
+                />
+              </label>
+              <div className="text-xs text-zinc-500">
+                Expected markers: <span className="font-mono">--- Page 1 ---</span>
+              </div>
+            </div>
+            {manualTextInfo && (
+              <div className="mt-2 text-xs text-zinc-500">
+                Loaded {manualTextInfo.fileName} ({manualTextInfo.pageCount} pages).
+              </div>
+            )}
+            <p className="mt-2 text-[11px] text-zinc-500">
+              Uploading replaces extracted text for matching pages and re-runs AI fields for updated splits.
+            </p>
+            <details className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+              <summary className="cursor-pointer font-semibold text-zinc-700">Example format</summary>
+              <pre className="mt-2 whitespace-pre-wrap rounded bg-white p-2 text-[11px] text-zinc-700">
+--- Page 1 ---
+Journal of Indian History and Culture September 2018, Twenty Fourth Issue
+
+--- Page 2 ---
+Editor: Dr. G. J. Sudhakar ...</pre>
+            </details>
           </div>
 
           {splitRecords.length === 0 ? (
