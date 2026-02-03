@@ -541,7 +541,7 @@ function Add() {
         const emptySplits: number[] = [];
         const updatedSplitIds = new Set<string>();
 
-        const nextSplits = splitRecordsRef.current.map((split) => {
+        const nextSplits: SplitRecord[] = splitRecordsRef.current.map((split) => {
           const parts: string[] = [];
           split.pages.forEach((page) => {
             if (!Object.prototype.hasOwnProperty.call(pageTextMap, page)) {
@@ -563,7 +563,7 @@ function Add() {
           }
 
           updatedSplitIds.add(split.id);
-          return {
+          const updated: SplitRecord = {
             ...split,
             extraction: {
               status: "done",
@@ -572,9 +572,10 @@ function Add() {
               language: split.extraction.language || null,
             },
           };
+          return updated;
         });
 
-        setSplitRecords(() => nextSplits);
+        setSplitRecords(nextSplits);
         setManualTextInfo({ fileName: uploaded.name, pageCount });
 
         const missingList = Array.from(missingPages).sort((a, b) => a - b);
