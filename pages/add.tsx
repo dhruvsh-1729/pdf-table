@@ -130,7 +130,10 @@ const summarizeResponseText = (raw: string) => {
   const trimmed = raw.trim();
   if (!trimmed) return "";
   const cleaned = trimmed.startsWith("<")
-    ? trimmed.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    ? trimmed
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
     : trimmed;
   return cleaned.slice(0, 240);
 };
@@ -164,6 +167,7 @@ function Add() {
   const manualTextInputRef = useRef<HTMLInputElement | null>(null);
   const [manualTextBusy, setManualTextBusy] = useState(false);
   const [manualTextInfo, setManualTextInfo] = useState<{ fileName: string; pageCount: number } | null>(null);
+  const [pendingManualText, setPendingManualText] = useState<File | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [removingWatermark, setRemovingWatermark] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number } | null>(null);
@@ -442,8 +446,7 @@ function Add() {
         }
         if (!payload) {
           const message =
-            summarizeResponseText(raw) ||
-            `AI generation failed: expected JSON (HTTP ${response.status}).`;
+            summarizeResponseText(raw) || `AI generation failed: expected JSON (HTTP ${response.status}).`;
           throw new Error(message);
         }
 
@@ -518,15 +521,12 @@ function Add() {
         const { data: payload, raw } = await readJsonResponse<any>(response);
         if (!response.ok) {
           const message =
-            payload?.error ||
-            summarizeResponseText(raw) ||
-            `Failed to extract text (HTTP ${response.status}).`;
+            payload?.error || summarizeResponseText(raw) || `Failed to extract text (HTTP ${response.status}).`;
           throw new Error(message);
         }
         if (!payload) {
           const message =
-            summarizeResponseText(raw) ||
-            `Failed to extract text: expected JSON (HTTP ${response.status}).`;
+            summarizeResponseText(raw) || `Failed to extract text: expected JSON (HTTP ${response.status}).`;
           throw new Error(message);
         }
 
@@ -575,7 +575,9 @@ function Add() {
       }
 
       const hasRunningExtraction = splitRecordsRef.current.some((s) => s.extraction.status === "running");
-      const hasAiBusy = splitRecordsRef.current.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
+      const hasAiBusy = splitRecordsRef.current.some((s) =>
+        Object.values(s.fields).some((f) => f.status === "loading"),
+      );
       if (hasRunningExtraction || hasAiBusy) {
         toast.error("Wait for extraction and AI tasks to finish before applying manual text.");
         return;
@@ -673,15 +675,52 @@ function Add() {
     [manualTextBusy, runInitialAi],
   );
 
+  const getManualTextReadiness = useCallback(() => {
+    if (manualTextBusy) {
+      return { ok: false, reason: "busy" as const };
+    }
+    if (!splitRecordsRef.current.length) {
+      return { ok: false, reason: "no-splits" as const };
+    }
+    const hasRunningExtraction = splitRecordsRef.current.some((s) => s.extraction.status === "running");
+    const hasAiBusy = splitRecordsRef.current.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
+    if (hasRunningExtraction || hasAiBusy) {
+      return { ok: false, reason: "processing" as const };
+    }
+    return { ok: true, reason: "ready" as const };
+  }, [manualTextBusy]);
+
   const handleManualTextUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const uploaded = event.target.files?.[0];
       if (!uploaded) return;
-      await applyManualExtractedText(uploaded);
+      const readiness = getManualTextReadiness();
+      if (!readiness.ok) {
+        setPendingManualText(uploaded);
+        if (readiness.reason === "no-splits") {
+          toast.info("Text file queued. Generate splits to apply it.");
+        } else if (readiness.reason === "processing") {
+          toast.info("Text file queued. It will apply once extraction and AI finish.");
+        } else {
+          toast.info("Text file queued. It will apply after the current task finishes.");
+        }
+      } else {
+        setPendingManualText(null);
+        await applyManualExtractedText(uploaded);
+      }
       if (manualTextInputRef.current) manualTextInputRef.current.value = "";
     },
-    [applyManualExtractedText],
+    [applyManualExtractedText, getManualTextReadiness],
   );
+
+  useEffect(() => {
+    if (!pendingManualText) return;
+    const readiness = getManualTextReadiness();
+    if (!readiness.ok) return;
+    void applyManualExtractedText(pendingManualText).finally(() => {
+      setPendingManualText(null);
+    });
+  }, [applyManualExtractedText, getManualTextReadiness, pendingManualText, splitRecords]);
 
   const generateSplits = useCallback(
     async (opts?: { downloadZip?: boolean }) => {
@@ -828,15 +867,12 @@ function Add() {
         const { data: payload, raw } = await readJsonResponse<any>(response);
         if (!response.ok) {
           const message =
-            payload?.error ||
-            summarizeResponseText(raw) ||
-            `Failed to save record (HTTP ${response.status}).`;
+            payload?.error || summarizeResponseText(raw) || `Failed to save record (HTTP ${response.status}).`;
           throw new Error(message);
         }
         if (!payload) {
           const message =
-            summarizeResponseText(raw) ||
-            `Failed to save record: expected JSON (HTTP ${response.status}).`;
+            summarizeResponseText(raw) || `Failed to save record: expected JSON (HTTP ${response.status}).`;
           throw new Error(message);
         }
 
@@ -873,17 +909,14 @@ function Add() {
               const { data: tagPayload, raw } = await readJsonResponse<any>(createResp);
               if (!tagPayload) {
                 const message =
-                  summarizeResponseText(raw) ||
-                  `Failed to parse tag response (HTTP ${createResp.status}).`;
+                  summarizeResponseText(raw) || `Failed to parse tag response (HTTP ${createResp.status}).`;
                 throw new Error(message);
               }
               if (tagPayload?.id) resolvedTagIds.push(tagPayload.id);
             } else {
               const { data: tagPayload, raw } = await readJsonResponse<any>(createResp);
               const message =
-                tagPayload?.error ||
-                summarizeResponseText(raw) ||
-                `Failed to create tag (HTTP ${createResp.status}).`;
+                tagPayload?.error || summarizeResponseText(raw) || `Failed to create tag (HTTP ${createResp.status}).`;
               throw new Error(message);
             }
           }
@@ -939,8 +972,7 @@ function Add() {
               const { data: authorPayload, raw } = await readJsonResponse<any>(createResp);
               if (!authorPayload) {
                 const message =
-                  summarizeResponseText(raw) ||
-                  `Failed to parse author response (HTTP ${createResp.status}).`;
+                  summarizeResponseText(raw) || `Failed to parse author response (HTTP ${createResp.status}).`;
                 throw new Error(message);
               }
               if (authorPayload?.id) resolvedAuthorIds.push(authorPayload.id);
@@ -1034,15 +1066,12 @@ function Add() {
       const { data: payload, raw } = await readJsonResponse<any>(response);
       if (!response.ok) {
         const message =
-          payload?.error ||
-          summarizeResponseText(raw) ||
-          `Watermark removal failed (HTTP ${response.status}).`;
+          payload?.error || summarizeResponseText(raw) || `Watermark removal failed (HTTP ${response.status}).`;
         throw new Error(message);
       }
       if (!payload) {
         const message =
-          summarizeResponseText(raw) ||
-          `Watermark removal failed: expected JSON (HTTP ${response.status}).`;
+          summarizeResponseText(raw) || `Watermark removal failed: expected JSON (HTTP ${response.status}).`;
         throw new Error(message);
       }
 
@@ -1092,14 +1121,6 @@ function Add() {
 
   const extractionInProgress = splitRecords.some((s) => s.extraction.status === "running");
   const aiBusy = splitRecords.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
-  const manualUploadDisabled =
-    manualTextBusy ||
-    generatingSplits ||
-    savingAll ||
-    removingWatermark ||
-    extractionInProgress ||
-    aiBusy ||
-    splitRecords.length === 0;
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -1503,24 +1524,19 @@ function Add() {
               </a>
             </div>
             <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <label
-                className={`inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 ${
-                  manualUploadDisabled ? "cursor-not-allowed opacity-60" : ""
-                }`}
-              >
+              <label className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50">
                 <Upload className="h-4 w-4" />
                 <span>
                   {manualTextBusy
                     ? "Applying..."
-                    : splitRecords.length
-                      ? "Upload extracted .txt"
-                      : "Generate splits first"}
+                    : pendingManualText
+                      ? "Queued extracted .txt"
+                      : "Upload extracted .txt"}
                 </span>
                 <input
                   ref={manualTextInputRef}
                   type="file"
                   accept=".txt,text/plain"
-                  disabled={manualUploadDisabled}
                   onChange={handleManualTextUpload}
                   className="hidden"
                 />
@@ -1540,11 +1556,9 @@ function Add() {
             <details className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
               <summary className="cursor-pointer font-semibold text-zinc-700">Example format</summary>
               <pre className="mt-2 whitespace-pre-wrap rounded bg-white p-2 text-[11px] text-zinc-700">
---- Page 1 ---
-Journal of Indian History and Culture September 2018, Twenty Fourth Issue
-
---- Page 2 ---
-Editor: Dr. G. J. Sudhakar ...</pre>
+                --- Page 1 --- Journal of Indian History and Culture September 2018, Twenty Fourth Issue --- Page 2 ---
+                Editor: Dr. G. J. Sudhakar ...
+              </pre>
             </details>
           </div>
 
