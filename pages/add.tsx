@@ -114,6 +114,33 @@ const parseExtractedTextFile = (raw: string): PageTextMap => {
   return pageText;
 };
 
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+
+const apiUrl = (path: string) => `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+
+const safeJsonParse = <T,>(raw: string): T | null => {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+};
+
+const summarizeResponseText = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const cleaned = trimmed.startsWith("<")
+    ? trimmed.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    : trimmed;
+  return cleaned.slice(0, 240);
+};
+
+const readJsonResponse = async <T,>(response: Response): Promise<{ data: T | null; raw: string }> => {
+  const raw = await response.text();
+  const data = raw ? safeJsonParse<T>(raw) : null;
+  return { data, raw };
+};
+
 function Add() {
   const [isClient, setIsClient] = useState(false);
   const [reactPdf, setReactPdf] = useState<{ Document: any; Page: any } | null>(null);
@@ -196,9 +223,15 @@ function Add() {
 
   const loadMagazineOptions = useCallback(async (inputValue: string) => {
     try {
-      const response = await fetch(`/api/magazine-names?q=${encodeURIComponent(inputValue || "")}`);
-      if (!response.ok) throw new Error("Failed to fetch magazine names");
-      const data = await response.json();
+      const response = await fetch(apiUrl(`/api/magazine-names?q=${encodeURIComponent(inputValue || "")}`));
+      const { data, raw } = await readJsonResponse<string[]>(response);
+      if (!response.ok || !data) {
+        const message =
+          (data as any)?.error ||
+          summarizeResponseText(raw) ||
+          `Failed to fetch magazine names (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
       return (data || []).map((name: string) => ({ label: name, value: name }));
     } catch (error) {
       console.error("Error loading magazine names:", error);
@@ -396,14 +429,22 @@ function Add() {
       );
 
       try {
-        const response = await fetch("/api/ai/split-fields", {
+        const response = await fetch(apiUrl("/api/ai/split-fields"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, field, label: split.fileName, variant }),
         });
-        const payload = await response.json();
+        const { data: payload, raw } = await readJsonResponse<any>(response);
         if (!response.ok) {
-          throw new Error(payload.error || "AI generation failed.");
+          const message =
+            payload?.error || summarizeResponseText(raw) || `AI generation failed (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
+        if (!payload) {
+          const message =
+            summarizeResponseText(raw) ||
+            `AI generation failed: expected JSON (HTTP ${response.status}).`;
+          throw new Error(message);
         }
 
         const value =
@@ -473,9 +514,21 @@ function Add() {
         formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
         formData.append("allowOcr", "false");
 
-        const response = await fetch("/api/extract-text-file", { method: "POST", body: formData });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Failed to extract text.");
+        const response = await fetch(apiUrl("/api/extract-text-file"), { method: "POST", body: formData });
+        const { data: payload, raw } = await readJsonResponse<any>(response);
+        if (!response.ok) {
+          const message =
+            payload?.error ||
+            summarizeResponseText(raw) ||
+            `Failed to extract text (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
+        if (!payload) {
+          const message =
+            summarizeResponseText(raw) ||
+            `Failed to extract text: expected JSON (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
 
         const extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
         setSplitRecords((prev) =>
@@ -771,9 +824,21 @@ function Add() {
         formData.append("json", JSON.stringify(jsonPayload));
         formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
 
-        const response = await fetch("/api/upload", { method: "POST", body: formData });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Failed to save record.");
+        const response = await fetch(apiUrl("/api/upload"), { method: "POST", body: formData });
+        const { data: payload, raw } = await readJsonResponse<any>(response);
+        if (!response.ok) {
+          const message =
+            payload?.error ||
+            summarizeResponseText(raw) ||
+            `Failed to save record (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
+        if (!payload) {
+          const message =
+            summarizeResponseText(raw) ||
+            `Failed to save record: expected JSON (HTTP ${response.status}).`;
+          throw new Error(message);
+        }
 
         const recordId = payload?.record?.id || payload?.id || null;
 
@@ -784,34 +849,58 @@ function Add() {
         if (recordId && tags.length) {
           const resolvedTagIds: number[] = [];
           for (const tag of tags) {
-            const createResp = await fetch("/api/tags", {
+            const createResp = await fetch(apiUrl("/api/tags"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ name: tag }),
             });
 
             if (createResp.status === 409) {
-              const lookup = await fetch(`/api/tags?q=${encodeURIComponent(tag)}`);
-              const lookupData = await lookup.json();
+              const lookup = await fetch(apiUrl(`/api/tags?q=${encodeURIComponent(tag)}`));
+              const { data: lookupData, raw } = await readJsonResponse<any>(lookup);
+              if (!lookup.ok || !lookupData) {
+                const message =
+                  (lookupData as any)?.error ||
+                  summarizeResponseText(raw) ||
+                  `Failed to resolve tag (HTTP ${lookup.status}).`;
+                throw new Error(message);
+              }
               const match = Array.isArray(lookupData)
                 ? lookupData.find((t: any) => (t.name || "").toLowerCase() === tag.toLowerCase())
                 : null;
               if (match?.id) resolvedTagIds.push(match.id);
             } else if (createResp.ok) {
-              const tagPayload = await createResp.json();
+              const { data: tagPayload, raw } = await readJsonResponse<any>(createResp);
+              if (!tagPayload) {
+                const message =
+                  summarizeResponseText(raw) ||
+                  `Failed to parse tag response (HTTP ${createResp.status}).`;
+                throw new Error(message);
+              }
               if (tagPayload?.id) resolvedTagIds.push(tagPayload.id);
+            } else {
+              const { data: tagPayload, raw } = await readJsonResponse<any>(createResp);
+              const message =
+                tagPayload?.error ||
+                summarizeResponseText(raw) ||
+                `Failed to create tag (HTTP ${createResp.status}).`;
+              throw new Error(message);
             }
           }
 
           if (resolvedTagIds.length) {
-            const tagResp = await fetch("/api/record-tags", {
+            const tagResp = await fetch(apiUrl("/api/record-tags"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ recordId, tagIds: resolvedTagIds }),
             });
             if (!tagResp.ok) {
-              const tagPayload = await tagResp.json();
-              throw new Error(tagPayload?.error || "Failed to attach tags to record.");
+              const { data: tagPayload, raw } = await readJsonResponse<any>(tagResp);
+              const message =
+                tagPayload?.error ||
+                summarizeResponseText(raw) ||
+                `Failed to attach tags to record (HTTP ${tagResp.status}).`;
+              throw new Error(message);
             }
           }
         }
@@ -826,34 +915,58 @@ function Add() {
         if (recordId && authorsList.length) {
           const resolvedAuthorIds: number[] = [];
           for (const author of authorsList) {
-            const createResp = await fetch("/api/authors", {
+            const createResp = await fetch(apiUrl("/api/authors"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ name: author }),
             });
 
             if (createResp.status === 409) {
-              const lookup = await fetch(`/api/authors?q=${encodeURIComponent(author)}`);
-              const lookupData = await lookup.json();
+              const lookup = await fetch(apiUrl(`/api/authors?q=${encodeURIComponent(author)}`));
+              const { data: lookupData, raw } = await readJsonResponse<any>(lookup);
+              if (!lookup.ok || !lookupData) {
+                const message =
+                  (lookupData as any)?.error ||
+                  summarizeResponseText(raw) ||
+                  `Failed to resolve author (HTTP ${lookup.status}).`;
+                throw new Error(message);
+              }
               const match = Array.isArray(lookupData)
                 ? lookupData.find((a: any) => (a.name || "").toLowerCase() === author.toLowerCase())
                 : null;
               if (match?.id) resolvedAuthorIds.push(match.id);
             } else if (createResp.ok) {
-              const authorPayload = await createResp.json();
+              const { data: authorPayload, raw } = await readJsonResponse<any>(createResp);
+              if (!authorPayload) {
+                const message =
+                  summarizeResponseText(raw) ||
+                  `Failed to parse author response (HTTP ${createResp.status}).`;
+                throw new Error(message);
+              }
               if (authorPayload?.id) resolvedAuthorIds.push(authorPayload.id);
+            } else {
+              const { data: authorPayload, raw } = await readJsonResponse<any>(createResp);
+              const message =
+                authorPayload?.error ||
+                summarizeResponseText(raw) ||
+                `Failed to create author (HTTP ${createResp.status}).`;
+              throw new Error(message);
             }
           }
 
           if (resolvedAuthorIds.length) {
-            const authorResp = await fetch("/api/record-authors", {
+            const authorResp = await fetch(apiUrl("/api/record-authors"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ recordId, authorIds: resolvedAuthorIds }),
             });
             if (!authorResp.ok) {
-              const authorPayload = await authorResp.json();
-              throw new Error(authorPayload?.error || "Failed to attach authors to record.");
+              const { data: authorPayload, raw } = await readJsonResponse<any>(authorResp);
+              const message =
+                authorPayload?.error ||
+                summarizeResponseText(raw) ||
+                `Failed to attach authors to record (HTTP ${authorResp.status}).`;
+              throw new Error(message);
             }
           }
         }
@@ -917,9 +1030,21 @@ function Add() {
       const mergedBlob = new Blob([mergedBytes.buffer as ArrayBuffer], { type: "application/pdf" });
       formData.append("pdf", mergedBlob, mergedFilename);
 
-      const response = await fetch("/api/pdf/remove-watermark", { method: "POST", body: formData });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Watermark removal failed.");
+      const response = await fetch(apiUrl("/api/pdf/remove-watermark"), { method: "POST", body: formData });
+      const { data: payload, raw } = await readJsonResponse<any>(response);
+      if (!response.ok) {
+        const message =
+          payload?.error ||
+          summarizeResponseText(raw) ||
+          `Watermark removal failed (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
+      if (!payload) {
+        const message =
+          summarizeResponseText(raw) ||
+          `Watermark removal failed: expected JSON (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
 
       const cleanedUrl = payload.cleaned_url as string | undefined;
       if (!cleanedUrl) throw new Error("No cleaned PDF URL returned.");
