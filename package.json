@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "backfill:authors": "node --env-file=.env scripts/backfill-authors.mjs",
-    "backfill:extracted-text": "node --env-file=.env scripts/backfill-extracted-text.mjs"
+    "backfill:extracted-text": "node --env-file=.env scripts/backfill-extracted-text.mjs",
+    "backfill:untagged-tags": "node --env-file=.env scripts/backfill-untagged-tags.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.86",

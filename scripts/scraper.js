@@ -23,6 +23,9 @@
  *   node vedanta_kesari_puppeteer.js 2023 1 1
  *     => year=2023, month=1 (Jan), limit=1 article (test run)
  *
+ *   node vedanta_kesari_puppeteer.js 2023 1 50 6
+ *     => year=2023, month=1, limit=50 articles, article-concurrency=6
+ *
  *   node vedanta_kesari_puppeteer.js 2023
  *     => year=2023, all months, all articles
  *
@@ -30,6 +33,14 @@
  *   SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
  *   SARVAM_API_KEY
+ *
+ * Optional env:
+ *   SCRAPER_CONCURRENCY
+ *   SCRAPER_AI_CONCURRENCY
+ *   SCRAPER_RELATION_CONCURRENCY
+ *   SCRAPER_TIMEOUT_LOG_PATH
+ *   SCRAPER_YEAR_TIMEOUT_RETRIES
+ *   SCRAPER_ARTICLE_TIMEOUT_RETRIES
  */
 
 const fs = require("fs/promises");
@@ -96,6 +107,26 @@ if (!SARVAM_API_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const sarvamClient = new SarvamAIClient({ apiSubscriptionKey: SARVAM_API_KEY });
 
+function parsePositiveInt(value, fallback) {
+  const n = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+const ARTICLE_CONCURRENCY = Math.min(32, parsePositiveInt(process.env.SCRAPER_CONCURRENCY, 4));
+const AI_CONCURRENCY = Math.min(
+  64,
+  parsePositiveInt(process.env.SCRAPER_AI_CONCURRENCY, Math.max(6, ARTICLE_CONCURRENCY * 2)),
+);
+const RELATION_CONCURRENCY = Math.min(64, parsePositiveInt(process.env.SCRAPER_RELATION_CONCURRENCY, 8));
+const TIMEOUT_LOG_PATH =
+  process.env.SCRAPER_TIMEOUT_LOG_PATH || path.join(process.cwd(), "logs", "scraper-timeouts.log");
+const YEAR_TIMEOUT_RETRIES = Math.max(1, Math.min(5, parsePositiveInt(process.env.SCRAPER_YEAR_TIMEOUT_RETRIES, 2)));
+const ARTICLE_TIMEOUT_RETRIES = Math.max(
+  1,
+  Math.min(3, parsePositiveInt(process.env.SCRAPER_ARTICLE_TIMEOUT_RETRIES, 2)),
+);
+
 /* ======================= DATE HELPERS ======================= */
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -108,6 +139,12 @@ function issueTimestamp(year, month1to12) {
 function issueVolume(month1to12) {
   // per your requirement: Jan -> 1, Feb -> 2, ...
   return String(month1to12);
+}
+
+function normalizeMonthValue(value) {
+  const n = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(n) || n < 1 || n > 12) return null;
+  return n;
 }
 
 /* ======================= SMALL UTIL HELPERS ======================= */
@@ -166,6 +203,93 @@ function normalizeAuthors(rawText) {
   }
   return out;
 }
+
+function isTimeoutError(err) {
+  const name = String(err?.name || "").toLowerCase();
+  const msg = String(err?.message || err || "").toLowerCase();
+  return (
+    name.includes("timeout") ||
+    name === "aborterror" ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("navigation timeout") ||
+    msg.includes("waitforfunction failed") ||
+    msg.includes("operation was aborted") ||
+    msg.includes("net::err_timed_out") ||
+    msg.includes("etimedout")
+  );
+}
+
+async function logTimeoutError({ scope, year, attempt, maxAttempts, articleUrl, error }) {
+  const text = String(error?.stack || error?.message || error || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const line = `[${new Date().toISOString()}] scope=${scope} year=${year ?? "-"} attempt=${attempt}/${maxAttempts}${
+    articleUrl ? ` article=${articleUrl}` : ""
+  } error="${text}"\n`;
+
+  try {
+    await fs.mkdir(path.dirname(TIMEOUT_LOG_PATH), { recursive: true });
+    await fs.appendFile(TIMEOUT_LOG_PATH, line, "utf8");
+  } catch (logErr) {
+    console.error(`Failed writing timeout log to ${TIMEOUT_LOG_PATH}:`, logErr?.message || logErr);
+  }
+}
+
+function isDuplicateError(msg) {
+  const m = String(msg || "").toLowerCase();
+  return m.includes("duplicate") || m.includes("unique");
+}
+
+function createLimiter(maxConcurrent) {
+  let active = 0;
+  const queue = [];
+
+  function runNext() {
+    if (active >= maxConcurrent) return;
+    const next = queue.shift();
+    if (!next) return;
+
+    active += 1;
+    Promise.resolve()
+      .then(next.task)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        active -= 1;
+        runNext();
+      });
+  }
+
+  return (task) =>
+    new Promise((resolve, reject) => {
+      queue.push({ task, resolve, reject });
+      runNext();
+    });
+}
+
+async function runWithConcurrency(items, maxConcurrent, worker) {
+  const input = Array.isArray(items) ? items : [];
+  if (!input.length) return [];
+
+  const results = new Array(input.length);
+  let cursor = 0;
+
+  async function workerLoop() {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= input.length) return;
+      results[idx] = await worker(input[idx], idx);
+    }
+  }
+
+  const poolSize = Math.min(maxConcurrent, input.length);
+  await Promise.all(Array.from({ length: poolSize }, () => workerLoop()));
+  return results;
+}
+
+const runAiTask = createLimiter(AI_CONCURRENCY);
+const runRelationTask = createLimiter(RELATION_CONCURRENCY);
 
 /* ======================= SARVAM AI ======================= */
 
@@ -255,85 +379,116 @@ async function insertRecord(row) {
   return data;
 }
 
+const tagCache = new Map();
+const authorCache = new Map();
+
+function getCachedEntity(cache, key, resolver) {
+  if (cache.has(key)) return cache.get(key);
+  const pending = Promise.resolve()
+    .then(resolver)
+    .catch((err) => {
+      cache.delete(key);
+      throw err;
+    });
+  cache.set(key, pending);
+  return pending;
+}
+
+async function findTagByName(name) {
+  const { data, error } = await supabase.from("tags").select("id,name").ilike("name", name).limit(1);
+  if (error) throw new Error(error.message);
+  return data?.[0] || null;
+}
+
 async function upsertTagByName(name) {
   const trimmed = String(name || "").trim();
   if (!trimmed) return null;
 
-  // try find (case-insensitive)
-  const { data: found, error: findErr } = await supabase.from("tags").select("id,name").ilike("name", trimmed);
+  const key = trimmed.toLowerCase();
+  return getCachedEntity(tagCache, key, async () => {
+    const found = await findTagByName(trimmed);
+    if (found) return found;
 
-  if (findErr) throw new Error(findErr.message);
-  if (found && found.length) return found[0];
+    const { data: created, error: createErr } = await supabase.from("tags").insert({ name: trimmed }).select().single();
+    if (!createErr) return created;
 
-  // create
-  const { data: created, error: createErr } = await supabase.from("tags").insert({ name: trimmed }).select().single();
+    if (isDuplicateError(createErr.message)) {
+      const raceWinner = await findTagByName(trimmed);
+      if (raceWinner) return raceWinner;
+    }
+    throw new Error(createErr.message);
+  });
+}
 
-  if (createErr) throw new Error(createErr.message);
-  return created;
+async function findAuthorByName(name) {
+  const { data, error } = await supabase.from("authors").select("id,name").ilike("name", name).limit(1);
+  if (error) throw new Error(error.message);
+  return data?.[0] || null;
 }
 
 async function upsertAuthorByName(name) {
   const trimmed = String(name || "").trim();
   if (!trimmed || /^unknown$/i.test(trimmed)) return null;
 
-  const { data: found, error: findErr } = await supabase.from("authors").select("id,name").ilike("name", trimmed);
+  const key = trimmed.toLowerCase();
+  return getCachedEntity(authorCache, key, async () => {
+    const found = await findAuthorByName(trimmed);
+    if (found) return found;
 
-  if (findErr) throw new Error(findErr.message);
-  if (found && found.length) return found[0];
+    const { data: created, error: createErr } = await supabase
+      .from("authors")
+      .insert({ name: trimmed })
+      .select()
+      .single();
 
-  const { data: created, error: createErr } = await supabase
-    .from("authors")
-    .insert({ name: trimmed })
-    .select()
-    .single();
+    if (!createErr) return created;
 
-  if (createErr) throw new Error(createErr.message);
-  return created;
+    if (isDuplicateError(createErr.message)) {
+      const raceWinner = await findAuthorByName(trimmed);
+      if (raceWinner) return raceWinner;
+    }
+    throw new Error(createErr.message);
+  });
 }
 
 async function attachTags(recordId, tags) {
   const cleaned = uniqByLower(tags).slice(0, 10);
-  for (const t of cleaned) {
-    const tag = await upsertTagByName(t);
-    if (!tag?.id) continue;
+  await Promise.all(
+    cleaned.map((t) =>
+      runRelationTask(async () => {
+        const tag = await upsertTagByName(t);
+        if (!tag?.id) return;
 
-    const { error } = await supabase.from("record_tags").insert({
-      record_id: recordId,
-      tag_id: tag.id,
-    });
-    if (error) {
-      // ignore duplicates due to primary key constraint
-      if (
-        !String(error.message || "")
-          .toLowerCase()
-          .includes("duplicate")
-      ) {
-        throw new Error(error.message);
-      }
-    }
-  }
+        const { error } = await supabase.from("record_tags").insert({
+          record_id: recordId,
+          tag_id: tag.id,
+        });
+        if (error && !isDuplicateError(error.message)) {
+          throw new Error(error.message);
+        }
+      }),
+    ),
+  );
 }
 
 async function attachAuthors(recordId, authors) {
   const cleaned = uniqByLower(authors).slice(0, 12);
-  for (const a of cleaned) {
-    const author = await upsertAuthorByName(a);
-    if (!author?.id) continue;
+  await Promise.all(
+    cleaned.map((a) =>
+      runRelationTask(async () => {
+        const author = await upsertAuthorByName(a);
+        if (!author?.id) return;
 
-    const { error } = await supabase.from("record_authors").insert({
-      record_id: recordId,
-      author_id: author.id,
-    });
-    if (error) {
-      if (
-        !String(error.message || "")
-          .toLowerCase()
-          .includes("duplicate")
-      ) {
-        throw new Error(error.message);
-      }
-    }
-  }
+        const { error } = await supabase.from("record_authors").insert({
+          record_id: recordId,
+          author_id: author.id,
+        });
+        if (error && !isDuplicateError(error.message)) {
+          throw new Error(error.message);
+        }
+      }),
+    ),
+  );
 }
 
 /* ======================= PDF / TEXT EXTRACT ======================= */
@@ -463,15 +618,19 @@ async function collectYearArticleLinks(page, year) {
     const walker = document.createTreeWalker(sidebar, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null, false);
 
     let results = [];
-    let currentMonth = 1; // Default to Jan if not found
+    let currentMonth = null;
     let node;
 
     while ((node = walker.nextNode())) {
       if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent.trim().toLowerCase();
-        // Check if this text node looks like a month header (e.g., "January 2023")
+        const parentTag = node.parentElement?.tagName || "";
+        if (parentTag === "A") continue;
+
+        const text = node.textContent.replace(/\s+/g, " ").trim().toLowerCase();
+        // Check if this text node looks like a month header (e.g., "January" or "January 2023")
         for (const mName of monthNames) {
-          if (text.startsWith(mName.toLowerCase()) && text.includes(yearStr)) {
+          const key = mName.toLowerCase();
+          if (text === key || text === `${key} ${yearStr}` || text.startsWith(`${key} `)) {
             currentMonth = monthMap[mName.toLowerCase()];
             break;
           }
@@ -482,7 +641,7 @@ async function collectYearArticleLinks(page, year) {
           results.push({
             href: href,
             text: node.textContent.trim(),
-            guessMonth: currentMonth,
+            guessMonth: currentMonth || null,
           });
         }
       }
@@ -493,7 +652,9 @@ async function collectYearArticleLinks(page, year) {
   // make absolute
   const results = items.map((x) => {
     const url = x.href.startsWith("http") ? x.href : `${BASE}${x.href}`;
-    return { url, guessMonth: x.guessMonth, label: x.text };
+    const inferredMonth = monthFromText(`${x.text || ""} ${url}`) || null;
+    const guessMonth = normalizeMonthValue(x.guessMonth) || normalizeMonthValue(inferredMonth);
+    return { url, guessMonth, label: x.text };
   });
 
   // de-dup urls
@@ -585,10 +746,12 @@ async function processOneArticle({ browser, articleUrl, year, month }) {
     const vol = issueVolume(month);
 
     // AI fields
-    const summary = await sarvamGenerate("summary", extractedText, title || "");
-    const conclusion = await sarvamGenerate("conclusion", extractedText, title || "");
-    const tags = await sarvamGenerate("tags", extractedText, title || "");
-    const authors = await sarvamGenerate("authors", extractedText, title || "");
+    const [summary, conclusion, tags, authors] = await Promise.all([
+      runAiTask(() => sarvamGenerate("summary", extractedText, title || "")),
+      runAiTask(() => sarvamGenerate("conclusion", extractedText, title || "")),
+      runAiTask(() => sarvamGenerate("tags", extractedText, title || "")),
+      runAiTask(() => sarvamGenerate("authors", extractedText, title || "")),
+    ]);
 
     // Insert record
     const recordRow = {
@@ -613,8 +776,10 @@ async function processOneArticle({ browser, articleUrl, year, month }) {
     const recordId = rec.id;
 
     // attach pivots
-    if (Array.isArray(tags) && tags.length) await attachTags(recordId, tags);
-    if (Array.isArray(authors) && authors.length) await attachAuthors(recordId, authors);
+    await Promise.all([
+      Array.isArray(tags) && tags.length ? attachTags(recordId, tags) : Promise.resolve(),
+      Array.isArray(authors) && authors.length ? attachAuthors(recordId, authors) : Promise.resolve(),
+    ]);
 
     console.log(`✅ Inserted record ${recordId}: ${title || articleUrl}`);
     return recordId;
@@ -623,7 +788,39 @@ async function processOneArticle({ browser, articleUrl, year, month }) {
   }
 }
 
-async function run(year, month, limit) {
+async function processOneArticleWithRetry(params) {
+  for (let attempt = 1; attempt <= ARTICLE_TIMEOUT_RETRIES; attempt += 1) {
+    try {
+      return await processOneArticle(params);
+    } catch (err) {
+      const timeout = isTimeoutError(err);
+      const lastAttempt = attempt >= ARTICLE_TIMEOUT_RETRIES;
+
+      if (timeout) {
+        await logTimeoutError({
+          scope: "article",
+          year: params.year,
+          attempt,
+          maxAttempts: ARTICLE_TIMEOUT_RETRIES,
+          articleUrl: params.articleUrl,
+          error: err,
+        });
+      }
+
+      if (timeout && !lastAttempt) {
+        console.warn(
+          `Timeout for article ${params.articleUrl} (year=${params.year}, attempt ${attempt}/${ARTICLE_TIMEOUT_RETRIES}). Retrying...`,
+        );
+        continue;
+      }
+
+      throw err;
+    }
+  }
+  return null;
+}
+
+async function run(year, month, limit, articleConcurrency = ARTICLE_CONCURRENCY) {
   const browser = await puppeteer.launch({
     headless: "new",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -631,9 +828,13 @@ async function run(year, month, limit) {
 
   try {
     const page = await browser.newPage();
-    await page.goto(PORTAL, { waitUntil: "networkidle2" });
-
-    const items = await collectYearArticleLinks(page, year);
+    let items = [];
+    try {
+      await page.goto(PORTAL, { waitUntil: "networkidle2" });
+      items = await collectYearArticleLinks(page, year);
+    } finally {
+      await page.close();
+    }
 
     // filter by month if possible
     let filtered = items;
@@ -647,24 +848,84 @@ async function run(year, month, limit) {
     }
 
     const toProcess = typeof limit === "number" && limit > 0 ? filtered.slice(0, limit) : filtered;
+    const effectiveConcurrency = Math.max(1, Math.min(articleConcurrency, toProcess.length));
 
-    console.log(`Found ${items.length} total, processing ${toProcess.length} articles...`);
+    console.log(
+      `Found ${items.length} total, processing ${toProcess.length} articles (article concurrency=${effectiveConcurrency}, AI concurrency=${AI_CONCURRENCY}, relation concurrency=${RELATION_CONCURRENCY})...`,
+    );
 
     // If month was not inferable for some items, they will still be processed.
     // In that case, we use the provided month if you supplied it, else try to
     // use guessed month or default to 1.
-    for (const item of toProcess) {
-      const resolvedMonth = month || item.guessMonth || 1;
-      await processOneArticle({
-        browser,
-        articleUrl: item.url,
-        year,
-        month: resolvedMonth,
-      });
-    }
+    let inserted = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    await runWithConcurrency(toProcess, effectiveConcurrency, async (item, idx) => {
+      const forcedMonth = normalizeMonthValue(month);
+      const guessedMonth = normalizeMonthValue(item.guessMonth);
+      const inferredMonth = normalizeMonthValue(monthFromText(`${item.label || ""} ${item.url || ""}`));
+      const resolvedMonth = forcedMonth || guessedMonth || inferredMonth || 1;
+      if (!forcedMonth && !guessedMonth && !inferredMonth) {
+        console.warn(`Month not detected for ${item.url}; defaulting timestamp month to Jan ${year}.`);
+      }
+      try {
+        const recordId = await processOneArticleWithRetry({
+          browser,
+          articleUrl: item.url,
+          year,
+          month: resolvedMonth,
+        });
+        if (recordId) inserted += 1;
+        else skipped += 1;
+      } catch (err) {
+        failed += 1;
+        const message = err && err.message ? err.message : String(err);
+        console.error(`❌ Failed article ${idx + 1}/${toProcess.length}: ${item.url}\n   ${message}`);
+      }
+    });
+
+    console.log(`Year ${year} done: inserted=${inserted}, skipped=${skipped}, failed=${failed}`);
   } finally {
     await browser.close();
   }
+}
+
+async function runYearWithRetry(year, month, limit, articleConcurrency) {
+  for (let attempt = 1; attempt <= YEAR_TIMEOUT_RETRIES; attempt += 1) {
+    try {
+      await run(year, month, limit, articleConcurrency);
+      return true;
+    } catch (err) {
+      const timeout = isTimeoutError(err);
+      const lastAttempt = attempt >= YEAR_TIMEOUT_RETRIES;
+
+      if (timeout) {
+        await logTimeoutError({
+          scope: "year",
+          year,
+          attempt,
+          maxAttempts: YEAR_TIMEOUT_RETRIES,
+          error: err,
+        });
+      }
+
+      if (timeout && !lastAttempt) {
+        console.warn(`Timeout while processing year ${year} (attempt ${attempt}/${YEAR_TIMEOUT_RETRIES}). Retrying...`);
+        continue;
+      }
+
+      if (timeout) {
+        console.error(
+          `Year ${year} failed due to timeout after ${YEAR_TIMEOUT_RETRIES} attempts. Moving to next year.`,
+        );
+      } else {
+        console.error(`Year ${year} failed: ${err?.message || err}. Moving to next year.`);
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 /* ======================= CLI ======================= */
@@ -672,6 +933,7 @@ async function run(year, month, limit) {
 function parseCli() {
   // Accept:
   //   node vedanta_kesari_puppeteer.js 2023 1 1
+  //   node vedanta_kesari_puppeteer.js 2023 1 50 6
   //   node vedanta_kesari_puppeteer.js 2023
   //   node vedanta_kesari_puppeteer.js
   const argv = process.argv
@@ -681,35 +943,46 @@ function parseCli() {
   const year = argv[0] ? parseInt(argv[0], 10) : null;
   const month = argv[1] ? parseInt(argv[1], 10) : null;
   const limit = argv[2] ? parseInt(argv[2], 10) : null;
+  const concurrency = argv[3] ? parseInt(argv[3], 10) : null;
 
   if (year !== null && (!year || isNaN(year))) {
-    console.error("Usage: node vedanta_kesari_puppeteer.js [year] [month] [limit]");
+    console.error("Usage: node vedanta_kesari_puppeteer.js [year] [month] [limit] [concurrency]");
     process.exit(1);
   }
   if (month && (month < 1 || month > 12)) {
     console.error("month must be 1-12");
     process.exit(1);
   }
-  return { year, month, limit };
+  if (concurrency !== null && (!concurrency || isNaN(concurrency) || concurrency < 1)) {
+    console.error("concurrency must be a positive integer");
+    process.exit(1);
+  }
+  return { year, month, limit, concurrency };
 }
 
 (async () => {
-  const { year, month, limit } = parseCli();
+  const { year, month, limit, concurrency } = parseCli();
+  const articleConcurrency = concurrency || ARTICLE_CONCURRENCY;
+  let failedYears = 0;
   if (year) {
-    console.log(`Running scrape for year=${year}, month=${month || "ALL"}, limit=${limit || "ALL"}`);
-    await run(year, month, limit);
+    console.log(
+      `Running scrape for year=${year}, month=${month || "ALL"}, limit=${limit || "ALL"}, concurrency=${articleConcurrency}`,
+    );
+    const ok = await runYearWithRetry(year, month, limit, articleConcurrency);
+    if (!ok) failedYears += 1;
   } else {
-    const startYear = 2018;
+    const startYear = 2016;
     const endYear = 1915;
     console.log(
-      `Running scrape for years ${startYear} down to ${endYear}, month=${month || "ALL"}, limit=${limit || "ALL"}`,
+      `Running scrape for years ${startYear} down to ${endYear}, month=${month || "ALL"}, limit=${limit || "ALL"}, concurrency=${articleConcurrency}`,
     );
     for (let y = startYear; y >= endYear; y -= 1) {
       console.log(`\n=== Year ${y} ===`);
-      await run(y, month, limit);
+      const ok = await runYearWithRetry(y, month, limit, articleConcurrency);
+      if (!ok) failedYears += 1;
     }
   }
-  console.log("Done.");
+  console.log(`Done. Failed years: ${failedYears}. Timeout log: ${TIMEOUT_LOG_PATH}`);
 })().catch((e) => {
   console.error("Fatal:", e);
   process.exit(1);
