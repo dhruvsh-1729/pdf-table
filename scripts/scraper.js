@@ -416,21 +416,84 @@ async function collectYearArticleLinks(page, year) {
     { timeout: 60000 },
   );
 
-  // grab link hrefs + visible text
-  const items = await page.$$eval("a", (as) =>
-    as
-      .map((a) => ({
-        href: a.getAttribute("href") || "",
-        text: (a.textContent || "").trim(),
-      }))
-      .filter((x) => x.href.includes("/a/") && x.text),
-  );
+  // Use a more robust way to collect links and their associated months from the sidebar
+  const items = await page.evaluate((yearStr) => {
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const monthMap = {
+      january: 1,
+      jan: 1,
+      february: 2,
+      feb: 2,
+      march: 3,
+      mar: 3,
+      april: 4,
+      apr: 4,
+      may: 5,
+      june: 6,
+      jun: 6,
+      july: 7,
+      jul: 7,
+      august: 8,
+      aug: 8,
+      september: 9,
+      sep: 9,
+      october: 10,
+      oct: 10,
+      november: 11,
+      nov: 11,
+      december: 12,
+      dec: 12,
+    };
 
-  // make absolute + attempt month inference from text
+    // The sidebar is usually in a scrollable container
+    const sidebar = document.querySelector(".z-ovf-y\\:auto") || document.body;
+    const walker = document.createTreeWalker(sidebar, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null, false);
+
+    let results = [];
+    let currentMonth = 1; // Default to Jan if not found
+    let node;
+
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent.trim().toLowerCase();
+        // Check if this text node looks like a month header (e.g., "January 2023")
+        for (const mName of monthNames) {
+          if (text.startsWith(mName.toLowerCase()) && text.includes(yearStr)) {
+            currentMonth = monthMap[mName.toLowerCase()];
+            break;
+          }
+        }
+      } else if (node.tagName === "A") {
+        const href = node.getAttribute("href");
+        if (href && href.includes("/a/")) {
+          results.push({
+            href: href,
+            text: node.textContent.trim(),
+            guessMonth: currentMonth,
+          });
+        }
+      }
+    }
+    return results;
+  }, String(year));
+
+  // make absolute
   const results = items.map((x) => {
     const url = x.href.startsWith("http") ? x.href : `${BASE}${x.href}`;
-    const m = monthFromText(x.text) || monthFromText(x.href);
-    return { url, guessMonth: m, label: x.text };
+    return { url, guessMonth: x.guessMonth, label: x.text };
   });
 
   // de-dup urls
@@ -636,7 +699,7 @@ function parseCli() {
     console.log(`Running scrape for year=${year}, month=${month || "ALL"}, limit=${limit || "ALL"}`);
     await run(year, month, limit);
   } else {
-    const startYear = 2023;
+    const startYear = 2018;
     const endYear = 1915;
     console.log(
       `Running scrape for years ${startYear} down to ${endYear}, month=${month || "ALL"}, limit=${limit || "ALL"}`,
