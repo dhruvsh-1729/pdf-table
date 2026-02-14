@@ -5,6 +5,8 @@ export const config = {
   runtime: "nodejs",
 };
 
+const SUPPORTED_OCR_LANGUAGES = new Set(["eng", "hin", "sans", "guj"]);
+
 function toBool(value: any) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value.toLowerCase() === "true";
@@ -20,6 +22,12 @@ function parseId(value: any) {
   return null;
 }
 
+function parseOcrLanguage(value: any) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -31,15 +39,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const deleteOld = toBool(req.body?.deleteOld ?? req.query.deleteOld);
   const keepExtractedText = toBool(req.body?.keepExtractedText ?? req.query.keepExtractedText);
+  const requestedLanguage = parseOcrLanguage(req.body?.ocrLanguage ?? req.query.ocrLanguage);
+  const ocrLanguage = requestedLanguage || "eng";
+  if (!SUPPORTED_OCR_LANGUAGES.has(ocrLanguage)) {
+    return res.status(400).json({
+      error: `Unsupported OCR language "${ocrLanguage}". Supported values: eng, hin, sans, guj.`,
+    });
+  }
 
   try {
     const result = await runOcrForRecord({
       recordId,
       deleteOldAsset: deleteOld,
       resetExtractedText: !keepExtractedText,
+      ocrLanguages: [ocrLanguage],
       logger: console,
     });
-    return res.status(200).json({ success: true, ...result });
+    return res.status(200).json({ success: true, ocr_language: ocrLanguage, ...result });
   } catch (error: any) {
     console.error("[api/records/ocr]", error?.message || error);
     const payload: Record<string, any> = { error: error?.message || "Failed to OCR PDF for record." };

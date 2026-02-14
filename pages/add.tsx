@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import dynamic from "next/dynamic";
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, degrees, rgb } from "pdf-lib";
 import JSZip from "jszip";
 import AsyncCreatableSelect from "react-select/async-creatable";
 import {
+  Crop,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -51,6 +60,7 @@ type SplitRecord = {
   sectionIndex: number;
   fileName: string;
   pages: number[];
+  hasCroppedPages: boolean;
   blob: Blob;
   objectUrl: string;
   extraction: {
@@ -81,6 +91,123 @@ const buildInitialFields = (pageRange: string): Record<FieldKey, FieldState<stri
 type PageTextMap = Record<number, string>;
 
 const PAGE_MARKER_RE = /^\s*-*\s*Page\s+(\d+)\s*-*\s*$/i;
+const MIN_CROP_RATIO = 0.05;
+const EPSILON = 0.0001;
+
+type OcrLanguageCode = "eng" | "hin" | "sans" | "guj";
+
+const OCR_LANGUAGE_OPTIONS: { value: OcrLanguageCode; label: string }[] = [
+  { value: "eng", label: "English (eng)" },
+  { value: "hin", label: "Hindi (hin)" },
+  { value: "sans", label: "Sanskrit (sans)" },
+  { value: "guj", label: "Gujarati (guj)" },
+];
+
+type CropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  enabled: boolean;
+};
+
+const FULL_PAGE_CROP: CropRect = {
+  x: 0,
+  y: 0,
+  width: 1,
+  height: 1,
+  enabled: false,
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const normalizeCropRect = (rect?: Partial<CropRect> | null): CropRect => {
+  if (!rect?.enabled) return { ...FULL_PAGE_CROP };
+  const x = clamp(Number(rect.x ?? 0), 0, 1);
+  const y = clamp(Number(rect.y ?? 0), 0, 1);
+  const width = clamp(Number(rect.width ?? 1), MIN_CROP_RATIO, 1 - x);
+  const height = clamp(Number(rect.height ?? 1), MIN_CROP_RATIO, 1 - y);
+  return { x, y, width, height, enabled: true };
+};
+
+const isMeaningfulCrop = (rect?: Partial<CropRect> | null) => {
+  const normalized = normalizeCropRect(rect);
+  if (!normalized.enabled) return false;
+  return (
+    normalized.x > EPSILON ||
+    normalized.y > EPSILON ||
+    Math.abs(normalized.width - 1) > EPSILON ||
+    Math.abs(normalized.height - 1) > EPSILON
+  );
+};
+
+const resolveVisualCropRect = (rect?: Partial<CropRect> | null): CropRect | null => {
+  const normalized = normalizeCropRect(rect);
+  return isMeaningfulCrop(normalized) ? normalized : null;
+};
+
+const getCropMaskPercentages = (rect: CropRect | null) => {
+  if (!rect) return null;
+  const top = rect.y * 100;
+  const left = rect.x * 100;
+  const right = (1 - (rect.x + rect.width)) * 100;
+  const bottom = (1 - (rect.y + rect.height)) * 100;
+  return { top, left, right, bottom };
+};
+
+const displayPointToPdfPoint = (
+  xFromLeft: number,
+  yFromTop: number,
+  displayHeight: number,
+  pageWidth: number,
+  pageHeight: number,
+  rotation: number,
+) => {
+  const yFromBottom = displayHeight - yFromTop;
+  const normalizedRotation = ((((Math.round(rotation / 90) * 90) % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+
+  switch (normalizedRotation) {
+    case 0:
+      return { x: xFromLeft, y: yFromBottom };
+    case 90:
+      return { x: pageWidth - yFromBottom, y: xFromLeft };
+    case 180:
+      return { x: pageWidth - xFromLeft, y: pageHeight - yFromBottom };
+    case 270:
+      return { x: yFromBottom, y: pageHeight - xFromLeft };
+    default:
+      return { x: xFromLeft, y: yFromBottom };
+  }
+};
+
+const normalizedCropToPdfBox = (pageWidth: number, pageHeight: number, rotation: number, cropRect: CropRect) => {
+  const normalizedRotation = ((((Math.round(rotation / 90) * 90) % 360) + 360) % 360) as 0 | 90 | 180 | 270;
+  const displayWidth = normalizedRotation % 180 === 0 ? pageWidth : pageHeight;
+  const displayHeight = normalizedRotation % 180 === 0 ? pageHeight : pageWidth;
+
+  const left = cropRect.x * displayWidth;
+  const top = cropRect.y * displayHeight;
+  const right = (cropRect.x + cropRect.width) * displayWidth;
+  const bottom = (cropRect.y + cropRect.height) * displayHeight;
+
+  const corners = [
+    displayPointToPdfPoint(left, top, displayHeight, pageWidth, pageHeight, normalizedRotation),
+    displayPointToPdfPoint(right, top, displayHeight, pageWidth, pageHeight, normalizedRotation),
+    displayPointToPdfPoint(left, bottom, displayHeight, pageWidth, pageHeight, normalizedRotation),
+    displayPointToPdfPoint(right, bottom, displayHeight, pageWidth, pageHeight, normalizedRotation),
+  ];
+
+  const xs = corners.map((p) => p.x);
+  const ys = corners.map((p) => p.y);
+  const boxLeft = clamp(Math.min(...xs), 0, pageWidth);
+  const boxRight = clamp(Math.max(...xs), 0, pageWidth);
+  const boxBottom = clamp(Math.min(...ys), 0, pageHeight);
+  const boxTop = clamp(Math.max(...ys), 0, pageHeight);
+  const width = Math.max(1, boxRight - boxLeft);
+  const height = Math.max(1, boxTop - boxBottom);
+
+  return { left: boxLeft, bottom: boxBottom, width, height };
+};
 
 const parseExtractedTextFile = (raw: string): PageTextMap => {
   const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
@@ -154,6 +281,12 @@ function Add() {
   const [numPages, setNumPages] = useState<number>(0);
   const [pageOrder, setPageOrder] = useState<number[]>([]);
   const [rotations, setRotations] = useState<Record<number, number>>({});
+  const [cropRects, setCropRects] = useState<Record<number, CropRect>>({});
+  const [cropEditorPosition, setCropEditorPosition] = useState<number | null>(null);
+  const [cropDraft, setCropDraft] = useState<CropRect>({ ...FULL_PAGE_CROP });
+  const [cropPageSize, setCropPageSize] = useState<{ width: number; height: number } | null>(null);
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [splitOcrLanguage, setSplitOcrLanguage] = useState<OcrLanguageCode>("eng");
   const [splitIndices, setSplitIndices] = useState<Set<number>>(new Set());
   const [autoSplitEnabled, setAutoSplitEnabled] = useState(false);
   const [autoSplitInterval, setAutoSplitInterval] = useState(1);
@@ -170,11 +303,15 @@ function Add() {
   const [pendingManualText, setPendingManualText] = useState<File | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [removingWatermark, setRemovingWatermark] = useState(false);
-  const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number } | null>(null);
+  const [hoverPreview, setHoverPreview] = useState<{ pageNumber: number; rotation: number; logicalPosition: number } | null>(
+    null,
+  );
   const [commonName, setCommonName] = useState("");
   const [commonVolume, setCommonVolume] = useState("");
   const [commonNumber, setCommonNumber] = useState("");
   const [commonTimestamp, setCommonTimestamp] = useState("");
+  const cropPreviewRef = useRef<HTMLDivElement | null>(null);
+  const cropDragCleanupRef = useRef<(() => void) | null>(null);
   const DocumentComp = reactPdf?.Document;
   const PageComp = reactPdf?.Page;
 
@@ -191,6 +328,18 @@ function Add() {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  useEffect(() => {
+    if (!isClient) return;
+    const syncViewport = () => {
+      setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => {
+      window.removeEventListener("resize", syncViewport);
+    };
+  }, [isClient]);
 
   useEffect(() => {
     if (!isClient) return;
@@ -310,6 +459,100 @@ function Add() {
     setSavingAll(false);
   }, []);
 
+  const stopCropDrag = useCallback(() => {
+    if (cropDragCleanupRef.current) {
+      cropDragCleanupRef.current();
+      cropDragCleanupRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => stopCropDrag(), [stopCropDrag]);
+
+  const openCropEditor = useCallback(
+    (position: number) => {
+      stopCropDrag();
+      setCropEditorPosition(position);
+      const existingCrop = normalizeCropRect(cropRects[position]);
+      setCropDraft(
+        isMeaningfulCrop(existingCrop) ? existingCrop : { x: 0, y: 0, width: 1, height: 1, enabled: true },
+      );
+      setCropPageSize(null);
+    },
+    [cropRects, stopCropDrag],
+  );
+
+  const closeCropEditor = useCallback(() => {
+    stopCropDrag();
+    setCropEditorPosition(null);
+    setCropDraft({ ...FULL_PAGE_CROP });
+    setCropPageSize(null);
+  }, [stopCropDrag]);
+
+  const saveCropDraft = useCallback(() => {
+    if (cropEditorPosition === null) return;
+    const normalized = normalizeCropRect(cropDraft);
+    const shouldStore = isMeaningfulCrop(normalized);
+    setCropRects((prev) => {
+      const next = { ...prev };
+      if (shouldStore) {
+        next[cropEditorPosition] = { ...normalized, enabled: true };
+      } else {
+        delete next[cropEditorPosition];
+      }
+      return next;
+    });
+    resetSplits();
+    const pageNo = pageOrder[cropEditorPosition] !== undefined ? pageOrder[cropEditorPosition] + 1 : cropEditorPosition + 1;
+    toast.success(shouldStore ? `Crop applied to page ${pageNo}.` : `Crop cleared for page ${pageNo}.`);
+    closeCropEditor();
+  }, [cropDraft, cropEditorPosition, closeCropEditor, pageOrder, resetSplits]);
+
+  const updateCropDraft = useCallback((changes: Partial<CropRect>) => {
+    setCropDraft((prev) => normalizeCropRect({ ...prev, ...changes, enabled: true }));
+  }, []);
+
+  const startCropDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, mode: "move" | "resize") => {
+      const frame = cropPreviewRef.current;
+      if (!frame) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      stopCropDrag();
+
+      const frameRect = frame.getBoundingClientRect();
+      const startClientX = event.clientX;
+      const startClientY = event.clientY;
+      const startRect = normalizeCropRect(cropDraft);
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const deltaX = (moveEvent.clientX - startClientX) / Math.max(frameRect.width, 1);
+        const deltaY = (moveEvent.clientY - startClientY) / Math.max(frameRect.height, 1);
+        if (mode === "move") {
+          const x = clamp(startRect.x + deltaX, 0, 1 - startRect.width);
+          const y = clamp(startRect.y + deltaY, 0, 1 - startRect.height);
+          setCropDraft(normalizeCropRect({ ...startRect, x, y, enabled: true }));
+          return;
+        }
+        const width = clamp(startRect.width + deltaX, MIN_CROP_RATIO, 1 - startRect.x);
+        const height = clamp(startRect.height + deltaY, MIN_CROP_RATIO, 1 - startRect.y);
+        setCropDraft(normalizeCropRect({ ...startRect, width, height, enabled: true }));
+      };
+
+      const onPointerUp = () => {
+        stopCropDrag();
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp, { once: true });
+      cropDragCleanupRef.current = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+      };
+    },
+    [cropDraft, stopCropDrag],
+  );
+
   useEffect(() => {
     if (!splitRecords.length) return;
     setSplitRecords((prev) => prev.map((split) => applyCommonFields(split)));
@@ -320,6 +563,9 @@ function Add() {
       setNumPages(nextNumPages);
       setPageOrder(Array.from(Array(nextNumPages).keys()));
       setRotations({});
+      setCropRects({});
+      setCropEditorPosition(null);
+      setCropDraft({ ...FULL_PAGE_CROP });
       setSplitIndices(new Set());
       setSkippedSections(new Set());
       resetSplits();
@@ -331,6 +577,9 @@ function Add() {
     const selected = e.target.files?.[0] || null;
     if (selected) {
       setFile(selected);
+      setCropRects({});
+      setCropEditorPosition(null);
+      setCropDraft({ ...FULL_PAGE_CROP });
       resetSplits();
     }
   };
@@ -344,18 +593,29 @@ function Add() {
     });
   };
 
-  const duplicatePage = (logicalIndex: number) => {
+  const duplicatePage = (position: number, logicalIndex: number) => {
     setPageOrder((prev) => {
-      const insertIndex = prev.indexOf(logicalIndex) + 1;
+      const insertIndex = position + 1;
       const newOrder = [...prev];
       newOrder.splice(insertIndex, 0, logicalIndex);
       return newOrder;
+    });
+    setCropRects((prev) => {
+      const next: Record<number, CropRect> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        const idx = Number(key);
+        next[idx >= position + 1 ? idx + 1 : idx] = value;
+      });
+      if (prev[position]) {
+        next[position + 1] = { ...prev[position] };
+      }
+      return next;
     });
     setSkippedSections(new Set());
     resetSplits();
   };
 
-  const deletePageAt = (position: number, logicalIndex: number) => {
+  const deletePageAt = (position: number, _logicalIndex: number) => {
     setPageOrder((prev) => {
       if (position < 0 || position >= prev.length) return prev;
       const next = [...prev];
@@ -374,6 +634,20 @@ function Add() {
       });
       return next;
     });
+    setCropRects((prev) => {
+      const next: Record<number, CropRect> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        const idx = Number(key);
+        if (idx === position) return;
+        next[idx > position ? idx - 1 : idx] = value;
+      });
+      return next;
+    });
+    if (cropEditorPosition === position) {
+      closeCropEditor();
+    } else if (cropEditorPosition !== null && cropEditorPosition > position) {
+      setCropEditorPosition(cropEditorPosition - 1);
+    }
     setSkippedSections(new Set());
     resetSplits();
   };
@@ -408,6 +682,13 @@ function Add() {
       setPreviewPosition(null);
     }
   }, [file, pageOrder, previewPosition]);
+
+  useEffect(() => {
+    if (cropEditorPosition === null) return;
+    if (!file || cropEditorPosition < 0 || cropEditorPosition >= pageOrder.length) {
+      closeCropEditor();
+    }
+  }, [closeCropEditor, cropEditorPosition, file, pageOrder]);
 
   const runFieldGeneration = useCallback(
     async (splitId: string, field: FieldKey, providedText?: string, variant: "primary" | "regen" = "primary") => {
@@ -513,24 +794,75 @@ function Add() {
       );
 
       try {
-        const formData = new FormData();
-        formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
-        formData.append("allowOcr", "false");
+        const extractAttempt = async (allowOcr: boolean, forceOcr: boolean = false) => {
+          const formData = new FormData();
+          formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
+          formData.append("allowOcr", allowOcr ? "true" : "false");
+          formData.append("forceOcr", forceOcr ? "true" : "false");
+          formData.append("language", splitOcrLanguage);
 
-        const response = await fetch(apiUrl("/api/extract-text-file"), { method: "POST", body: formData });
-        const { data: payload, raw } = await readJsonResponse<any>(response);
-        if (!response.ok) {
-          const message =
-            payload?.error || summarizeResponseText(raw) || `Failed to extract text (HTTP ${response.status}).`;
-          throw new Error(message);
-        }
-        if (!payload) {
-          const message =
-            summarizeResponseText(raw) || `Failed to extract text: expected JSON (HTTP ${response.status}).`;
-          throw new Error(message);
+          const response = await fetch(apiUrl("/api/extract-text-file"), { method: "POST", body: formData });
+          const { data: payload, raw } = await readJsonResponse<any>(response);
+          if (!response.ok) {
+            const message =
+              payload?.error || summarizeResponseText(raw) || `Failed to extract text (HTTP ${response.status}).`;
+            throw new Error(message);
+          }
+          if (!payload) {
+            const message =
+              summarizeResponseText(raw) || `Failed to extract text: expected JSON (HTTP ${response.status}).`;
+            throw new Error(message);
+          }
+          return payload;
+        };
+
+        let payload: any | null = null;
+        let extractedText = "";
+        const requiresCropOnlyExtraction = split.hasCroppedPages;
+
+        if (requiresCropOnlyExtraction) {
+          payload = await extractAttempt(true, true);
+          extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
+          setSplitRecords((prev) =>
+            prev.map((s) =>
+              s.id === split.id
+                ? {
+                    ...s,
+                    extraction: {
+                      status: "done",
+                      text: extractedText,
+                      error: undefined,
+                      language: payload?.language || splitOcrLanguage || null,
+                    },
+                  }
+                : s,
+            ),
+          );
+
+          if (!extractedText) {
+            toast.warning("No extractable text found in cropped region.");
+            return;
+          }
+
+          await runInitialAi(split.id, extractedText, split.fileName);
+          return;
         }
 
-        const extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
+        try {
+          payload = await extractAttempt(false);
+          extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
+        } catch {
+          payload = null;
+          extractedText = "";
+        }
+
+        let usedOcrRetry = false;
+        if (!extractedText) {
+          payload = await extractAttempt(true);
+          extractedText = typeof payload.text === "string" ? payload.text.trim() : "";
+          usedOcrRetry = true;
+        }
+
         setSplitRecords((prev) =>
           prev.map((s) =>
             s.id === split.id
@@ -540,7 +872,7 @@ function Add() {
                     status: "done",
                     text: extractedText,
                     error: undefined,
-                    language: payload.language || null,
+                    language: payload?.language || splitOcrLanguage || null,
                   },
                 }
               : s,
@@ -548,10 +880,13 @@ function Add() {
         );
 
         if (!extractedText) {
-          toast.warning("No extractable text found (OCR is disabled for uploads).");
+          toast.warning("No extractable text found, even after OCR retry.");
           return;
         }
 
+        if (usedOcrRetry) {
+          toast.info(`Used OCR retry (${splitOcrLanguage}) for ${split.fileName}.`);
+        }
         await runInitialAi(split.id, extractedText, split.fileName);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Text extraction failed.";
@@ -563,7 +898,7 @@ function Add() {
         toast.error(message);
       }
     },
-    [runInitialAi],
+    [runInitialAi, splitOcrLanguage],
   );
 
   const applyManualExtractedText = useCallback(
@@ -748,10 +1083,65 @@ function Add() {
 
         for (let i = 0; i < activeSections.length; i++) {
           const { pages, idx } = activeSections[i];
+          const sectionStart = sectionMeta[idx]?.start ?? 0;
           const newPdf = await PDFDocument.create();
-          for (const logicalIdx of pages) {
+          let hasCroppedPages = false;
+          for (let pageOffset = 0; pageOffset < pages.length; pageOffset++) {
+            const logicalIdx = pages[pageOffset];
+            const logicalPosition = sectionStart + pageOffset;
+            const cropRect = normalizeCropRect(cropRects[logicalPosition]);
             const [copiedPage] = await newPdf.copyPages(originalPdf, [logicalIdx]);
             const rotation = rotations[logicalIdx] || 0;
+            if (isMeaningfulCrop(cropRect)) {
+              const { left, bottom, width, height } = normalizedCropToPdfBox(
+                copiedPage.getWidth(),
+                copiedPage.getHeight(),
+                rotation,
+                cropRect,
+              );
+              const pageWidth = copiedPage.getWidth();
+              const pageHeight = copiedPage.getHeight();
+              const right = left + width;
+              const top = bottom + height;
+
+              if (bottom > 0) {
+                copiedPage.drawRectangle({
+                  x: 0,
+                  y: 0,
+                  width: pageWidth,
+                  height: bottom,
+                  color: rgb(1, 1, 1),
+                });
+              }
+              if (top < pageHeight) {
+                copiedPage.drawRectangle({
+                  x: 0,
+                  y: top,
+                  width: pageWidth,
+                  height: pageHeight - top,
+                  color: rgb(1, 1, 1),
+                });
+              }
+              if (left > 0) {
+                copiedPage.drawRectangle({
+                  x: 0,
+                  y: 0,
+                  width: left,
+                  height: pageHeight,
+                  color: rgb(1, 1, 1),
+                });
+              }
+              if (right < pageWidth) {
+                copiedPage.drawRectangle({
+                  x: right,
+                  y: 0,
+                  width: pageWidth - right,
+                  height: pageHeight,
+                  color: rgb(1, 1, 1),
+                });
+              }
+              hasCroppedPages = true;
+            }
             if (rotation) copiedPage.setRotation(degrees(rotation));
             newPdf.addPage(copiedPage);
           }
@@ -774,6 +1164,7 @@ function Add() {
             sectionIndex: sectionNumber,
             fileName,
             pages: pageNumbers,
+            hasCroppedPages,
             blob,
             objectUrl,
             extraction: { status: "idle", language: null },
@@ -813,7 +1204,7 @@ function Add() {
         setGeneratingSplits(false);
       }
     },
-    [file, sections, skippedSections, rotations, runExtraction, applyCommonFields],
+    [file, sections, skippedSections, rotations, sectionMeta, cropRects, runExtraction, applyCommonFields],
   );
 
   const setFieldValue = (splitId: string, field: FieldKey, value: string | string[]) => {
@@ -1119,6 +1510,37 @@ function Add() {
     }
   }, [file, removingWatermark]);
 
+  const croppedPageCount = useMemo(
+    () => Object.values(cropRects).filter((rect) => isMeaningfulCrop(rect)).length,
+    [cropRects],
+  );
+  const cropEditorPageNumber =
+    cropEditorPosition !== null && cropEditorPosition >= 0 && cropEditorPosition < pageOrder.length
+      ? pageOrder[cropEditorPosition] + 1
+      : null;
+  const cropEditorRotation =
+    cropEditorPosition !== null && cropEditorPosition >= 0 && cropEditorPosition < pageOrder.length
+      ? rotations[pageOrder[cropEditorPosition]] || 0
+      : 0;
+  const cropEditorPreviewSize = useMemo(() => {
+    const width = viewportSize.width || (typeof window !== "undefined" ? window.innerWidth : 1366);
+    const height = viewportSize.height || (typeof window !== "undefined" ? window.innerHeight : 768);
+    const isDesktop = width >= 1024;
+    const availableWidth = Math.max(240, width - (isDesktop ? 560 : 72));
+    const availableHeight = Math.max(260, height - (isDesktop ? 220 : 320));
+
+    const baseWidth = cropPageSize?.width || 595;
+    const baseHeight = cropPageSize?.height || 842;
+    const ratio = Math.max(0.2, baseWidth / Math.max(baseHeight, 1));
+
+    const fittedWidth = Math.min(availableWidth, availableHeight * ratio);
+    return Math.max(220, Math.floor(fittedWidth));
+  }, [cropPageSize, viewportSize.height, viewportSize.width]);
+  const hoverPreviewCropRect = hoverPreview ? resolveVisualCropRect(cropRects[hoverPreview.logicalPosition]) : null;
+  const hoverPreviewCropMask = getCropMaskPercentages(hoverPreviewCropRect);
+  const fullPreviewCropRect = previewPosition !== null ? resolveVisualCropRect(cropRects[previewPosition]) : null;
+  const fullPreviewCropMask = getCropMaskPercentages(fullPreviewCropRect);
+
   const extractionInProgress = splitRecords.some((s) => s.extraction.status === "running");
   const aiBusy = splitRecords.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
 
@@ -1173,6 +1595,9 @@ function Add() {
                     {pageOrder.map((pageIndex, logicalPosition) => {
                       const rotation = rotations[pageIndex] || 0;
                       const isSplit = splitIndices.has(logicalPosition);
+                      const cropRect = resolveVisualCropRect(cropRects[logicalPosition]);
+                      const cropMask = getCropMaskPercentages(cropRect);
+                      const hasCrop = Boolean(cropRect);
                       const isLast = logicalPosition === pageOrder.length - 1;
                       return (
                         <div
@@ -1182,13 +1607,14 @@ function Add() {
                             setHoverPreview({
                               pageNumber: pageIndex + 1,
                               rotation: rotation,
+                              logicalPosition,
                             })
                           }
                           onMouseLeave={() => setHoverPreview(null)}
                         >
                           <div className="relative overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-zinc-300 hover:shadow-md">
                             <div className="relative flex h-[280px] items-center justify-center overflow-hidden bg-zinc-50 p-4">
-                              <div className="rounded border border-zinc-200 bg-white p-2 shadow-sm">
+                              <div className="overflow-hidden rounded border border-zinc-200 bg-white p-2 shadow-sm">
                                 <PageComp
                                   key={`page_${pageIndex}_${logicalPosition}`}
                                   pageNumber={pageIndex + 1}
@@ -1199,6 +1625,22 @@ function Add() {
                                   rotate={rotation}
                                   className="pointer-events-none select-none"
                                 />
+                                {cropMask && (
+                                  <div className="pointer-events-none absolute inset-2">
+                                    {cropMask.top > 0 && (
+                                      <div className="absolute left-0 right-0 top-0 bg-white" style={{ height: `${cropMask.top}%` }} />
+                                    )}
+                                    {cropMask.bottom > 0 && (
+                                      <div className="absolute bottom-0 left-0 right-0 bg-white" style={{ height: `${cropMask.bottom}%` }} />
+                                    )}
+                                    {cropMask.left > 0 && (
+                                      <div className="absolute bottom-0 left-0 top-0 bg-white" style={{ width: `${cropMask.left}%` }} />
+                                    )}
+                                    {cropMask.right > 0 && (
+                                      <div className="absolute bottom-0 right-0 top-0 bg-white" style={{ width: `${cropMask.right}%` }} />
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
                               <div className="absolute inset-x-0 top-0 flex justify-center gap-2 p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
@@ -1219,7 +1661,14 @@ function Add() {
                                   </button>
                                   <div className="mx-0.5 w-px bg-zinc-200" />
                                   <button
-                                    onClick={() => duplicatePage(pageIndex)}
+                                    onClick={() => openCropEditor(logicalPosition)}
+                                    className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-white text-base text-zinc-700 transition-all hover:bg-zinc-50 active:scale-95"
+                                    title="Crop page"
+                                  >
+                                    <Crop className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => duplicatePage(logicalPosition, pageIndex)}
                                     className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-white text-base text-zinc-700 transition-all hover:bg-zinc-50 active:scale-95"
                                     title="Duplicate page"
                                   >
@@ -1245,6 +1694,11 @@ function Add() {
                               {rotation !== 0 && (
                                 <div className="absolute bottom-3 right-3 rounded border border-zinc-300 bg-white px-2 py-0.5 text-xs font-semibold text-zinc-700 shadow-sm">
                                   {rotation}°
+                                </div>
+                              )}
+                              {hasCrop && (
+                                <div className="absolute bottom-3 left-3 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 shadow-sm">
+                                  Cropped
                                 </div>
                               )}
                             </div>
@@ -1348,6 +1802,27 @@ function Add() {
             <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
               <span className="text-zinc-700">Manual splits</span>
               <span className="text-zinc-500">{autoSplitEnabled ? "Disabled" : `${splitIndices.size} cuts`}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
+              <span className="text-zinc-700">Cropped pages</span>
+              <span className="text-zinc-500">{croppedPageCount}</span>
+            </div>
+            <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-600">OCR fallback language</label>
+              <select
+                value={splitOcrLanguage}
+                onChange={(e) => setSplitOcrLanguage(e.target.value as OcrLanguageCode)}
+                className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 focus:border-zinc-400 focus:outline-none"
+              >
+                {OCR_LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-zinc-500">
+                If cropped/image-only pages have no embedded text, extraction retries with OCR in this language.
+              </p>
             </div>
             <div className="max-h-[320px] space-y-2 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3">
               {sections.map((section, idx) => {
@@ -1586,6 +2061,11 @@ function Add() {
                           <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-600">
                             Pages {split.pages.join(", ")}
                           </span>
+                          {split.hasCroppedPages && (
+                            <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                              Cropped pages
+                            </span>
+                          )}
                           <span
                             className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${
                               split.extraction.status === "done"
@@ -1821,6 +2301,151 @@ function Add() {
         </div>
       </div>
 
+      {cropEditorPosition !== null && file && DocumentComp && PageComp && cropEditorPageNumber !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6" onClick={closeCropEditor}>
+          <div
+            className="flex max-h-[95vh] w-full max-w-6xl flex-col gap-4 overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 p-4 shadow-2xl sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-400">Free cropper</p>
+                <h3 className="text-lg font-semibold text-white">Page {cropEditorPageNumber}</h3>
+                <p className="text-xs text-zinc-400">Drag the box to move, drag the corner handle to resize.</p>
+              </div>
+              <button
+                onClick={closeCropEditor}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-700"
+              >
+                <X className="h-4 w-4" />
+                Close
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="flex min-h-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 p-3">
+                <div className="mx-auto w-fit rounded-lg border border-zinc-700 bg-white p-2">
+                  <div ref={cropPreviewRef} className="relative inline-block">
+                    <DocumentComp file={file}>
+                      <PageComp
+                        pageNumber={cropEditorPageNumber}
+                        renderMode="canvas"
+                        renderAnnotationLayer={false}
+                        renderTextLayer={false}
+                        width={cropEditorPreviewSize}
+                        rotate={cropEditorRotation}
+                        onLoadSuccess={(page: any) => {
+                          const viewport = page.getViewport({ scale: 1, rotation: cropEditorRotation });
+                          const next = { width: viewport.width, height: viewport.height };
+                          setCropPageSize((prev) => {
+                            if (!prev) return next;
+                            if (Math.abs(prev.width - next.width) < 0.5 && Math.abs(prev.height - next.height) < 0.5) {
+                              return prev;
+                            }
+                            return next;
+                          });
+                        }}
+                        loading={
+                          <div className="flex h-[420px] w-[320px] items-center justify-center">
+                            <Loader2 className="h-8 w-8 animate-spin text-zinc-900" />
+                          </div>
+                        }
+                      />
+                    </DocumentComp>
+                    <div className="absolute inset-0">
+                      <div
+                        className="absolute cursor-move border-2 border-blue-500 bg-blue-500/15 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]"
+                        style={{
+                          left: `${cropDraft.x * 100}%`,
+                          top: `${cropDraft.y * 100}%`,
+                          width: `${cropDraft.width * 100}%`,
+                          height: `${cropDraft.height * 100}%`,
+                        }}
+                        onPointerDown={(e) => startCropDrag(e, "move")}
+                      >
+                        <button
+                          type="button"
+                          className="absolute -bottom-2 -right-2 h-4 w-4 cursor-se-resize rounded-sm border border-blue-600 bg-white"
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            startCropDrag(e, "resize");
+                          }}
+                          aria-label="Resize crop"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-zinc-700 bg-zinc-950 p-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="space-y-1">
+                    <span className="text-xs uppercase tracking-[0.15em] text-zinc-400">X</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round(cropDraft.x * 100)}
+                      onChange={(e) => updateCropDraft({ x: Number(e.target.value || 0) / 100 })}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs uppercase tracking-[0.15em] text-zinc-400">Y</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round(cropDraft.y * 100)}
+                      onChange={(e) => updateCropDraft({ y: Number(e.target.value || 0) / 100 })}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs uppercase tracking-[0.15em] text-zinc-400">Width</span>
+                    <input
+                      type="number"
+                      min={MIN_CROP_RATIO * 100}
+                      max={100}
+                      step={1}
+                      value={Math.round(cropDraft.width * 100)}
+                      onChange={(e) => updateCropDraft({ width: Number(e.target.value || 0) / 100 })}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs uppercase tracking-[0.15em] text-zinc-400">Height</span>
+                    <input
+                      type="number"
+                      min={MIN_CROP_RATIO * 100}
+                      max={100}
+                      step={1}
+                      value={Math.round(cropDraft.height * 100)}
+                      onChange={(e) => updateCropDraft({ height: Number(e.target.value || 0) / 100 })}
+                      className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100"
+                    />
+                  </label>
+                </div>
+                <p className="text-xs text-zinc-400">
+                  Crop values are percentages of the visible page after rotation. Saved crops are applied to generated split PDFs.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    onClick={saveCropDraft}
+                    className="inline-flex items-center rounded-lg border border-blue-600 bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-500"
+                  >
+                    Save crop
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {hoverPreview && DocumentComp && PageComp && file && (
         <div className="pointer-events-none fixed inset-y-4 right-4 z-50 hidden lg:flex items-center">
           <div className="pointer-events-auto flex h-full max-h-[calc(100vh-2rem)] w-[480px] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950/95 shadow-2xl backdrop-blur">
@@ -1841,18 +2466,42 @@ function Add() {
             </div>
             <div className="flex flex-1 items-center justify-center overflow-auto p-3">
               <DocumentComp file={file}>
-                <PageComp
-                  pageNumber={hoverPreview.pageNumber}
-                  renderAnnotationLayer={false}
-                  renderTextLayer={false}
-                  height={typeof window !== "undefined" ? Math.min(window.innerHeight - 200, 1200) : 900}
-                  rotate={hoverPreview.rotation || 0}
-                  loading={
-                    <div className="flex h-[400px] w-full items-center justify-center">
-                      <Loader2 className="h-8 w-8 animate-spin text-zinc-300" />
+                <div className="relative overflow-hidden rounded border border-zinc-700 bg-white p-2">
+                  <PageComp
+                    pageNumber={hoverPreview.pageNumber}
+                    renderAnnotationLayer={false}
+                    renderTextLayer={false}
+                    height={typeof window !== "undefined" ? Math.min(window.innerHeight - 200, 1200) : 900}
+                    rotate={hoverPreview.rotation || 0}
+                    loading={
+                      <div className="flex h-[400px] w-full items-center justify-center">
+                        <Loader2 className="h-8 w-8 animate-spin text-zinc-300" />
+                      </div>
+                    }
+                  />
+                  {hoverPreviewCropMask && (
+                    <div className="pointer-events-none absolute inset-2">
+                      {hoverPreviewCropMask.top > 0 && (
+                        <div className="absolute left-0 right-0 top-0 bg-white" style={{ height: `${hoverPreviewCropMask.top}%` }} />
+                      )}
+                      {hoverPreviewCropMask.bottom > 0 && (
+                        <div
+                          className="absolute bottom-0 left-0 right-0 bg-white"
+                          style={{ height: `${hoverPreviewCropMask.bottom}%` }}
+                        />
+                      )}
+                      {hoverPreviewCropMask.left > 0 && (
+                        <div className="absolute bottom-0 left-0 top-0 bg-white" style={{ width: `${hoverPreviewCropMask.left}%` }} />
+                      )}
+                      {hoverPreviewCropMask.right > 0 && (
+                        <div
+                          className="absolute bottom-0 right-0 top-0 bg-white"
+                          style={{ width: `${hoverPreviewCropMask.right}%` }}
+                        />
+                      )}
                     </div>
-                  }
-                />
+                  )}
+                </div>
               </DocumentComp>
             </div>
           </div>
@@ -1899,25 +2548,49 @@ function Add() {
                 <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
                   {DocumentComp && PageComp ? (
                     <DocumentComp file={file}>
-                      <PageComp
-                        pageNumber={previewContext.logicalIndex + 1}
-                        renderMode="canvas"
-                        renderAnnotationLayer={false}
-                        renderTextLayer={false}
-                        width={(() => {
-                          if (typeof window === "undefined") return 600;
-                          const maxWidth = Math.min(window.innerWidth - 100, 1200);
-                          const maxHeight = window.innerHeight - 300;
-                          const widthFromHeight = maxHeight / 1.414;
-                          return Math.min(maxWidth, widthFromHeight);
-                        })()}
-                        rotate={rotations[previewContext.logicalIndex] || 0}
-                        loading={
-                          <div className="flex h-[600px] w-[424px] items-center justify-center">
-                            <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
+                      <div className="relative overflow-hidden rounded border border-zinc-200">
+                        <PageComp
+                          pageNumber={previewContext.logicalIndex + 1}
+                          renderMode="canvas"
+                          renderAnnotationLayer={false}
+                          renderTextLayer={false}
+                          width={(() => {
+                            if (typeof window === "undefined") return 600;
+                            const maxWidth = Math.min(window.innerWidth - 100, 1200);
+                            const maxHeight = window.innerHeight - 300;
+                            const widthFromHeight = maxHeight / 1.414;
+                            return Math.min(maxWidth, widthFromHeight);
+                          })()}
+                          rotate={rotations[previewContext.logicalIndex] || 0}
+                          loading={
+                            <div className="flex h-[600px] w-[424px] items-center justify-center">
+                              <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
+                            </div>
+                          }
+                        />
+                        {fullPreviewCropMask && (
+                          <div className="pointer-events-none absolute inset-0">
+                            {fullPreviewCropMask.top > 0 && (
+                              <div className="absolute left-0 right-0 top-0 bg-white" style={{ height: `${fullPreviewCropMask.top}%` }} />
+                            )}
+                            {fullPreviewCropMask.bottom > 0 && (
+                              <div
+                                className="absolute bottom-0 left-0 right-0 bg-white"
+                                style={{ height: `${fullPreviewCropMask.bottom}%` }}
+                              />
+                            )}
+                            {fullPreviewCropMask.left > 0 && (
+                              <div className="absolute bottom-0 left-0 top-0 bg-white" style={{ width: `${fullPreviewCropMask.left}%` }} />
+                            )}
+                            {fullPreviewCropMask.right > 0 && (
+                              <div
+                                className="absolute bottom-0 right-0 top-0 bg-white"
+                                style={{ width: `${fullPreviewCropMask.right}%` }}
+                              />
+                            )}
                           </div>
-                        }
-                      />
+                        )}
+                      </div>
                     </DocumentComp>
                   ) : (
                     <div className="flex h-[600px] w-[424px] items-center justify-center">

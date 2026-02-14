@@ -407,28 +407,32 @@ function resolvePdfUrl(pdfUrl: string, req?: NextApiRequest) {
 export async function extractTextFromBytes(
   pdfBytes: Uint8Array,
   language?: string | null,
-  opts?: { allowOcr?: boolean; allowEmpty?: boolean },
+  opts?: { allowOcr?: boolean; forceOcr?: boolean; allowEmpty?: boolean },
 ) {
   let pdf: any | null = null;
   let finalText = "";
   let usedOcr = false;
   let languageHint = language || DEFAULT_LANG;
   const allowOcr = opts?.allowOcr !== false;
+  const forceOcr = opts?.forceOcr === true;
   const allowEmpty = opts?.allowEmpty === true;
+  const canUseOcr = allowOcr || forceOcr;
 
   try {
     pdf = await loadPdfDocument(pdfBytes);
     let extractedText = "";
-    try {
-      extractedText = await extractTextFromPdf(pdf);
-    } catch (error) {
-      console.warn("Primary text extraction failed; falling back to OCR.", error);
+    if (!forceOcr) {
+      try {
+        extractedText = await extractTextFromPdf(pdf);
+      } catch (error) {
+        console.warn("Primary text extraction failed; falling back to OCR.", error);
+      }
     }
 
     languageHint = await detectLanguageHint(language, extractedText);
     finalText = extractedText;
 
-    if (!hasMeaningfulText(extractedText) && allowOcr) {
+    if ((forceOcr || !hasMeaningfulText(extractedText)) && canUseOcr) {
       finalText = await performOcrOnPdf(pdf, languageHint);
       usedOcr = true;
       languageHint = await detectLanguageHint(language, finalText);
@@ -443,7 +447,7 @@ export async function extractTextFromBytes(
     if (allowEmpty) {
       return { text: "", languageHint, usedOcr };
     }
-    throw new Error(allowOcr ? "Unable to extract text from this PDF." : "No extractable text found (OCR disabled).");
+    throw new Error(canUseOcr ? "Unable to extract text from this PDF." : "No extractable text found (OCR disabled).");
   }
 
   return { text: sanitized, languageHint, usedOcr };

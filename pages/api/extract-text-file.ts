@@ -30,15 +30,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const language = typeof fields.language === "string" ? fields.language : null;
     const allowOcrFlag = typeof fields.allowOcr === "string" ? fields.allowOcr : "";
     const disableOcrFlag = typeof fields.disableOcr === "string" ? fields.disableOcr : "";
+    const forceOcrFlag = typeof fields.forceOcr === "string" ? fields.forceOcr : "";
     const allowOcr =
       (allowOcrFlag || "").toString().toLowerCase() === "true" ||
       (allowOcrFlag || "").toString().toLowerCase() === "1";
     const disableOcr = (disableOcrFlag || "").toString().toLowerCase() === "true";
-    const resolvedAllowOcr = disableOcr ? false : allowOcr;
+    const forceOcr =
+      (forceOcrFlag || "").toString().toLowerCase() === "true" ||
+      (forceOcrFlag || "").toString().toLowerCase() === "1";
+    const resolvedAllowOcr = forceOcr ? true : disableOcr ? false : allowOcr;
     const pdfBytes = new Uint8Array(await fs.readFile(file.filepath));
 
     const { text, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, language, {
       allowOcr: resolvedAllowOcr,
+      forceOcr,
       allowEmpty: true,
     });
 
@@ -47,6 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       language: languageHint || language || null,
       usedOcr: usedOcr || undefined,
       ocrDisabled: !resolvedAllowOcr || undefined,
+      forcedOcr: forceOcr || undefined,
     });
   } catch (error) {
     console.error("extract-text-file error:", error);

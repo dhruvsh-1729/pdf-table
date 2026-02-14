@@ -24,11 +24,20 @@ type OcrResult = {
   recordId: number;
   pdf_url: string;
   pdf_public_id: string;
+  ocr_language?: string;
+  ocr_languages?: string[];
   source_url?: string;
   extracted_text?: string;
   text_extraction_error?: string;
   compression_events?: CompressionEvent[];
 };
+
+const OCR_LANGUAGE_OPTIONS = [
+  { value: "eng", label: "English (eng)" },
+  { value: "hin", label: "Hindi (hin)" },
+  { value: "sans", label: "Sanskrit (sans)" },
+  { value: "guj", label: "Gujarati (guj)" },
+] as const;
 
 const formatBytes = (bytes?: number) => {
   if (!bytes && bytes !== 0) return "unknown size";
@@ -43,6 +52,7 @@ export default function OcrTool() {
   const [recordId, setRecordId] = useState("");
   const [deleteOld, setDeleteOld] = useState(false);
   const [keepExtractedText, setKeepExtractedText] = useState(false);
+  const [ocrLanguage, setOcrLanguage] = useState<(typeof OCR_LANGUAGE_OPTIONS)[number]["value"]>("eng");
   const [loading, setLoading] = useState(false);
   const [removingWatermark, setRemovingWatermark] = useState(false);
   const [checkingPdf, setCheckingPdf] = useState(false);
@@ -195,6 +205,7 @@ export default function OcrTool() {
           id: idNum,
           deleteOld,
           keepExtractedText,
+          ocrLanguage,
         }),
       });
 
@@ -260,6 +271,20 @@ export default function OcrTool() {
               </label>
 
               <div className="flex flex-col gap-3 rounded-lg border border-slate-200/80 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">OCR language</span>
+                  <select
+                    value={ocrLanguage}
+                    onChange={(e) => setOcrLanguage(e.target.value as (typeof OCR_LANGUAGE_OPTIONS)[number]["value"])}
+                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-slate-500 focus:outline-none"
+                  >
+                    {OCR_LANGUAGE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="flex items-center gap-2">
                     <input
                       type="checkbox"
@@ -335,6 +360,9 @@ export default function OcrTool() {
                         {result.source_url}
                       </a>
                     </div>
+                  )}
+                  {(result.ocr_language || result.ocr_languages?.length) && (
+                    <div>OCR language: {result.ocr_language || result.ocr_languages?.join(", ")}</div>
                   )}
                   <div>UploadThing key: {result.pdf_public_id}</div>
                   {resolvedViewerUrl && (
