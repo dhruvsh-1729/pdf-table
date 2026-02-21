@@ -1,6 +1,7 @@
 // pages/api/tags/[id]/records.ts
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -29,12 +30,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Now, fetch records with those IDs
   const { data, error } = await supabase
     .from("records")
-    .select("id,name,timestamp,volume,number,title_name", { count: "exact" })
+    .select("id,timestamp,volume,number,title_name,magazines(id,name)", { count: "exact" })
     .in("id", recordIds)
     .range(offset, offset + limit - 1);
 
   const cleanedRecords = (data || []).map((record) => ({
     ...record,
+    name: extractMagazineName(record),
     title_name: typeof record.title_name === "string" ? record.title_name.replace(/^\["|"\]$/g, "") : record.title_name,
   }));
 
