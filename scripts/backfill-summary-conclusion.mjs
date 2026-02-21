@@ -39,6 +39,11 @@ if (!process.env.UPLOADTHING_TOKEN) {
   console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
 }
 
+function getMagazineName(record) {
+  const relation = Array.isArray(record?.magazines) ? record.magazines[0] : record?.magazines;
+  return relation?.name || record?.name || record?.name_legacy || null;
+}
+
 function numberFlag(name, fallback) {
   const raw = process.argv.find((arg) => arg.startsWith(`--${name}=`));
   if (!raw) return fallback;
@@ -179,7 +184,7 @@ function isBlank(value) {
 async function fetchRecordsPage(from, pageSize) {
   const { data, error } = await supabase
     .from("records")
-    .select("id, pdf_url, pdf_public_id, summary, conclusion, extracted_text, name, title_name")
+    .select("id, pdf_url, pdf_public_id, summary, conclusion, extracted_text, title_name, magazines(id, name)")
     .order("id", { ascending: true })
     .range(from, from + pageSize - 1);
   if (error) throw error;
@@ -205,8 +210,8 @@ async function processRecord(record) {
     }
   }
 
-  const summary = await generateText("summary", extractedText, record.title_name, record.name);
-  const conclusion = await generateText("conclusion", extractedText, record.title_name, record.name);
+  const summary = await generateText("summary", extractedText, record.title_name, getMagazineName(record));
+  const conclusion = await generateText("conclusion", extractedText, record.title_name, getMagazineName(record));
 
   if (!DRY_RUN) {
     await supabase

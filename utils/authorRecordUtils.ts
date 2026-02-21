@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -36,7 +37,7 @@ export async function getAuthorRecordStats(authorId: number): Promise<AuthorReco
     // Get records count and latest record
     const { data: records, error: recordsError } = await supabase
       .from("records")
-      .select("id, name, timestamp")
+      .select("id, timestamp, magazines(id, name)")
       .contains("authors", `"${author.name}"`)
       .order("timestamp", { ascending: false });
 
@@ -50,7 +51,13 @@ export async function getAuthorRecordStats(authorId: number): Promise<AuthorReco
     }
 
     const recordCount = records?.length || 0;
-    const latestRecord = records && records.length > 0 ? records[0] : undefined;
+    const latestRecord =
+      records && records.length > 0
+        ? {
+            ...records[0],
+            name: extractMagazineName(records[0]),
+          }
+        : undefined;
 
     return {
       authorId: author.id,

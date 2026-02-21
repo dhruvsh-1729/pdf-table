@@ -5,13 +5,15 @@ import fs from "fs/promises";
 import path from "path";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureUploadThingToken, uploadPdfBuffer } from "@/lib/uploadthing";
+import { ensureMagazineId, syncRecordLanguages, withRecordLegacyShape } from "@/lib/recordRelations";
+import { invalidateCache } from "../records-paginated";
 
 export const config = {
   api: { bodyParser: false, sizeLimit: "150mb" },
 };
 
 export type RecordRow = {
-  name: string;
+  name?: string;
   timestamp?: string | null;
   summary?: string | null;
   volume?: string | null;
@@ -26,6 +28,7 @@ export type RecordRow = {
   extracted_text?: string | null;
   pdf_url?: string | null; // UploadThing URL
   pdf_public_id?: string | null; // UploadThing file key
+  magazine_id?: number;
 };
 
 const toNullIfEmpty = (v: any) => (v === "" || v === undefined ? null : v);
@@ -120,8 +123,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const finalUrl = uploaded.ufsUrl || uploaded.url;
     if (!finalUrl) throw new Error("UploadThing returned no URL for the uploaded PDF.");
 
+    const magazineId = await ensureMagazineId(supabaseAdmin, row.name);
+
     const payload: RecordRow = {
-      name: row.name,
+      magazine_id: magazineId,
       timestamp: toNullIfEmpty(row.timestamp),
       summary: toNullIfEmpty(row.summary),
       volume: toNullIfEmpty(row.volume),
@@ -138,10 +143,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       pdf_url: finalUrl,
     };
 
+    delete (payload as any).name;
+    delete (payload as any).language;
+
     const { data, error } = await supabaseAdmin.from("records").insert([payload]).select();
     if (error) return res.status(500).json({ error: `Insert failed: ${error.message}` });
 
-    return res.status(200).json({ ok: true, record: data?.[0] || null });
+    const insertedRecord = data?.[0];
+    if (insertedRecord?.id) {
+      await syncRecordLanguages(supabaseAdmin, insertedRecord.id, row.language);
+    }
+
+    invalidateCache();
+    return res.status(200).json({
+      ok: true,
+      record: insertedRecord
+        ? withRecordLegacyShape({
+            ...insertedRecord,
+            magazines: { id: magazineId, name: row.name },
+            language: row.language || null,
+          })
+        : null,
+    });
   } catch (e: any) {
     console.error("upload-create-uploadthing error:", e);
     return res.status(500).json({ error: e?.message || "Unknown error" });

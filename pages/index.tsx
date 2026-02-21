@@ -168,8 +168,22 @@ export default function Home() {
               noCache: "false",
             });
 
-            const response = await fetch(`/api/records-paginated?${params}`);
-            if (!response.ok) throw new Error("Failed to fetch records");
+            let response = await fetch(`/api/records-paginated?${params}`);
+            if (!response.ok) {
+              params.set("noCache", "true");
+              response = await fetch(`/api/records-paginated?${params}`);
+            }
+
+            if (!response.ok) {
+              let message = "Failed to fetch records";
+              try {
+                const errorPayload = await response.json();
+                message = errorPayload?.details || errorPayload?.error || message;
+              } catch {
+                // no-op
+              }
+              throw new Error(message);
+            }
 
             const result = await response.json();
 
@@ -181,7 +195,7 @@ export default function Home() {
             }
           } catch (err) {
             console.error("Error:", err);
-            setError("Failed to load records");
+            setError(err instanceof Error ? err.message : "Failed to load records");
             if (!forExport) {
               setRecords([]);
               setTotalRecords(0);

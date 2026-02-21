@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { SarvamAIClient } from "sarvamai";
+import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 // sarvam client
@@ -78,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { data: record, error } = await supabase
       .from("records")
-      .select("id, name, title_name, extracted_text")
+      .select("id, title_name, extracted_text, magazines(id, name)")
       .eq("id", recordId)
       .single();
 
@@ -96,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       mode,
       context,
       record.title_name,
-      record.name,
+      extractMagazineName(record),
       variant === "regen" ? "regen" : "primary",
     );
 

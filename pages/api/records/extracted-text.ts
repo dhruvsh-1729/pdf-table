@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getUploadThingUrl } from "@/lib/uploadthing";
+import { extractLanguageDisplay, syncRecordLanguages } from "@/lib/recordRelations";
 
 export const config = {
   runtime: "nodejs",
@@ -470,7 +471,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const { data: record, error: fetchError } = await supabase
       .from("records")
-      .select("id, pdf_url, pdf_public_id, extracted_text, name, title_name, language")
+      .select(
+        "id, pdf_url, pdf_public_id, extracted_text, title_name, magazines(id, name), record_languages(language_id, languages(id, name))",
+      )
       .eq("id", recordId)
       .single();
 
@@ -498,12 +501,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const pdfBytes = new Uint8Array(await response.arrayBuffer());
-    const { text: sanitized, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, record.language);
+    const currentLanguage = extractLanguageDisplay(record);
+    const { text: sanitized, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, currentLanguage);
 
     const updatePayload: Record<string, any> = { extracted_text: sanitized };
-    if (!record.language && languageHint) updatePayload.language = languageHint;
 
     await supabase.from("records").update(updatePayload).eq("id", recordId).throwOnError();
+    if (!currentLanguage && languageHint) {
+      await syncRecordLanguages(supabase, recordId, languageHint);
+    }
 
     return res.status(200).json({ text: sanitized, usedOcr: usedOcr || undefined });
   } catch (error) {
