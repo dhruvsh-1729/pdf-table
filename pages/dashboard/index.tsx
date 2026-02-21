@@ -4,6 +4,7 @@ import { GetServerSideProps } from "next";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, Tooltip } from "recharts";
+import { extractLanguageDisplay, extractMagazineName } from "@/lib/recordRelations";
 
 /** -----------------------------
  * Types
@@ -235,8 +236,10 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
       .from("records")
       .select(
         `
-        id, name, timestamp, summary, pdf_url, volume, number, title_name,
-        page_numbers, authors, language, email, creator_name, conclusion
+        id, timestamp, summary, pdf_url, volume, number, title_name,
+        page_numbers, authors, email, creator_name, conclusion,
+        magazines(id, name),
+        record_languages(language_id, languages(id, name))
       `,
         { count: "exact" },
       )
@@ -268,7 +271,7 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
   // --- Normalize Records
   const records: RecordRow[] = (recordsRaw ?? []).map((r) => ({
     id: Number(r.id ?? 0),
-    name: normalizeField(r.name) ?? "",
+    name: normalizeField(extractMagazineName(r)) ?? "",
     pdf_url: normalizeField(r.pdf_url) ?? "",
     timestamp: normalizeField(r.timestamp),
     summary: normalizeField(r.summary),
@@ -277,7 +280,7 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
     title_name: normalizeField(r.title_name),
     page_numbers: normalizeField(r.page_numbers),
     authors: normalizeField(r.authors),
-    language: normalizeField(r.language),
+    language: normalizeField(extractLanguageDisplay(r)),
     email: normalizeField(r.email),
     creator_name: normalizeField(r.creator_name),
     conclusion: normalizeField(r.conclusion),
