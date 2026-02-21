@@ -1,6 +1,7 @@
 // pages/api/user-magazine-activity.ts
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { extractLanguageDisplay, extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -8,10 +9,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     // Pull only relevant columns
     const [{ data: records }, { data: summaries }, { data: conclusions }] = await Promise.all([
-      supabase.from("records").select("id,name,volume,title_name,page_numbers,authors,language,creator_name,email"),
+      supabase
+        .from("records")
+        .select(
+          "id,volume,title_name,page_numbers,authors,creator_name,email,magazines(id,name),record_languages(language_id,languages(id,name))",
+        ),
       supabase.from("summaries").select("id,name,email,record_id"),
       supabase.from("conclusions").select("id,name,email,record_id"),
     ]);
+
+    const recordsWithLegacyShape = (records || []).map((record: any) => ({
+      ...record,
+      name: extractMagazineName(record),
+      language: extractLanguageDisplay(record),
+    }));
 
     // Build map
     type UserMagazineActivity = {
@@ -53,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
 
     // Records created
-    (records ?? []).forEach((r: any) => {
+    recordsWithLegacyShape.forEach((r: any) => {
       if (!r.creator_name || !r.email) return;
       const key = k(r.creator_name, r.email);
       if (!byUser.has(key)) {
@@ -95,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       u.totalActivity++;
     });
 
-    const recById = new Map<number, any>((records ?? []).map((r: any) => [r.id, r]));
+    const recById = new Map<number, any>(recordsWithLegacyShape.map((r: any) => [r.id, r]));
 
     // Summaries edited
     (summaries ?? []).forEach((s: any) => {
