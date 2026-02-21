@@ -5,6 +5,7 @@ import fs from "fs/promises";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { deleteUploadThingFile, ensureUploadThingToken, uploadPdfBuffer } from "@/lib/uploadthing";
+import { ensureMagazineId, extractMagazineName, syncRecordLanguages } from "@/lib/recordRelations";
 import { invalidateCache } from "./records-paginated";
 
 export const config = {
@@ -54,7 +55,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { data: existing, error: fetchError } = await supabase
       .from("records")
-      .select("summary, pdf_url, pdf_public_id, conclusion, title_name, name")
+      .select(
+        "summary, pdf_url, pdf_public_id, conclusion, title_name, magazines(id, name), record_languages(language_id, languages(id, name))",
+      )
       .eq("id", id)
       .single();
     if (fetchError) return res.status(500).json({ error: fetchError.message });
@@ -73,7 +76,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         getFirstString(fields.title_name) ||
         existing?.title_name ||
         getFirstString(fields.name) ||
-        existing?.name ||
+        extractMagazineName(existing) ||
         "untitled";
 
       const baseId = buildBaseId(title!);
@@ -96,7 +99,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Build selective update payload
     const updateFieldsRaw = {
-      name: getFirstString(fields.name),
       summary: getFirstString(fields.summary),
       pdf_url: pdfUrl, // UploadThing URL
       pdf_public_id: pdfPublicId, // UploadThing file key
@@ -105,7 +107,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       title_name: getFirstString(fields.title_name),
       page_numbers: getFirstString(fields.page_numbers),
       authors: getFirstString(fields.authors),
-      language: getFirstString(fields.language),
       timestamp: getFirstString(fields.timestamp),
       conclusion: getFirstString(fields.conclusion),
       extracted_text: shouldResetExtractedText ? null : undefined,
@@ -114,6 +115,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     for (const [k, v] of Object.entries(updateFieldsRaw)) {
       if (v !== undefined) updateFields[k] = toNullIfEmpty(v);
     }
+
+    const incomingMagazineName = getFirstString(fields.name);
+    if (incomingMagazineName !== undefined) {
+      const trimmedMagazineName = incomingMagazineName.trim();
+      if (!trimmedMagazineName) {
+        return res.status(400).json({ error: "Field 'name' (magazine name) cannot be empty." });
+      }
+      updateFields.magazine_id = await ensureMagazineId(supabase, trimmedMagazineName);
+    }
+
+    const incomingLanguage = getFirstString(fields.language);
 
     // History rows only if new value provided and changed
     const newSummary = getFirstString(fields.summary);
@@ -140,6 +152,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { error: updateError } = await supabase.from("records").update(updateFields).eq("id", id);
     if (updateError) return res.status(500).json({ error: updateError.message });
+
+    if (incomingLanguage !== undefined) {
+      await syncRecordLanguages(supabase, id, incomingLanguage);
+    }
 
     invalidateCache();
     return res.status(200).json({ id, pdf_url: pdfUrl, pdf_public_id: pdfPublicId });
