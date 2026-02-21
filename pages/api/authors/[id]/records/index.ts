@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -102,7 +103,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Get the actual records
       const { data: records, error: recordsError } = await supabase
         .from("records")
-        .select("id, name, timestamp, volume, number, title_name")
+        .select("id, timestamp, volume, number, title_name, magazines(id, name)")
         .in("id", recordIds)
         .order("timestamp", { ascending: false });
 
@@ -114,7 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const formattedRecords =
         records?.map((record) => ({
           id: record.id, // Keep id as is
-          name: formatValue(record.name),
+          name: formatValue(extractMagazineName(record)),
           timestamp: formatValue(record.timestamp),
           volume: formatValue(record.volume),
           number: formatValue(record.number),
