@@ -18,6 +18,7 @@ export interface Tag {
 
 export interface MagazineRecord {
   id: number;
+  magazine_id?: number | null;
   name: string;
   timestamp: string | null;
   summary: string | null;
@@ -29,6 +30,7 @@ export interface MagazineRecord {
   page_numbers: string | null;
   authors: string | null;
   language: string | null;
+  languages?: string[];
   email: string | null;
   creator_name: string | null;
   conclusion: string | null;
