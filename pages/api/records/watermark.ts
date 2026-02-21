@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { uploadWithCompressFallback } from "@/lib/ocrPipeline";
 import { ensureUploadThingToken, getUploadThingUrl } from "@/lib/uploadthing";
+import { extractMagazineName } from "@/lib/recordRelations";
 
 const LIGHTPDF_API_KEY = process.env.LIGHTPDF_API_KEY;
 
@@ -111,7 +112,7 @@ function bufferToArrayBuffer(buffer: Buffer) {
 }
 
 function deriveCleanFilename(record: any) {
-  const baseLabel = record?.title_name || record?.name || `record-${record?.id || "file"}`;
+  const baseLabel = record?.title_name || extractMagazineName(record) || `record-${record?.id || "file"}`;
   const base = sanitizeFilenameSegment(baseLabel);
   return `${base}-clean.pdf`;
 }
@@ -129,7 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { data: record, error } = await supabaseAdmin
       .from("records")
-      .select("id, pdf_url, pdf_public_id, title_name, name")
+      .select("id, pdf_url, pdf_public_id, title_name, magazines(id, name)")
       .eq("id", id)
       .single();
 
