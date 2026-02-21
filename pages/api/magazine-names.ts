@@ -13,15 +13,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { q = "" } = req.query;
     const searchQuery = String(q).trim();
 
-    // Get unique magazine names from the database
-    let query = supabase.from("records").select("name").order("name", { ascending: true });
+    let query = supabase.from("magazines").select("name").order("name", { ascending: true });
 
-    // If there's a search query, filter by it
     if (searchQuery) {
       query = query.ilike("name", `%${searchQuery}%`);
     }
 
-    // Limit results for performance
     query = query.limit(50);
 
     const { data, error } = await query;
@@ -31,8 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: "Failed to fetch magazine names" });
     }
 
-    // Extract unique names and filter out nulls
-    const uniqueNames = Array.from(new Set((data || []).map((record) => record.name).filter(Boolean))).sort();
+    const uniqueNames = Array.from(new Set((data || []).map((magazine) => magazine.name).filter(Boolean))).sort();
 
     return res.status(200).json(uniqueNames);
   } catch (error) {
