@@ -6,7 +6,7 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    const { data: records, error } = await supabase.from("records").select("title_name,authors,creator_name,language");
+    const { data: records, error } = await supabase.from("records").select("title_name,authors,creator_name");
 
     if (error) throw error;
 
