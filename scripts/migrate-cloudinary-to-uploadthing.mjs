@@ -62,7 +62,9 @@ function sanitizeFilenameSegment(value) {
 }
 
 function buildFilename(record) {
-  const baseLabel = record?.title_name || record?.name || `record-${record?.id || "file"}`;
+  const relation = Array.isArray(record?.magazines) ? record.magazines[0] : record?.magazines;
+  const magazineName = relation?.name || record?.name || record?.name_legacy || null;
+  const baseLabel = record?.title_name || magazineName || `record-${record?.id || "file"}`;
   const base = sanitizeFilenameSegment(baseLabel);
   return `${base}.pdf`;
 }
@@ -74,7 +76,7 @@ function isUploadThingUrl(url) {
 async function fetchRecordsPage(from, pageSize) {
   const { data, error } = await supabase
     .from("records")
-    .select("id, pdf_url, pdf_public_id, name, title_name")
+    .select("id, pdf_url, pdf_public_id, title_name, magazines(id, name)")
     .order("id", { ascending: true })
     .range(from, from + pageSize - 1);
   if (error) throw error;
