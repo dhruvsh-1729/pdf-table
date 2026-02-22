@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
 import dynamic from "next/dynamic";
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, degrees, rgb } from "pdf-lib";
 import JSZip from "jszip";
 import AsyncCreatableSelect from "react-select/async-creatable";
 import {
@@ -80,6 +80,29 @@ const buildInitialFields = (pageRange: string): Record<FieldKey, FieldState<stri
 
 type PageTextMap = Record<number, string>;
 
+type WhiteoutRect = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type WhiteoutViewRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type WhiteoutDraft = {
+  pageIndex: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+};
+
 const PAGE_MARKER_RE = /^\s*-*\s*Page\s+(\d+)\s*-*\s*$/i;
 
 const parseExtractedTextFile = (raw: string): PageTextMap => {
@@ -112,6 +135,93 @@ const parseExtractedTextFile = (raw: string): PageTextMap => {
   });
 
   return pageText;
+};
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+const normalizeRotation = (rotation: number) => {
+  const normalized = ((rotation % 360) + 360) % 360;
+  return normalized === 90 || normalized === 180 || normalized === 270 ? normalized : 0;
+};
+
+const createViewRectFromPoints = (x1: number, y1: number, x2: number, y2: number): WhiteoutViewRect => {
+  const left = clamp01(Math.min(x1, x2));
+  const top = clamp01(Math.min(y1, y2));
+  const right = clamp01(Math.max(x1, x2));
+  const bottom = clamp01(Math.max(y1, y2));
+  return {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+};
+
+const getRectBounds = (points: Array<{ x: number; y: number }>): WhiteoutViewRect => {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const left = clamp01(Math.min(...xs));
+  const top = clamp01(Math.min(...ys));
+  const right = clamp01(Math.max(...xs));
+  const bottom = clamp01(Math.max(...ys));
+  return {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+};
+
+const rotateBaseTopLeftPointToView = (point: { x: number; y: number }, rotation: number) => {
+  const r = normalizeRotation(rotation);
+  if (r === 90) return { x: 1 - point.y, y: point.x };
+  if (r === 180) return { x: 1 - point.x, y: 1 - point.y };
+  if (r === 270) return { x: point.y, y: 1 - point.x };
+  return point;
+};
+
+const rotateViewPointToBaseTopLeft = (point: { x: number; y: number }, rotation: number) => {
+  const r = normalizeRotation(rotation);
+  if (r === 90) return { x: point.y, y: 1 - point.x };
+  if (r === 180) return { x: 1 - point.x, y: 1 - point.y };
+  if (r === 270) return { x: 1 - point.y, y: point.x };
+  return point;
+};
+
+const viewRectToPdfRect = (rect: WhiteoutViewRect, rotation: number): Omit<WhiteoutRect, "id"> => {
+  const viewCorners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x, y: rect.y + rect.height },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+  ];
+  const baseTopLeftCorners = viewCorners.map((p) => rotateViewPointToBaseTopLeft(p, rotation));
+  const baseTopLeft = getRectBounds(baseTopLeftCorners);
+
+  return {
+    x: baseTopLeft.x,
+    y: clamp01(1 - (baseTopLeft.y + baseTopLeft.height)),
+    width: clamp01(baseTopLeft.width),
+    height: clamp01(baseTopLeft.height),
+  };
+};
+
+const pdfRectToViewRect = (rect: Omit<WhiteoutRect, "id">, rotation: number): WhiteoutViewRect => {
+  const baseTopLeft = {
+    x: clamp01(rect.x),
+    y: clamp01(1 - (rect.y + rect.height)),
+    width: clamp01(rect.width),
+    height: clamp01(rect.height),
+  };
+
+  const baseCorners = [
+    { x: baseTopLeft.x, y: baseTopLeft.y },
+    { x: baseTopLeft.x + baseTopLeft.width, y: baseTopLeft.y },
+    { x: baseTopLeft.x, y: baseTopLeft.y + baseTopLeft.height },
+    { x: baseTopLeft.x + baseTopLeft.width, y: baseTopLeft.y + baseTopLeft.height },
+  ];
+  const viewCorners = baseCorners.map((p) => rotateBaseTopLeftPointToView(p, rotation));
+  return getRectBounds(viewCorners);
 };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
@@ -175,6 +285,10 @@ function Add() {
   const [commonVolume, setCommonVolume] = useState("");
   const [commonNumber, setCommonNumber] = useState("");
   const [commonTimestamp, setCommonTimestamp] = useState("");
+  const [whiteoutRegionsByPage, setWhiteoutRegionsByPage] = useState<Record<number, WhiteoutRect[]>>({});
+  const [whiteoutEditMode, setWhiteoutEditMode] = useState(false);
+  const [whiteoutDraft, setWhiteoutDraft] = useState<WhiteoutDraft | null>(null);
+  const previewWhiteoutSurfaceRef = useRef<HTMLDivElement | null>(null);
   const DocumentComp = reactPdf?.Document;
   const PageComp = reactPdf?.Page;
 
@@ -322,6 +436,8 @@ function Add() {
       setRotations({});
       setSplitIndices(new Set());
       setSkippedSections(new Set());
+      setWhiteoutRegionsByPage({});
+      setWhiteoutDraft(null);
       resetSplits();
     },
     [resetSplits],
@@ -331,6 +447,9 @@ function Add() {
     const selected = e.target.files?.[0] || null;
     if (selected) {
       setFile(selected);
+      setWhiteoutRegionsByPage({});
+      setWhiteoutDraft(null);
+      setWhiteoutEditMode(false);
       resetSplits();
     }
   };
@@ -402,12 +521,195 @@ function Add() {
         })()
       : null;
 
+  const addWhiteoutRectForPage = useCallback(
+    (pageIndex: number, viewRect: WhiteoutViewRect) => {
+      if (viewRect.width < 0.003 || viewRect.height < 0.003) return;
+      const rotation = rotations[pageIndex] || 0;
+      const pdfRect = viewRectToPdfRect(viewRect, rotation);
+      if (pdfRect.width <= 0 || pdfRect.height <= 0) return;
+
+      setWhiteoutRegionsByPage((prev) => {
+        const current = prev[pageIndex] || [];
+        const nextRect: WhiteoutRect = {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          ...pdfRect,
+        };
+        return { ...prev, [pageIndex]: [...current, nextRect] };
+      });
+    },
+    [rotations],
+  );
+
+  const removeWhiteoutRectForPage = useCallback((pageIndex: number, rectId: string) => {
+    setWhiteoutRegionsByPage((prev) => {
+      const current = prev[pageIndex] || [];
+      const next = current.filter((rect) => rect.id !== rectId);
+      if (next.length === current.length) return prev;
+      if (!next.length) {
+        const clone = { ...prev };
+        delete clone[pageIndex];
+        return clone;
+      }
+      return { ...prev, [pageIndex]: next };
+    });
+  }, []);
+
+  const clearWhiteoutsForPage = useCallback((pageIndex: number) => {
+    setWhiteoutRegionsByPage((prev) => {
+      if (!prev[pageIndex]?.length) return prev;
+      const clone = { ...prev };
+      delete clone[pageIndex];
+      return clone;
+    });
+  }, []);
+
+  const undoLastWhiteoutForPage = useCallback((pageIndex: number) => {
+    setWhiteoutRegionsByPage((prev) => {
+      const current = prev[pageIndex] || [];
+      if (!current.length) return prev;
+      const next = current.slice(0, -1);
+      if (!next.length) {
+        const clone = { ...prev };
+        delete clone[pageIndex];
+        return clone;
+      }
+      return { ...prev, [pageIndex]: next };
+    });
+  }, []);
+
+  const previewWhiteoutRects = useMemo(() => {
+    if (!previewContext) return [] as Array<{ id: string; viewRect: WhiteoutViewRect }>;
+    const rotation = rotations[previewContext.logicalIndex] || 0;
+    return (whiteoutRegionsByPage[previewContext.logicalIndex] || []).map((rect) => ({
+      id: rect.id,
+      viewRect: pdfRectToViewRect(rect, rotation),
+    }));
+  }, [previewContext, rotations, whiteoutRegionsByPage]);
+
+  const previewDraftViewRect = useMemo(() => {
+    if (!whiteoutDraft || !previewContext) return null;
+    if (whiteoutDraft.pageIndex !== previewContext.logicalIndex) return null;
+    return createViewRectFromPoints(
+      whiteoutDraft.startX,
+      whiteoutDraft.startY,
+      whiteoutDraft.currentX,
+      whiteoutDraft.currentY,
+    );
+  }, [whiteoutDraft, previewContext]);
+
+  const getWhiteoutPointerPoint = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const surface = previewWhiteoutSurfaceRef.current;
+    if (!surface) return null;
+    const rect = surface.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: clamp01((event.clientX - rect.left) / rect.width),
+      y: clamp01((event.clientY - rect.top) / rect.height),
+    };
+  }, []);
+
+  const handlePreviewWhiteoutPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!whiteoutEditMode || !previewContext) return;
+      if (event.button !== 0) return;
+      const point = getWhiteoutPointerPoint(event);
+      if (!point) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // no-op
+      }
+      setWhiteoutDraft({
+        pageIndex: previewContext.logicalIndex,
+        startX: point.x,
+        startY: point.y,
+        currentX: point.x,
+        currentY: point.y,
+      });
+    },
+    [getWhiteoutPointerPoint, previewContext, whiteoutEditMode],
+  );
+
+  const handlePreviewWhiteoutPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!whiteoutDraft) return;
+      const point = getWhiteoutPointerPoint(event);
+      if (!point) return;
+      event.preventDefault();
+      setWhiteoutDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentX: point.x,
+              currentY: point.y,
+            }
+          : prev,
+      );
+    },
+    [getWhiteoutPointerPoint, whiteoutDraft],
+  );
+
+  const cancelPreviewWhiteoutDraft = useCallback(() => {
+    setWhiteoutDraft(null);
+  }, []);
+
+  const handlePreviewWhiteoutPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!whiteoutDraft) return;
+      const point = getWhiteoutPointerPoint(event);
+      event.preventDefault();
+      if (point) {
+        setWhiteoutDraft((prev) =>
+          prev
+            ? {
+                ...prev,
+                currentX: point.x,
+                currentY: point.y,
+              }
+            : prev,
+        );
+      }
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // no-op
+      }
+      const draftToCommit = point
+        ? {
+            ...whiteoutDraft,
+            currentX: point.x,
+            currentY: point.y,
+          }
+        : whiteoutDraft;
+      const viewRect = createViewRectFromPoints(
+        draftToCommit.startX,
+        draftToCommit.startY,
+        draftToCommit.currentX,
+        draftToCommit.currentY,
+      );
+      addWhiteoutRectForPage(draftToCommit.pageIndex, viewRect);
+      setWhiteoutDraft(null);
+    },
+    [addWhiteoutRectForPage, getWhiteoutPointerPoint, whiteoutDraft],
+  );
+
+  const handlePreviewWhiteoutPointerCancel = useCallback(() => {
+    if (!whiteoutDraft) return;
+    cancelPreviewWhiteoutDraft();
+  }, [cancelPreviewWhiteoutDraft, whiteoutDraft]);
+
   useEffect(() => {
     if (previewPosition === null) return;
     if (!file || previewPosition < 0 || previewPosition >= pageOrder.length) {
       setPreviewPosition(null);
     }
   }, [file, pageOrder, previewPosition]);
+
+  useEffect(() => {
+    setWhiteoutDraft(null);
+  }, [previewContext?.logicalIndex]);
 
   const runFieldGeneration = useCallback(
     async (splitId: string, field: FieldKey, providedText?: string, variant: "primary" | "regen" = "primary") => {
@@ -751,6 +1053,23 @@ function Add() {
           const newPdf = await PDFDocument.create();
           for (const logicalIdx of pages) {
             const [copiedPage] = await newPdf.copyPages(originalPdf, [logicalIdx]);
+            const whiteoutRects = whiteoutRegionsByPage[logicalIdx] || [];
+            if (whiteoutRects.length) {
+              const { width, height } = copiedPage.getSize();
+              for (const rect of whiteoutRects) {
+                const rectWidth = Math.max(0, rect.width * width);
+                const rectHeight = Math.max(0, rect.height * height);
+                if (!rectWidth || !rectHeight) continue;
+                copiedPage.drawRectangle({
+                  x: rect.x * width,
+                  y: rect.y * height,
+                  width: rectWidth,
+                  height: rectHeight,
+                  color: rgb(1, 1, 1),
+                  borderColor: rgb(1, 1, 1),
+                });
+              }
+            }
             const rotation = rotations[logicalIdx] || 0;
             if (rotation) copiedPage.setRotation(degrees(rotation));
             newPdf.addPage(copiedPage);
@@ -813,7 +1132,7 @@ function Add() {
         setGeneratingSplits(false);
       }
     },
-    [file, sections, skippedSections, rotations, runExtraction, applyCommonFields],
+    [file, sections, skippedSections, rotations, whiteoutRegionsByPage, runExtraction, applyCommonFields],
   );
 
   const setFieldValue = (splitId: string, field: FieldKey, value: string | string[]) => {
@@ -1894,38 +2213,169 @@ function Add() {
               </button>
             </div>
 
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-xl bg-zinc-950 p-4 sm:p-6">
-              <div className="flex items-center justify-center">
-                <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
-                  {DocumentComp && PageComp ? (
-                    <DocumentComp file={file}>
-                      <PageComp
-                        pageNumber={previewContext.logicalIndex + 1}
-                        renderMode="canvas"
-                        renderAnnotationLayer={false}
-                        renderTextLayer={false}
-                        width={(() => {
-                          if (typeof window === "undefined") return 600;
-                          const maxWidth = Math.min(window.innerWidth - 100, 1200);
-                          const maxHeight = window.innerHeight - 300;
-                          const widthFromHeight = maxHeight / 1.414;
-                          return Math.min(maxWidth, widthFromHeight);
-                        })()}
-                        rotate={rotations[previewContext.logicalIndex] || 0}
-                        loading={
-                          <div className="flex h-[600px] w-[424px] items-center justify-center">
-                            <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
-                          </div>
-                        }
-                      />
-                    </DocumentComp>
-                  ) : (
-                    <div className="flex h-[600px] w-[424px] items-center justify-center">
-                      <Loader2 className="h-10 w-10 animate-spin text-white" />
-                    </div>
-                  )}
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-xl bg-zinc-950 p-4 sm:p-6">
+              <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Page whiteout</p>
+                  <p className="text-sm text-zinc-200">
+                    Draw one or more rectangles to hide parts of this page in generated split PDFs.
+                  </p>
+                  <p className="text-xs text-zinc-400">
+                    {whiteoutEditMode
+                      ? "Drag on the page to add a white rectangle. Click an existing rectangle or use the list to remove it."
+                      : "Enable draw mode to add white rectangles."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-semibold text-zinc-200">
+                    {whiteoutRegionsByPage[previewContext.logicalIndex]?.length || 0} region
+                    {(whiteoutRegionsByPage[previewContext.logicalIndex]?.length || 0) === 1 ? "" : "s"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWhiteoutEditMode((prev) => !prev);
+                      setWhiteoutDraft(null);
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm transition ${
+                      whiteoutEditMode
+                        ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500"
+                        : "border-zinc-700 bg-zinc-800 text-white hover:bg-zinc-700"
+                    }`}
+                  >
+                    {whiteoutEditMode ? "Draw mode on" : "Enable draw mode"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => undoLastWhiteoutForPage(previewContext.logicalIndex)}
+                    disabled={(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Undo last
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => clearWhiteoutsForPage(previewContext.logicalIndex)}
+                    disabled={(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg border border-rose-700 bg-rose-700 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Clear page
+                  </button>
                 </div>
               </div>
+
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto">
+                <div className="flex items-center justify-center">
+                  <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
+                    {DocumentComp && PageComp ? (
+                      <DocumentComp file={file}>
+                        <div className="relative inline-block" ref={previewWhiteoutSurfaceRef}>
+                          <PageComp
+                            pageNumber={previewContext.logicalIndex + 1}
+                            renderMode="canvas"
+                            renderAnnotationLayer={false}
+                            renderTextLayer={false}
+                            width={(() => {
+                              if (typeof window === "undefined") return 600;
+                              const maxWidth = Math.min(window.innerWidth - 100, 1200);
+                              const maxHeight = window.innerHeight - 360;
+                              const widthFromHeight = maxHeight / 1.414;
+                              return Math.min(maxWidth, widthFromHeight);
+                            })()}
+                            rotate={rotations[previewContext.logicalIndex] || 0}
+                            loading={
+                              <div className="flex h-[600px] w-[424px] items-center justify-center">
+                                <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
+                              </div>
+                            }
+                          />
+                          <div
+                            className={`absolute inset-0 ${whiteoutEditMode ? "cursor-crosshair" : "pointer-events-none"}`}
+                            style={{ touchAction: "none" }}
+                            onPointerDown={handlePreviewWhiteoutPointerDown}
+                            onPointerMove={handlePreviewWhiteoutPointerMove}
+                            onPointerUp={handlePreviewWhiteoutPointerUp}
+                            onPointerCancel={handlePreviewWhiteoutPointerCancel}
+                          >
+                            {previewWhiteoutRects.map((rect, idx) => (
+                              <button
+                                key={rect.id}
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (!whiteoutEditMode) return;
+                                  removeWhiteoutRectForPage(previewContext.logicalIndex, rect.id);
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                title={
+                                  whiteoutEditMode
+                                    ? `Whiteout region ${idx + 1} (click to remove)`
+                                    : `Whiteout region ${idx + 1}`
+                                }
+                                className={`absolute border-2 ${
+                                  whiteoutEditMode
+                                    ? "border-zinc-100 bg-white/40 hover:bg-white/55"
+                                    : "pointer-events-none border-zinc-100/70 bg-white/65"
+                                }`}
+                                style={{
+                                  left: `${rect.viewRect.x * 100}%`,
+                                  top: `${rect.viewRect.y * 100}%`,
+                                  width: `${rect.viewRect.width * 100}%`,
+                                  height: `${rect.viewRect.height * 100}%`,
+                                }}
+                              />
+                            ))}
+                            {previewDraftViewRect && whiteoutEditMode && (
+                              <div
+                                className="absolute border-2 border-dashed border-emerald-300 bg-white/35"
+                                style={{
+                                  left: `${previewDraftViewRect.x * 100}%`,
+                                  top: `${previewDraftViewRect.y * 100}%`,
+                                  width: `${previewDraftViewRect.width * 100}%`,
+                                  height: `${previewDraftViewRect.height * 100}%`,
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </DocumentComp>
+                    ) : (
+                      <div className="flex h-[600px] w-[424px] items-center justify-center">
+                        <Loader2 className="h-10 w-10 animate-spin text-white" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length > 0 && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.15em] text-zinc-500">Regions</p>
+                    <p className="text-xs text-zinc-400">Stored for this source page (applies to duplicate copies too)</p>
+                  </div>
+                  <div className="max-h-28 space-y-2 overflow-auto pr-1">
+                    {(whiteoutRegionsByPage[previewContext.logicalIndex] || []).map((rect, idx) => (
+                      <div
+                        key={`whiteout-list-${rect.id}`}
+                        className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                      >
+                        <span>
+                          Region {idx + 1} ({Math.round(rect.width * 100)}% x {Math.round(rect.height * 100)}%)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeWhiteoutRectForPage(previewContext.logicalIndex, rect.id)}
+                          className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-semibold text-white transition hover:bg-zinc-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-shrink-0 items-center justify-between border-t border-zinc-800 p-4 sm:p-6">
@@ -1942,11 +2392,16 @@ function Add() {
                 <span className="hidden sm:inline">Previous</span>
               </button>
 
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-800/50 px-3 py-2 sm:px-4">
-                <span className="text-xs text-zinc-400 sm:text-sm">Rotation:</span>
-                <span className="text-sm font-semibold text-white sm:text-base">
-                  {rotations[previewContext.logicalIndex] || 0}°
-                </span>
+              <div className="flex flex-col items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-800/50 px-3 py-2 sm:px-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-400 sm:text-sm">Rotation:</span>
+                  <span className="text-sm font-semibold text-white sm:text-base">
+                    {rotations[previewContext.logicalIndex] || 0}°
+                  </span>
+                </div>
+                {splitRecords.length > 0 && (whiteoutRegionsByPage[previewContext.logicalIndex] || []).length > 0 && (
+                  <span className="text-[11px] text-amber-300">Regenerate splits to apply whiteouts</span>
+                )}
               </div>
 
               <button

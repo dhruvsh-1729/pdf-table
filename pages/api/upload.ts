@@ -14,6 +14,7 @@ export const config = {
 
 export type RecordRow = {
   name?: string;
+  name_legacy?: string | null;
   timestamp?: string | null;
   summary?: string | null;
   volume?: string | null;
@@ -22,6 +23,7 @@ export type RecordRow = {
   page_numbers?: string | null;
   authors?: string | null;
   language?: string | null;
+  language_legacy?: string | null;
   email?: string | null;
   creator_name?: string | null;
   conclusion?: string | null;
@@ -123,6 +125,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const payload: RecordRow = {
       magazine_id: magazineId,
+      name_legacy: row.name.trim(),
       timestamp: toNullIfEmpty(row.timestamp),
       summary: toNullIfEmpty(row.summary),
       volume: toNullIfEmpty(row.volume),
@@ -131,6 +134,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       page_numbers: toNullIfEmpty(row.page_numbers),
       authors: toNullIfEmpty(row.authors),
       language: toNullIfEmpty(row.language),
+      language_legacy: toNullIfEmpty(row.language),
       email: toNullIfEmpty(row.email),
       creator_name: toNullIfEmpty(row.creator_name),
       conclusion: toNullIfEmpty(row.conclusion),
