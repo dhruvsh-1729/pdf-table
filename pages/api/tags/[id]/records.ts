@@ -13,8 +13,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!id) return res.status(400).json({ message: "Missing tag id" });
 
-  // First, get all record_ids for the given tag_id
-  const { data: tagRecords, error: tagError } = await supabase.from("record_tags").select("record_id").eq("tag_id", id);
+  const { data: tagRecords, error: tagError, count } = await supabase
+    .from("record_tags")
+    .select("record_id", { count: "exact" })
+    .eq("tag_id", id)
+    .range(offset, offset + limit - 1);
 
   if (tagError) return res.status(500).json({ message: tagError.message });
 
@@ -44,6 +47,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   res.status(200).json({
     records: cleanedRecords,
-    hasMore: (cleanedRecords.length || 0) === limit,
+    hasMore: (count || 0) > offset + limit,
   });
 }

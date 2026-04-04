@@ -6,7 +6,7 @@ import path from "path";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureUploadThingToken, uploadPdfBuffer } from "@/lib/uploadthing";
 import { ensureMagazineId, syncRecordLanguages, withRecordLegacyShape } from "@/lib/recordRelations";
-import { invalidateCache } from "../records-paginated";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 export const config = {
   api: { bodyParser: false, sizeLimit: "150mb" },
@@ -158,7 +158,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await syncRecordLanguages(supabaseAdmin, insertedRecord.id, row.language);
     }
 
-    invalidateCache();
+    invalidateRecordsCache();
     return res.status(200).json({
       ok: true,
       record: insertedRecord

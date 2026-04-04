@@ -9,9 +9,11 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const { id } = context.query;
 
-  const { data: rawHistory, error } = await supabase.from("summaries").select("*").eq("record_id", id);
+  const { data: rawHistory, error } = await supabase
+    .from("summaries")
+    .select("id, summary, created_at, name, email, record_id")
+    .eq("record_id", id);
 
-  // Clean up summaries and other fields
   const processValue = (value: any) => {
     if (typeof value === "string") {
       let parsed: any = value;
@@ -26,7 +28,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       if (typeof parsed === "string") {
         parsed = parsed
           .replace(/\\r\\n|\\n|\\r/g, "\n")
-          .replace(/\\"/g, '"')
+          .replace(/\\\"/g, '"')
           .replace(/\\'/g, "'")
           .replace(/\\\\/g, "\\")
           .trim();
@@ -48,7 +50,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
   const cleanedHistory = rawHistory?.map((record) => {
     const formattedRecord: any = {};
     for (const key in record) {
-      formattedRecord[key] = processValue(record[key]);
+      formattedRecord[key] = processValue((record as any)[key]);
     }
     return formattedRecord;
   });
@@ -77,7 +79,6 @@ const HistoryPage = ({ history }: { history: any[] }) => {
   const [mode, setMode] = useState<"diff" | "normal">("normal");
   const hasMultipleRecords = history.length >= 2;
 
-  // Helper to diff two arrays of strings word by word
   const diffWords = (oldText: string, newText: string) => {
     const oldWords = oldText.split(/\s+/);
     const newWords = newText.split(/\s+/);
@@ -142,7 +143,6 @@ const HistoryPage = ({ history }: { history: any[] }) => {
           <div className="text-center text-gray-500">Not enough summary edits to show differences.</div>
         ) : (
           <>
-            {/* Mode switcher only if multiple records */}
             {hasMultipleRecords && (
               <div className="flex justify-end mb-4">
                 <button
@@ -160,7 +160,6 @@ const HistoryPage = ({ history }: { history: any[] }) => {
               </div>
             )}
 
-            {/* Always show normal mode if at least 1 record */}
             {(mode === "normal" || !hasMultipleRecords) && (
               <div className="overflow-x-auto w-full max-w-full">
                 <table className="min-w-[600px] w-full bg-white border rounded shadow table-fixed">
@@ -210,49 +209,38 @@ const HistoryPage = ({ history }: { history: any[] }) => {
               </div>
             )}
 
-            {/* Diff mode only if 2 or more records */}
             {hasMultipleRecords && mode === "diff" && (
               <div className="space-y-6">
                 {history.slice(1).map((record, idx) => {
-                  const prev = history[idx];
-                  let prevSummary: string[] = [];
-                  let currSummary: string[] = [];
-                  try {
-                    prevSummary = JSON.parse(prev.summary);
-                    currSummary = JSON.parse(record.summary);
-                  } catch {
-                    prevSummary = [String(prev.summary)];
-                    currSummary = [String(record.summary)];
-                  }
+                  const prevRecord = history[idx];
+                  const oldSummary = Array.isArray(prevRecord.summary)
+                    ? prevRecord.summary.join(" ")
+                    : (() => {
+                        try {
+                          return JSON.parse(prevRecord.summary).join(" ");
+                        } catch {
+                          return String(prevRecord.summary);
+                        }
+                      })();
+
+                  const newSummary = Array.isArray(record.summary)
+                    ? record.summary.join(" ")
+                    : (() => {
+                        try {
+                          return JSON.parse(record.summary).join(" ");
+                        } catch {
+                          return String(record.summary);
+                        }
+                      })();
+
                   return (
-                    <div key={record.id} className="border rounded p-4 bg-white shadow mb-6 max-w-full overflow-x-auto">
-                      <div className="mb-2 text-sm text-gray-600">
-                        <span className="font-semibold">
-                          Change {history.length - (idx + 1)} → {history.length - idx}
-                        </span>
-                        <span className="ml-4">
-                          ({prev.created_at} , {record.created_at})
-                        </span>
-                      </div>
-                      <div>
-                        <div className="font-semibold mb-1">Summary Difference</div>
-                        <pre className="bg-gray-100 p-3 rounded overflow-x-auto text-sm whitespace-pre-wrap break-words max-w-full">
-                          {currSummary.map((line, i) => (
-                            <div key={i}>{diffWords(prevSummary[i] ?? "", line)}</div>
-                          ))}
-                        </pre>
-                      </div>
+                    <div key={record.id} className="border rounded p-4 bg-white shadow">
+                      <h3 className="font-semibold text-gray-700 mb-2">
+                        Diff #{history.length - idx} → #{history.length - idx - 1}
+                      </h3>
+                      <div className="text-sm leading-relaxed whitespace-pre-wrap">{diffWords(oldSummary, newSummary)}</div>
                       <div className="mt-2 text-xs text-gray-500">
-                        <span>
-                          By:{" "}
-                          {(() => {
-                            try {
-                              return `${JSON.parse(record.name).join(", ")} (${JSON.parse(record.email).join(", ")})`;
-                            } catch {
-                              return "";
-                            }
-                          })()}
-                        </span>
+                        Edited at: {record.created_at} by {record.name} ({record.email})
                       </div>
                     </div>
                   );

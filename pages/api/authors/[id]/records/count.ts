@@ -32,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // Count records where the authors field contains this author's name
       const { count, error } = await supabase
         .from("records")
-        .select("*", { count: "exact", head: true })
+        .select("id", { count: "exact", head: true })
         .contains("authors", `"${authorName}"`);
 
       if (error) {

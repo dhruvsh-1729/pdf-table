@@ -3,10 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-/**
- * Counts DISTINCT tag_id from record_tags without RPC.
- * Streams tag_id in pages and dedupes in memory.
- */
 async function countDistinctUsedTags(pageSize = 2000): Promise<number> {
   const used = new Set<number>();
   let offset = 0;
@@ -14,8 +10,8 @@ async function countDistinctUsedTags(pageSize = 2000): Promise<number> {
   while (true) {
     const { data, error } = await supabase
       .from("record_tags")
-      .select("tag_id") // only fetch what we need
-      .not("tag_id", "is", null) // ignore nulls
+      .select("tag_id")
+      .not("tag_id", "is", null)
       .range(offset, offset + pageSize - 1);
 
     if (error) throw error;
@@ -25,7 +21,7 @@ async function countDistinctUsedTags(pageSize = 2000): Promise<number> {
       if (row.tag_id != null) used.add(row.tag_id);
     }
 
-    if (rows.length < pageSize) break; // last page
+    if (rows.length < pageSize) break;
     offset += pageSize;
   }
 
@@ -36,23 +32,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== "GET") return res.status(405).json({ message: "Method not allowed" });
 
   try {
-    // Run independent counts in parallel for speed.
     const thirtyDaysAgoIso = (() => {
       const d = new Date();
       d.setDate(d.getDate() - 30);
       return d.toISOString();
     })();
 
-    const [
-      totalTagsResp,
-      recentTagsResp,
-      importantTagsResp,
-      usedTagsCount, // computed via pagination
-    ] = await Promise.all([
-      supabase.from("tags").select("*", { count: "exact", head: true }),
-      supabase.from("tags").select("*", { count: "exact", head: true }).gte("created_at", thirtyDaysAgoIso),
-      supabase.from("tags").select("*", { count: "exact", head: true }).eq("important", true),
-      countDistinctUsedTags(), // no RPC, paginated fetch + Set
+    const [totalTagsResp, recentTagsResp, importantTagsResp, usedTagsCount] = await Promise.all([
+      supabase.from("tags").select("id", { count: "exact", head: true }),
+      supabase.from("tags").select("id", { count: "exact", head: true }).gte("created_at", thirtyDaysAgoIso),
+      supabase.from("tags").select("id", { count: "exact", head: true }).eq("important", true),
+      countDistinctUsedTags(),
     ]);
 
     if (totalTagsResp.error) throw totalTagsResp.error;

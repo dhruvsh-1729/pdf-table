@@ -69,6 +69,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (req.method === "GET") {
     try {
+      const pageParam = req.query.page;
+      const limitParam = req.query.limit;
+      const usePagination = pageParam !== undefined || limitParam !== undefined;
+      const page = Math.max(1, parseInt((pageParam as string) || "1", 10));
+      const limit = Math.min(200, Math.max(1, parseInt((limitParam as string) || "50", 10)));
+      const offset = (page - 1) * limit;
+
       // Check if author exists
       const { data: authorExists, error: authorError } = await supabase
         .from("authors")
@@ -84,10 +91,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       // Get all record_ids for this author
-      const { data: authorRecords, error: recordAuthorError } = await supabase
-        .from("record_authors")
-        .select("record_id")
-        .eq("author_id", authorId);
+      let recordAuthorQuery = supabase.from("record_authors").select("record_id").eq("author_id", authorId);
+      if (usePagination) {
+        recordAuthorQuery = recordAuthorQuery.range(offset, offset + limit - 1);
+      }
+      const { data: authorRecords, error: recordAuthorError } = await recordAuthorQuery;
 
       if (recordAuthorError) {
         throw recordAuthorError;

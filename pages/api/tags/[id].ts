@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -14,7 +15,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "GET") {
     // Get single tag
     try {
-      const { data, error } = await supabase.from("tags").select("*").eq("id", tagId).single();
+      const { data, error } = await supabase
+        .from("tags")
+        .select("id, name, important, created_at")
+        .eq("id", tagId)
+        .single();
 
       if (error) {
         if (error.code === "PGRST116") {
@@ -67,7 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           important: important === true || important === false ? important : null,
         })
         .eq("id", tagId)
-        .select();
+        .select("id, name, important, created_at");
 
       if (error) {
         if (error.code === "23505") {
@@ -81,6 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(404).json({ message: "Tag not found" });
       }
 
+      invalidateRecordsCache();
       return res.status(200).json(data[0]);
     } catch (error) {
       console.error("Error updating tag:", error);
@@ -99,7 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       // Then delete the tag
-      const { data, error } = await supabase.from("tags").delete().eq("id", tagId).select();
+      const { data, error } = await supabase.from("tags").delete().eq("id", tagId).select("id");
 
       if (error) {
         throw error;
@@ -109,6 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(404).json({ message: "Tag not found" });
       }
 
+      invalidateRecordsCache();
       return res.status(200).json({
         message: "Tag deleted successfully",
       });

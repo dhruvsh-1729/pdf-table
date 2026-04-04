@@ -988,23 +988,39 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
+  const chunkArray = <T,>(items: T[], size: number) => {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      out.push(items.slice(i, i + size));
+    }
+    return out;
+  };
+
+  const fetchAuthorCountsByIds = async (ids: number[]) => {
+    const counts = new Map<number, number>();
+    const cleanIds = ids.filter((id) => Number.isFinite(id));
+    if (cleanIds.length === 0) return counts;
+
+    const chunks = chunkArray(cleanIds, 1000);
+    for (const chunk of chunks) {
+      const { data, error } = await supabase.from("record_authors").select("author_id").in("author_id", chunk);
+      if (error) throw error;
+      (data || []).forEach((row: any) => {
+        const id = Number(row.author_id);
+        if (!Number.isFinite(id)) return;
+        counts.set(id, (counts.get(id) || 0) + 1);
+      });
+    }
+
+    return counts;
+  };
+
   try {
-    // 1) Query authors with aggregated record counts
     let query = supabase.from("authors").select(
-      `
-        id,
-        name,
-        description,
-        cover_url,
-        created_at,
-        national,
-        designation,
-        short_name,
-        record_authors(count)
-      `,
+      "id, name, description, cover_url, created_at, national, designation, short_name",
+      { count: "exact" },
     );
 
-    // Apply filters at DB level where possible
     if (filters.search) {
       query = query.or(
         `name.ilike.%${filters.search}%,description.ilike.%${filters.search}%,designation.ilike.%${filters.search}%`,
@@ -1014,41 +1030,65 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     if (filters.dateFrom) query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
     if (filters.dateTo) query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
 
-    // National filter
     if (filters.national === "national") query = query.eq("national", "national");
     else if (filters.national === "international") query = query.eq("national", "international");
     else if (filters.national === "jainmonk") query = query.eq("national", "jainmonk");
     else if (filters.national === "jainnun") query = query.eq("national", "jainnun");
     else if (filters.national === "null") query = query.is("national", null);
 
-    // Designation text filter
     if (filters.designation) query = query.ilike("designation", `%${filters.designation}%`);
 
-    // Description filled/empty filter
     if (filters.descriptionStatus === "empty") {
       query = query.or("description.is.null,description.eq.");
     } else if (filters.descriptionStatus === "filled") {
       query = query.not("description", "is", null).not("description", "eq", "");
     }
 
-    // Designation filled/empty filter
     if (filters.designationStatus === "empty") {
       query = query.or("designation.is.null,designation.eq.");
     } else if (filters.designationStatus === "filled") {
       query = query.not("designation", "is", null).not("designation", "eq", "");
     }
 
-    const { data, error } = await query;
+    const ascending = filters.sortOrder === "asc";
+    const orderBy = filters.sortBy === "created_at" ? "created_at" : filters.sortBy === "designation" ? "designation" : "name";
+    const hasCountFilters = Boolean(filters.hasRecords || filters.minRecords);
 
+    if (!hasCountFilters) {
+      const { data, error, count } = await query.order(orderBy, { ascending }).range(offset, offset + limit - 1);
+      if (error) throw error;
+
+      const authorIds = (data || []).map((a: any) => Number(a.id)).filter((id) => Number.isFinite(id));
+      const countMap = await fetchAuthorCountsByIds(authorIds);
+      const authors = (data || []).map((a: any) => ({
+        ...a,
+        recordsCount: countMap.get(Number(a.id)) || 0,
+      }));
+
+      const total = count || 0;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        props: {
+          authors,
+          total,
+          currentPage: page,
+          totalPages,
+          filters,
+        },
+      };
+    }
+
+    const { data, error } = await query.order(orderBy, { ascending });
     if (error) throw error;
 
-    // 2) Convert supabase `record_authors(count)` into usable number
-    let authors = (data || []).map((a: any) => ({
+    const allAuthors = data || [];
+    const countMap = await fetchAuthorCountsByIds(allAuthors.map((a: any) => Number(a.id)));
+    let authors = allAuthors.map((a: any) => ({
       ...a,
-      recordsCount: a.record_authors?.[0]?.count || 0,
+      recordsCount: countMap.get(Number(a.id)) || 0,
     }));
 
-    // 3) Apply hasRecords and minRecords filters in-memory
     if (filters.hasRecords === "with") {
       authors = authors.filter((a) => a.recordsCount > 0);
     }
@@ -1056,7 +1096,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       authors = authors.filter((a) => a.recordsCount === 0);
     }
 
-    // Special handling for minRecords=0: only authors with no records
     if (filters.minRecords === "0") {
       authors = authors.filter((a) => a.recordsCount === 0);
     } else if (filters.minRecords) {
@@ -1066,30 +1105,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       }
     }
 
-    // 4) Sorting
-    const ascending = filters.sortOrder === "asc";
-    authors.sort((a, b) => {
-      if (filters.sortBy === "created_at") {
-        const va = new Date(a.created_at).getTime();
-        const vb = new Date(b.created_at).getTime();
-        return ascending ? va - vb : vb - va;
-      } else if (filters.sortBy === "designation") {
-        const va = (a.designation || "").toLowerCase();
-        const vb = (b.designation || "").toLowerCase();
-        if (va < vb) return ascending ? -1 : 1;
-        if (va > vb) return ascending ? 1 : -1;
-        return 0;
-      } else {
-        // name
-        const va = a.name.toLowerCase();
-        const vb = b.name.toLowerCase();
-        if (va < vb) return ascending ? -1 : 1;
-        if (va > vb) return ascending ? 1 : -1;
-        return 0;
-      }
-    });
-
-    // 5) Pagination
     const total = authors.length;
     const totalPages = Math.ceil(total / limit);
     const pageSlice = authors.slice(offset, offset + limit);

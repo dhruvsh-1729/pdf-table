@@ -8,17 +8,20 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const limit = Math.min(Number(req.query.limit ?? 300), 1000); // safety cap
+    const offset = Math.max(0, Number(req.query.offset ?? 0));
+
     const { data, error } = await supabase
       .from("records")
       .select(
         "id,magazine_id,timestamp,summary,conclusion,pdf_url,volume,number,title_name,page_numbers,authors,email,creator_name,magazines(id,name),record_languages(language_id,languages(id,name))",
       )
       .order("timestamp", { ascending: false })
-      .limit(limit);
+      .range(offset, offset + limit - 1);
 
     if (error) throw error;
 
     const records = (data || []).map((record: any) => withRecordLegacyShape(record));
+    res.setHeader("Cache-Control", "public, max-age=30, s-maxage=120, stale-while-revalidate=300");
     res.status(200).json({ records });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

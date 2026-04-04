@@ -16,6 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { data, error } = await query.limit(20); // limit for performance
       if (error) throw error;
 
+      res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
       return res.status(200).json(data);
     } catch (error) {
       return res.status(500).json({ error: "Error fetching tags", details: (error as Error).message });

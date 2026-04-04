@@ -1,6 +1,6 @@
 // pages/dashboard.tsx
 import { createClient } from "@supabase/supabase-js";
-import { GetServerSideProps } from "next";
+import { GetStaticProps } from "next";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, Tooltip } from "recharts";
@@ -26,8 +26,6 @@ type RecordRow = {
   id: number;
   name: string;
   timestamp: string | null;
-  summary: string | null;
-  pdf_url: string;
   volume: string | null;
   number: string | null;
   title_name: string | null;
@@ -36,7 +34,6 @@ type RecordRow = {
   language: string | null;
   email: string | null;
   creator_name: string | null;
-  conclusion: string | null;
 };
 
 type SummaryRow = {
@@ -206,9 +203,9 @@ function normalizeMaybe(input: unknown): string | undefined {
 }
 
 /** -----------------------------
- * Server: getServerSideProps
+ * Server: getStaticProps (ISR)
  * ------------------------------ */
-export const getServerSideProps: GetServerSideProps<DashboardProps> = async () => {
+export const getStaticProps: GetStaticProps<DashboardProps> = async () => {
   const supabaseAdmin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   // Count queries (fast)
@@ -236,8 +233,8 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
       .from("records")
       .select(
         `
-        id, timestamp, summary, pdf_url, volume, number, title_name,
-        page_numbers, authors, email, creator_name, conclusion,
+        id, timestamp, volume, number, title_name,
+        page_numbers, authors, email, creator_name,
         magazines(id, name),
         record_languages(language_id, languages(id, name))
       `,
@@ -272,9 +269,7 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
   const records: RecordRow[] = (recordsRaw ?? []).map((r) => ({
     id: Number(r.id ?? 0),
     name: normalizeField(extractMagazineName(r)) ?? "",
-    pdf_url: normalizeField(r.pdf_url) ?? "",
     timestamp: normalizeField(r.timestamp),
-    summary: normalizeField(r.summary),
     volume: normalizeField(r.volume),
     number: normalizeField(r.number),
     title_name: normalizeField(r.title_name),
@@ -283,7 +278,6 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
     language: normalizeField(extractLanguageDisplay(r)),
     email: normalizeField(r.email),
     creator_name: normalizeField(r.creator_name),
-    conclusion: normalizeField(r.conclusion),
   }));
 
   // --- Normalize Summaries
@@ -317,6 +311,7 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
       conclusions,
       unconfirmedUsers,
     },
+    revalidate: 300,
   };
 };
 
@@ -474,13 +469,29 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
     [records],
   );
 
+  const summaryRecordIds = useMemo(() => {
+    const set = new Set<number>();
+    summaries.forEach((s) => {
+      if (typeof s.record_id === "number") set.add(s.record_id);
+    });
+    return set;
+  }, [summaries]);
+
+  const conclusionRecordIds = useMemo(() => {
+    const set = new Set<number>();
+    conclusions.forEach((c) => {
+      if (typeof c.record_id === "number") set.add(c.record_id);
+    });
+    return set;
+  }, [conclusions]);
+
   const recordsWithSummaries = useMemo(
-    () => records.filter((r) => r.summary && r.summary.trim() !== "").length,
-    [records],
+    () => records.filter((r) => summaryRecordIds.has(r.id)).length,
+    [records, summaryRecordIds],
   );
   const recordsWithConclusions = useMemo(
-    () => records.filter((r) => r.conclusion && r.conclusion.trim() !== "").length,
-    [records],
+    () => records.filter((r) => conclusionRecordIds.has(r.id)).length,
+    [records, conclusionRecordIds],
   );
 
   // const filteredRecords = useMemo(
@@ -540,8 +551,8 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
       if (r.email && r.creator_name) {
         const entry = getOrCreate(r.creator_name, r.email);
         entry.records += 1;
-        if (r.summary && r.summary.trim() !== "") entry.summariesFilled += 1;
-        if (r.conclusion && r.conclusion.trim() !== "") entry.conclusionsFilled += 1;
+        if (summaryRecordIds.has(r.id)) entry.summariesFilled += 1;
+        if (conclusionRecordIds.has(r.id)) entry.conclusionsFilled += 1;
       }
     });
 
@@ -576,7 +587,7 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
     all.sort((a, b) => b.records + b.summaries + b.conclusions - (a.records + a.summaries + a.conclusions));
 
     return all.slice(0, 10);
-  }, [records, summaries, conclusions]);
+  }, [records, summaries, conclusions, summaryRecordIds, conclusionRecordIds]);
 
   // Magazine report per magazine (admin cards)
   const magazineReport = useMemo(() => {
@@ -615,8 +626,8 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
       }
       const entry = m.get(magName)!;
       entry.totalRecords += 1;
-      if (r.summary && r.summary.trim() !== "") entry.recordsWithSummaries += 1;
-      if (r.conclusion && r.conclusion.trim() !== "") entry.recordsWithConclusions += 1;
+      if (summaryRecordIds.has(r.id)) entry.recordsWithSummaries += 1;
+      if (conclusionRecordIds.has(r.id)) entry.recordsWithConclusions += 1;
       addUnique(entry.titles, r.title_name);
       addUnique(entry.volumes, r.volume);
       addUnique(entry.languages, r.language);
@@ -629,7 +640,7 @@ export default function Dashboard({ totals, records, summaries, conclusions, unc
     });
 
     return Array.from(m.values()).sort((a, b) => b.totalRecords - a.totalRecords);
-  }, [records]);
+  }, [records, summaryRecordIds, conclusionRecordIds]);
 
   // Build user magazine activities (modal) — filter by admin/non-admin later
   const userMagazineActivities: UserMagazineActivityV2[] = useMemo(() => {

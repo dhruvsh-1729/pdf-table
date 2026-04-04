@@ -6,7 +6,6 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
     try {
-      // Parse query parameters for filtering (same as the main page)
       const {
         search = "",
         sortBy = "created_at",
@@ -16,14 +15,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         important = "",
       } = req.query;
 
-      let query = supabase.from("tags").select("*");
+      let query = supabase.from("tags").select("id,name,important,created_at");
 
-      // Apply search filter
       if (search) {
         query = query.ilike("name", `%${search}%`);
       }
 
-      // Apply date filters
       if (dateFrom) {
         query = query.gte("created_at", `${dateFrom}T00:00:00.000Z`);
       }
@@ -31,7 +28,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         query = query.lte("created_at", `${dateTo}T23:59:59.999Z`);
       }
 
-      // Apply important filter
       if (important === "true") {
         query = query.eq("important", true);
       } else if (important === "false") {
@@ -40,7 +36,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         query = query.is("important", null);
       }
 
-      // Apply sorting
       const ascending = sortOrder === "asc";
       query = query.order(sortBy as string, { ascending });
 
@@ -50,14 +45,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         throw error;
       }
 
-      // Convert to CSV format
       const csvHeader = "id,name,important,created_at\n";
       const csvRows = (tags || [])
         .map((tag) => {
-          const important = tag.important === true ? "true" : tag.important === false ? "false" : "";
+          const importantValue = tag.important === true ? "true" : tag.important === false ? "false" : "";
           const createdAt = tag.created_at || "";
 
-          // Escape CSV fields that contain commas or quotes
           const escapeCsvField = (field: string) => {
             if (field.includes(",") || field.includes('"') || field.includes("\n")) {
               return `"${field.replace(/"/g, '""')}"`;
@@ -65,13 +58,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return field;
           };
 
-          return [tag.id, escapeCsvField(tag.name || ""), important, createdAt].join(",");
+          return [tag.id, escapeCsvField(tag.name || ""), importantValue, createdAt].join(",");
         })
         .join("\n");
 
       const csvContent = csvHeader + csvRows;
 
-      // Set headers for file download
       res.setHeader("Content-Type", "text/csv");
       res.setHeader(
         "Content-Disposition",

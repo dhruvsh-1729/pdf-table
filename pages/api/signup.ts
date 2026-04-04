@@ -1,8 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 
-// /pages/api/signup.ts
-
 const supabase = createClient(process.env.SUPABASE_URL as string, process.env.SUPABASE_SERVICE_ROLE_KEY as string);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -19,7 +17,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  // Validate email format
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
     return res.status(400).json({
@@ -28,20 +25,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  // Format name and email to match your existing format
   const formattedName = `["${name}"]`;
   const formattedEmail = `["${email}"]`;
 
   try {
-    // Check if user already exists (either confirmed or pending)
     const { data: existingUser, error: checkError } = await supabase
       .from("users")
-      .select("*")
+      .select("id, confirmed")
       .eq("name", formattedName)
       .eq("email", formattedEmail)
       .single();
 
-    console.log({ existingUser });
+    if (checkError && checkError.code !== "PGRST116") {
+      throw checkError;
+    }
 
     if (existingUser) {
       if (existingUser.confirmed) {
@@ -49,15 +46,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           error: "An account with this name and email already exists and is active. Please try logging in instead.",
           success: false,
         });
-      } else {
-        return res.status(409).json({
-          error: "An account with this name and email is already pending approval. Please wait for admin confirmation.",
-          success: false,
-        });
       }
+      return res.status(409).json({
+        error: "An account with this name and email is already pending approval. Please wait for admin confirmation.",
+        success: false,
+      });
     }
 
-    // Create new user record with confirmed: false (pending approval)
     const { data: newUser, error: insertError } = await supabase
       .from("users")
       .insert({
@@ -65,7 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         email: formattedEmail,
         confirmed: false,
       })
-      .select()
+      .select("id, name, email, confirmed")
       .single();
 
     if (insertError) {
@@ -76,16 +71,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // TODO: Optional - Send notification email to admin
-    // You could add email notification logic here to inform the admin
-    // about the new signup request
-
     return res.status(201).json({
       message: "Account created successfully. Your request is pending admin approval.",
       user: {
-        name: formattedName,
-        email: formattedEmail,
-        confirmed: false,
+        name: newUser.name,
+        email: newUser.email,
+        confirmed: newUser.confirmed,
       },
       success: true,
     });

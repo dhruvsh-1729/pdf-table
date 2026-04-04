@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { invalidateCache } from "./records-paginated";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -64,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (error) throw error;
 
-      invalidateCache();
+      invalidateRecordsCache();
 
       return res.status(200).json({ message: "Authors assigned successfully" });
     } catch (error) {
@@ -96,7 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       if (error) throw error;
 
-      invalidateCache();
+      invalidateRecordsCache();
 
       return res.status(200).json({ message: "Authors removed successfully" });
     } catch (error) {

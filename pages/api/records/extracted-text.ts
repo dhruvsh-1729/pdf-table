@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getUploadThingUrl } from "@/lib/uploadthing";
 import { extractLanguageDisplay, syncRecordLanguages } from "@/lib/recordRelations";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 export const config = {
   runtime: "nodejs",
@@ -511,6 +512,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       await syncRecordLanguages(supabase, recordId, languageHint);
     }
 
+    invalidateRecordsCache();
     return res.status(200).json({ text: sanitized, usedOcr: usedOcr || undefined });
   } catch (error) {
     console.error("Failed to extract PDF text:", error);

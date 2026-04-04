@@ -1,6 +1,7 @@
 // /api/authors/[id].ts (Updated)
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -15,7 +16,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method === "GET") {
     // Get single author
     try {
-      const { data, error } = await supabase.from("authors").select("*").eq("id", authorId).single();
+      const { data, error } = await supabase
+        .from("authors")
+        .select("id, name, description, cover_url, national, designation, short_name, created_at")
+        .eq("id", authorId)
+        .single();
 
       if (error) {
         if (error.code === "PGRST116") {
@@ -65,12 +70,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           short_name: short_name || null, // New field
         })
         .eq("id", authorId)
-        .select();
+        .select("id, name, description, cover_url, national, designation, short_name, created_at");
 
       if (!data || data.length === 0) {
         return res.status(404).json({ message: "Author not found" });
       }
 
+      invalidateRecordsCache();
       return res.status(200).json(data[0]);
     } catch (error) {
       console.error("Error updating author:", error);
@@ -89,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       // Then delete the author
-      const { data, error } = await supabase.from("authors").delete().eq("id", authorId).select();
+      const { data, error } = await supabase.from("authors").delete().eq("id", authorId).select("id");
 
       if (error) {
         throw error;
@@ -99,6 +105,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(404).json({ message: "Author not found" });
       }
 
+      invalidateRecordsCache();
       return res.status(200).json({
         message: "Author deleted successfully",
       });

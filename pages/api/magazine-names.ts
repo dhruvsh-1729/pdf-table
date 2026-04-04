@@ -30,6 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const uniqueNames = Array.from(new Set((data || []).map((magazine) => magazine.name).filter(Boolean))).sort();
 
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
     return res.status(200).json(uniqueNames);
   } catch (error) {
     console.error("Server error:", error);

@@ -11,7 +11,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
     const { data: rawHistory, error } = await supabase
         .from('conclusions')
-        .select('*')
+        .select('id, conclusion, created_at, name, email, record_id')
         .eq('record_id', id);
 
     // String cleanup
@@ -51,8 +51,8 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     // Not really used in the current component, but left for clarity
     const cleanedHistory = rawHistory?.map(record => {
         const formattedRecord: any = {};
-        for (const key in record) {
-            formattedRecord[key] = processValue(record[key]);
+        for (const key in record as any) {
+            formattedRecord[key] = processValue((record as any)[key]);
         }
         return formattedRecord;
     });

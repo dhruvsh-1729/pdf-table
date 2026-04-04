@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -21,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // First, count how many record associations will be deleted
       const { count: recordAssociationsCount } = await supabase
         .from("record_tags")
-        .select("*", { count: "exact", head: true })
+        .select("record_id", { count: "exact", head: true })
         .in("tag_id", validTagIds);
 
       // Delete records from junction table record_tags
@@ -44,6 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const deletedCount = deletedTags?.length || 0;
 
+      invalidateRecordsCache();
       return res.status(200).json({
         message: `Successfully deleted ${deletedCount} tag(s) and ${recordAssociationsCount || 0} record associations`,
         deletedTags: deletedCount,

@@ -1,69 +1,13 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
-import NodeCache from "node-cache";
+import {
+  getCachedResponse,
+  getRecordsQueryCacheTtlMs,
+  invalidateRecordsCache,
+  setCachedResponse,
+} from "@/lib/recordsQueryCache";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
-
-const CACHE_VERSION_KEY = "cache_version";
-const DATASET_SCHEMA_VERSION = 1;
-const DATASET_CACHE_TTL_MS = Number(process.env.RECORDS_DATASET_CACHE_TTL_MS || "120000");
-const QUERY_CACHE_TTL_SECONDS = Math.max(30, Math.floor(DATASET_CACHE_TTL_MS / 1000));
-const queryCache = new NodeCache({
-  stdTTL: QUERY_CACHE_TTL_SECONDS,
-  checkperiod: Math.max(30, Math.floor(QUERY_CACHE_TTL_SECONDS / 2)),
-});
-const DB_FETCH_BATCH_SIZE = Math.max(100, Number(process.env.RECORDS_DB_FETCH_BATCH_SIZE || "300"));
-
-const CACHE_DIR = path.join(process.cwd(), "cache");
-const DATASET_CACHE_PATH = path.join(CACHE_DIR, "records-paginated-dataset-v1.json");
-
-let cacheVersion = 1;
-let datasetMemory: RecordsDataset | null = null;
-let datasetLoadPromise: Promise<RecordsDataset> | null = null;
-let diskLoadAttempted = false;
-let datasetStamp: string | null = null;
-let cacheAutoRotationStarted = false;
-
-interface FilterParams {
-  page: number;
-  pageSize: number;
-  sortBy?: string;
-  sortOrder?: "asc" | "desc";
-  filters?: Record<string, any>;
-  globalFilter?: string;
-  email?: string;
-}
-
-type RawEditHistory = {
-  count: number;
-  editors: string[];
-  editorCounts: Record<string, number>;
-  latest: { name: string; email: string; editedAt: string } | null;
-  latestTime: number;
-};
-
-type RecordsDataset = {
-  schemaVersion: number;
-  generatedAt: string;
-  records: any[];
-  editHistoryByRecord: Record<string, RawEditHistory>;
-  recordIdsByEmail: Record<string, number[]>;
-  stats: {
-    records: number;
-    recordLanguages: number;
-    recordTags: number;
-    recordAuthors: number;
-    summaries: number;
-    conclusions: number;
-  };
-};
-
-type RelationRow = {
-  record_id: number | string | null;
-  [key: string]: any;
-};
 
 const RECORD_BASE_SELECT = `
   id,
@@ -84,33 +28,31 @@ const RECORD_BASE_SELECT = `
   magazines(id, name)
 `;
 
-function setDataset(dataset: RecordsDataset) {
-  datasetMemory = dataset;
-  diskLoadAttempted = true;
-  if (datasetStamp !== dataset.generatedAt) {
-    datasetStamp = dataset.generatedAt;
-    queryCache.flushAll();
-  }
-}
+type RawEditHistory = {
+  count: number;
+  editors: string[];
+  editorCounts: Record<string, number>;
+  latest: { name: string; email: string; editedAt: string } | null;
+  latestTime: number;
+};
 
-async function deleteDatasetFromDisk() {
-  try {
-    await fs.unlink(DATASET_CACHE_PATH);
-  } catch (error: any) {
-    if (error?.code !== "ENOENT") {
-      console.warn("Failed to remove dataset cache file:", error?.message || String(error));
-    }
-  }
-}
+type RelationRow = {
+  record_id: number | string | null;
+  [key: string]: any;
+};
 
-export function invalidateRecordsCache() {
-  cacheVersion++;
-  queryCache.flushAll();
-  datasetMemory = null;
-  datasetLoadPromise = null;
-  diskLoadAttempted = false;
-  datasetStamp = null;
-  void deleteDatasetFromDisk();
+type FilterParams = {
+  page: number;
+  pageSize: number;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+  filters?: Record<string, any>;
+  globalFilter?: string;
+  email?: string;
+};
+
+function getCacheKey(params: FilterParams) {
+  return `records:${JSON.stringify(normalizeObject(params))}`;
 }
 
 function normalizeObject(value: any): any {
@@ -124,9 +66,6 @@ function normalizeObject(value: any): any {
   return out;
 }
 
-function getCacheKey(params: FilterParams) {
-  return `records:${JSON.stringify(normalizeObject(params))}`;
-}
 
 function formatValue(value: any): any {
   if (typeof value !== "string") {
@@ -157,7 +96,7 @@ function formatValue(value: any): any {
   if (typeof parsed === "string") {
     parsed = parsed
       .replace(/\\r\\n|\\n|\\r/g, "\n")
-      .replace(/\\"/g, '"')
+      .replace(/\\\"/g, '"')
       .replace(/\\'/g, "'")
       .replace(/\\\\/g, "\\")
       .trim();
@@ -178,19 +117,6 @@ function timeFromNow(dateString: string): string {
   return `${Math.floor(diffSec / 86400)}d ago`;
 }
 
-function asComparable(value: any): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(asComparable).join(", ");
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-function includesIgnoreCase(haystack: any, needle: string) {
-  return asComparable(haystack).toLowerCase().includes(needle.toLowerCase());
-}
-
 function normalizeEmailKey(rawValue: any): string | null {
   const normalized = String(formatValue(rawValue) || "")
     .trim()
@@ -199,27 +125,10 @@ function normalizeEmailKey(rawValue: any): string | null {
   return normalized;
 }
 
-async function fetchAllRows<T = any>(table: string, columns: string, build?: (q: any) => any): Promise<T[]> {
-  const rows: T[] = [];
-  let offset = 0;
-
-  while (true) {
-    let q = supabase
-      .from(table)
-      .select(columns)
-      .range(offset, offset + DB_FETCH_BATCH_SIZE - 1);
-    if (build) q = build(q);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-
-    rows.push(...(data as T[]));
-    if (data.length < DB_FETCH_BATCH_SIZE) break;
-    offset += DB_FETCH_BATCH_SIZE;
-  }
-
-  return rows;
+function normalizeFilterValue(value: any): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value) && value.length === 1) return normalizeFilterValue(value[0]);
+  return String(value).trim();
 }
 
 function mapRelationsByRecordId(rows: RelationRow[]) {
@@ -275,7 +184,7 @@ function extractLanguageNamesFromRelations(rows: any[]): string[] {
 function withFormattedRecord(record: any) {
   const formatted: Record<string, any> = {};
   for (const [key, value] of Object.entries(record)) {
-    if (key === "record_tags" || key === "record_authors") continue;
+    if (key === "record_tags" || key === "record_authors" || key === "record_languages") continue;
     formatted[key] = formatValue(value);
   }
 
@@ -286,17 +195,6 @@ function withFormattedRecord(record: any) {
   formatted.language = formatted.languages.length > 0 ? formatted.languages.join(", ") : null;
 
   return formatted;
-}
-
-function appendEmailRecord(emailMap: Map<string, Set<number>>, rawEmail: any, rawRecordId: any) {
-  const recordId = Number(rawRecordId);
-  if (!Number.isFinite(recordId)) return;
-
-  const emailKey = normalizeEmailKey(rawEmail);
-  if (!emailKey) return;
-
-  if (!emailMap.has(emailKey)) emailMap.set(emailKey, new Set<number>());
-  emailMap.get(emailKey)!.add(recordId);
 }
 
 function buildEditHistoryMap(summaryRows: any[]) {
@@ -344,293 +242,6 @@ function buildEditHistoryMap(summaryRows: any[]) {
   return editHistoryByRecord;
 }
 
-async function buildRecordsDatasetFromDb(): Promise<RecordsDataset> {
-  const baseRecords = await fetchAllRows<any>("records", RECORD_BASE_SELECT, (q) => q.order("id", { ascending: true }));
-
-  const [recordLanguageRows, recordTagRows, recordAuthorRows, summaryRows, conclusionRows] = await Promise.all([
-    fetchAllRows<any>("record_languages", "record_id, language_id, languages(id, name)", (q) =>
-      q.order("record_id", { ascending: true }).order("language_id", { ascending: true }),
-    ),
-    fetchAllRows<any>("record_tags", "record_id, tag_id, tags(id, name)", (q) =>
-      q.order("record_id", { ascending: true }).order("tag_id", { ascending: true }),
-    ),
-    fetchAllRows<any>("record_authors", "record_id, author_id, authors(id, name)", (q) =>
-      q.order("record_id", { ascending: true }).order("author_id", { ascending: true }),
-    ),
-    fetchAllRows<any>("summaries", "record_id, email, name, created_at", (q) =>
-      q.order("record_id", { ascending: true }).order("created_at", { ascending: true }),
-    ),
-    fetchAllRows<any>("conclusions", "record_id, email", (q) => q.order("record_id", { ascending: true })),
-  ]);
-
-  const languageMap = mapRelationsByRecordId(recordLanguageRows);
-  const tagMap = mapRelationsByRecordId(recordTagRows);
-  const authorMap = mapRelationsByRecordId(recordAuthorRows);
-
-  const formattedRecords = baseRecords.map((record: any) => {
-    const recordId = Number(record.id);
-    const merged = {
-      ...record,
-      record_languages: languageMap.get(recordId) || [],
-      record_tags: tagMap.get(recordId) || [],
-      record_authors: authorMap.get(recordId) || [],
-    };
-    return withFormattedRecord(merged);
-  });
-
-  const editHistoryByRecord = buildEditHistoryMap(summaryRows);
-  const emailMap = new Map<string, Set<number>>();
-  for (const record of baseRecords) {
-    appendEmailRecord(emailMap, record.email, record.id);
-  }
-  for (const summary of summaryRows) {
-    appendEmailRecord(emailMap, summary.email, summary.record_id);
-  }
-  for (const conclusion of conclusionRows) {
-    appendEmailRecord(emailMap, conclusion.email, conclusion.record_id);
-  }
-
-  const recordIdsByEmail: Record<string, number[]> = {};
-  for (const [emailKey, ids] of emailMap.entries()) {
-    recordIdsByEmail[emailKey] = Array.from(ids).sort((a, b) => a - b);
-  }
-
-  return {
-    schemaVersion: DATASET_SCHEMA_VERSION,
-    generatedAt: new Date().toISOString(),
-    records: formattedRecords,
-    editHistoryByRecord,
-    recordIdsByEmail,
-    stats: {
-      records: baseRecords.length,
-      recordLanguages: recordLanguageRows.length,
-      recordTags: recordTagRows.length,
-      recordAuthors: recordAuthorRows.length,
-      summaries: summaryRows.length,
-      conclusions: conclusionRows.length,
-    },
-  };
-}
-
-function isDatasetFresh(dataset: RecordsDataset) {
-  const generatedAt = new Date(dataset.generatedAt).getTime();
-  if (!Number.isFinite(generatedAt)) return false;
-  return Date.now() - generatedAt <= DATASET_CACHE_TTL_MS;
-}
-
-function isValidDataset(value: any): value is RecordsDataset {
-  return Boolean(
-    value &&
-      value.schemaVersion === DATASET_SCHEMA_VERSION &&
-      typeof value.generatedAt === "string" &&
-      Array.isArray(value.records) &&
-      value.editHistoryByRecord &&
-      typeof value.editHistoryByRecord === "object" &&
-      value.recordIdsByEmail &&
-      typeof value.recordIdsByEmail === "object",
-  );
-}
-
-async function readDatasetFromDisk(): Promise<RecordsDataset | null> {
-  try {
-    const raw = await fs.readFile(DATASET_CACHE_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!isValidDataset(parsed)) return null;
-    if (!isDatasetFresh(parsed)) return null;
-    return parsed;
-  } catch (error: any) {
-    if (error?.code !== "ENOENT") {
-      console.warn("Failed to read dataset cache from disk:", error?.message || String(error));
-    }
-    return null;
-  }
-}
-
-async function fileExists(filePath: string) {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function writeDatasetToDisk(dataset: RecordsDataset) {
-  try {
-    await fs.mkdir(CACHE_DIR, { recursive: true });
-    const stamp = Date.now();
-    const tempPath = `${DATASET_CACHE_PATH}.${stamp}.tmp`;
-    const oldPath = `${DATASET_CACHE_PATH}.${stamp}.old`;
-    const hasExisting = await fileExists(DATASET_CACHE_PATH);
-
-    await fs.writeFile(tempPath, JSON.stringify(dataset), "utf8");
-    if (hasExisting) {
-      await fs.rename(DATASET_CACHE_PATH, oldPath);
-    }
-    await fs.rename(tempPath, DATASET_CACHE_PATH);
-    if (hasExisting) {
-      await fs.unlink(oldPath);
-    }
-  } catch (error: any) {
-    console.warn("Failed to write dataset cache to disk:", error?.message || String(error));
-  }
-}
-
-async function getOrBuildDataset(forceRefresh: boolean): Promise<{ dataset: RecordsDataset; source: "memory" | "disk" | "database" }> {
-  if (!forceRefresh && datasetMemory && isDatasetFresh(datasetMemory)) {
-    return { dataset: datasetMemory, source: "memory" };
-  }
-
-  if (!forceRefresh && !diskLoadAttempted) {
-    diskLoadAttempted = true;
-    const diskDataset = await readDatasetFromDisk();
-    if (diskDataset) {
-      setDataset(diskDataset);
-      return { dataset: diskDataset, source: "disk" };
-    }
-  }
-
-  if (datasetLoadPromise) {
-    const dataset = await datasetLoadPromise;
-    return { dataset, source: "memory" };
-  }
-
-  datasetLoadPromise = (async () => {
-    const dataset = await buildRecordsDatasetFromDb();
-    setDataset(dataset);
-    await writeDatasetToDisk(dataset);
-    return dataset;
-  })();
-
-  try {
-    const dataset = await datasetLoadPromise;
-    return { dataset, source: "database" };
-  } finally {
-    datasetLoadPromise = null;
-  }
-}
-
-function recordMatchesFilters(record: any, filters: Record<string, any>) {
-  for (const [key, rawValue] of Object.entries(filters)) {
-    const value = rawValue as any;
-    if (value === null || value === undefined || value === "") continue;
-
-    if (key === "tags") {
-      const tags = Array.isArray(record.tags) ? record.tags : [];
-      if (value === "__EMPTY__" && tags.length > 0) return false;
-      if (value === "__NONEMPTY__" && tags.length === 0) return false;
-      if (value !== "__EMPTY__" && value !== "__NONEMPTY__") {
-        const needle = String(value).toLowerCase();
-        if (!tags.some((tag: any) => includesIgnoreCase(tag?.name, needle))) return false;
-      }
-      continue;
-    }
-
-    if (key === "authors") {
-      const authorsLinked = Array.isArray(record.authors_linked) ? record.authors_linked : [];
-      if (value === "__EMPTY__" && authorsLinked.length > 0) return false;
-      if (value === "__NONEMPTY__" && authorsLinked.length === 0) return false;
-      if (value !== "__EMPTY__" && value !== "__NONEMPTY__") {
-        const needle = String(value).toLowerCase();
-        if (!authorsLinked.some((author: any) => includesIgnoreCase(author?.name, needle))) return false;
-      }
-      continue;
-    }
-
-    if (key === "id") {
-      const idNeedle = String(value).trim();
-      if (!String(record.id || "").startsWith(idNeedle)) return false;
-      continue;
-    }
-
-    if (key === "language" || key === "languages") {
-      const languageText = Array.isArray(record.languages) ? record.languages.join(", ") : asComparable(record.language);
-      if (value === "__EMPTY__") {
-        if (languageText.trim() !== "") return false;
-        continue;
-      }
-      if (value === "__NONEMPTY__") {
-        if (languageText.trim() === "") return false;
-        continue;
-      }
-      if (!includesIgnoreCase(languageText, String(value))) return false;
-      continue;
-    }
-
-    if (key === "name" || key === "magazine" || key === "magazine_name") {
-      const magazineName = asComparable(record.name);
-      if (value === "__EMPTY__") {
-        if (magazineName.trim() !== "") return false;
-        continue;
-      }
-      if (value === "__NONEMPTY__") {
-        if (magazineName.trim() === "") return false;
-        continue;
-      }
-      if (!includesIgnoreCase(magazineName, String(value))) return false;
-      continue;
-    }
-
-    const target = record[key];
-    if (value === "__EMPTY__") {
-      if (asComparable(target).trim() !== "") return false;
-      continue;
-    }
-    if (value === "__NONEMPTY__") {
-      if (asComparable(target).trim() === "") return false;
-      continue;
-    }
-
-    if (typeof value === "string") {
-      if (!includesIgnoreCase(target, value)) return false;
-      continue;
-    }
-
-    if (target !== value) return false;
-  }
-  return true;
-}
-
-function recordMatchesGlobalFilter(record: any, globalFilter?: string) {
-  if (!globalFilter) return true;
-  const needle = globalFilter.toLowerCase();
-  const fields = [record.name, record.summary, record.conclusion, record.title_name];
-  return fields.some((field) => includesIgnoreCase(field, needle));
-}
-
-function sortRecords(records: any[], sortBy: string, sortOrder: "asc" | "desc") {
-  const direction = sortOrder === "asc" ? 1 : -1;
-  const accessor = (row: any) => {
-    if (sortBy === "tags") return (row.tags || []).map((t: any) => t?.name || "").join(", ");
-    if (sortBy === "authors" || sortBy === "authors_linked") {
-      return (row.authors_linked || []).map((a: any) => a?.name || "").join(", ");
-    }
-    return row[sortBy];
-  };
-
-  records.sort((a, b) => {
-    const aRaw = accessor(a);
-    const bRaw = accessor(b);
-
-    if (sortBy === "id") {
-      const aNum = Number(aRaw) || 0;
-      const bNum = Number(bRaw) || 0;
-      if (aNum === bNum) return 0;
-      return aNum > bNum ? direction : -direction;
-    }
-
-    const aVal = asComparable(aRaw).toLowerCase();
-    const bVal = asComparable(bRaw).toLowerCase();
-    if (aVal === bVal) {
-      const aId = Number(a.id) || 0;
-      const bId = Number(b.id) || 0;
-      if (aId === bId) return 0;
-      return aId > bId ? direction : -direction;
-    }
-    return aVal > bVal ? direction : -direction;
-  });
-}
-
 function toResponseEditHistory(history?: RawEditHistory) {
   if (!history) {
     return {
@@ -656,79 +267,6 @@ function toResponseEditHistory(history?: RawEditHistory) {
   };
 }
 
-function resolveEmailRecordIdsFromDataset(dataset: RecordsDataset, email?: string): Set<number> | null {
-  if (!email) return null;
-  const emailKey = normalizeEmailKey(email);
-  if (!emailKey) return new Set<number>();
-  return new Set(dataset.recordIdsByEmail[emailKey] || []);
-}
-
-function getDatasetAgeMs(dataset: RecordsDataset) {
-  const ts = new Date(dataset.generatedAt).getTime();
-  if (!Number.isFinite(ts)) return null;
-  return Date.now() - ts;
-}
-
-function invalidateIfStale() {
-  if (datasetMemory && !isDatasetFresh(datasetMemory)) {
-    invalidateRecordsCache();
-  }
-}
-
-function startCacheAutoRotation() {
-  if (cacheAutoRotationStarted) return;
-  cacheAutoRotationStarted = true;
-
-  const timer = setInterval(() => {
-    invalidateIfStale();
-  }, DATASET_CACHE_TTL_MS);
-
-  if (typeof (timer as any).unref === "function") {
-    (timer as any).unref();
-  }
-}
-
-startCacheAutoRotation();
-
-async function fetchPaginatedRecords(params: FilterParams, dataset: RecordsDataset) {
-  const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
-
-  const emailRecordIds = resolveEmailRecordIdsFromDataset(dataset, email);
-  if (email && emailRecordIds && emailRecordIds.size === 0) {
-    return { data: [], count: 0, editHistory: {} };
-  }
-
-  let candidates = dataset.records;
-  if (emailRecordIds) {
-    candidates = dataset.records.filter((record: any) => emailRecordIds.has(Number(record.id)));
-  }
-
-  const filtered = candidates.filter(
-    (record: any) => recordMatchesFilters(record, filters) && recordMatchesGlobalFilter(record, globalFilter),
-  );
-  sortRecords(filtered, sortBy, sortOrder);
-
-  const totalCount = filtered.length;
-  const from = page * pageSize;
-  const to = from + pageSize;
-  const pageRecords = filtered.slice(from, to);
-
-  const pageEditHistory: Record<string, RawEditHistory> = {};
-  const recordsWithHistory = pageRecords.map((record: any) => {
-    const history = dataset.editHistoryByRecord[String(record.id)];
-    if (history) {
-      pageEditHistory[String(record.id)] = history;
-    }
-
-    return {
-      ...record,
-      editHistory: toResponseEditHistory(history),
-    };
-  });
-
-  return { data: recordsWithHistory, count: totalCount, editHistory: pageEditHistory };
-}
-
 function parseFilters(rawFilters: string | string[] | undefined) {
   if (!rawFilters) return {};
   const source = Array.isArray(rawFilters) ? rawFilters[0] : rawFilters;
@@ -741,14 +279,476 @@ function parseFilters(rawFilters: string | string[] | undefined) {
   }
 }
 
+function chunkArray<T>(items: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+function intersectSets(sets: Set<number>[]) {
+  if (sets.length === 0) return null;
+  let out = new Set<number>(sets[0]);
+  for (let i = 1; i < sets.length; i++) {
+    const next = sets[i];
+    out = new Set([...out].filter((id) => next.has(id)));
+  }
+  return out;
+}
+
+async function fetchRecordIdsByEmail(email: string) {
+  const raw = String(email || "").trim();
+  const normalized = normalizeEmailKey(email);
+  if (!normalized && !raw) return new Set<number>();
+  const formattedRaw = raw ? `["${raw}"]` : "";
+  const formattedNormalized = normalized ? `["${normalized}"]` : "";
+  const candidates = [raw, normalized || "", formattedRaw, formattedNormalized].filter((v) => v);
+
+  const [records, summaries, conclusions] = await Promise.all([
+    supabase.from("records").select("id, email").in("email", candidates),
+    supabase.from("summaries").select("record_id, email").in("email", candidates),
+    supabase.from("conclusions").select("record_id, email").in("email", candidates),
+  ]);
+
+  const ids = new Set<number>();
+  (records.data || []).forEach((row: any) => {
+    const id = Number(row.id);
+    if (Number.isFinite(id)) ids.add(id);
+  });
+  (summaries.data || []).forEach((row: any) => {
+    const id = Number(row.record_id);
+    if (Number.isFinite(id)) ids.add(id);
+  });
+  (conclusions.data || []).forEach((row: any) => {
+    const id = Number(row.record_id);
+    if (Number.isFinite(id)) ids.add(id);
+  });
+
+  return ids;
+}
+
+async function fetchRecordIdsByTagFilter(value: string) {
+  const trimmed = normalizeFilterValue(value);
+  if (!trimmed) return null;
+
+  if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
+    const { data, error } = await supabase.from("record_tags").select("record_id");
+    if (error) throw error;
+    const tagged = new Set<number>();
+    (data || []).forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) tagged.add(id);
+    });
+    return { ids: tagged, mode: trimmed };
+  }
+
+  const { data: tagRows, error: tagError } = await supabase.from("tags").select("id").ilike("name", `%${trimmed}%`);
+  if (tagError) throw tagError;
+  const tagIds = (tagRows || []).map((t: any) => t.id).filter((id: any) => Number.isFinite(Number(id)));
+  if (tagIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
+
+  const { data: recordRows, error: recordError } = await supabase
+    .from("record_tags")
+    .select("record_id")
+    .in("tag_id", tagIds);
+  if (recordError) throw recordError;
+
+  const recordIds = new Set<number>();
+  (recordRows || []).forEach((row: any) => {
+    const id = Number(row.record_id);
+    if (Number.isFinite(id)) recordIds.add(id);
+  });
+  return { ids: recordIds, mode: "IN" };
+}
+
+async function fetchRecordIdsByAuthorFilter(value: string) {
+  const trimmed = normalizeFilterValue(value);
+  if (!trimmed) return null;
+
+  if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
+    const { data, error } = await supabase.from("record_authors").select("record_id");
+    if (error) throw error;
+    const linked = new Set<number>();
+    (data || []).forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) linked.add(id);
+    });
+    return { ids: linked, mode: trimmed };
+  }
+
+  const { data: authorRows, error: authorError } = await supabase
+    .from("authors")
+    .select("id")
+    .ilike("name", `%${trimmed}%`);
+  if (authorError) throw authorError;
+  const authorIds = (authorRows || []).map((a: any) => a.id).filter((id: any) => Number.isFinite(Number(id)));
+  if (authorIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
+
+  const { data: recordRows, error: recordError } = await supabase
+    .from("record_authors")
+    .select("record_id")
+    .in("author_id", authorIds);
+  if (recordError) throw recordError;
+
+  const recordIds = new Set<number>();
+  (recordRows || []).forEach((row: any) => {
+    const id = Number(row.record_id);
+    if (Number.isFinite(id)) recordIds.add(id);
+  });
+
+  return { ids: recordIds, mode: "IN" };
+}
+
+async function fetchRecordIdsByLanguageFilter(value: string) {
+  const trimmed = normalizeFilterValue(value);
+  if (!trimmed) return null;
+
+  if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
+    const { data, error } = await supabase.from("record_languages").select("record_id");
+    if (error) throw error;
+    const linked = new Set<number>();
+    (data || []).forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) linked.add(id);
+    });
+    return { ids: linked, mode: trimmed };
+  }
+
+  const { data: languageRows, error: languageError } = await supabase
+    .from("languages")
+    .select("id")
+    .ilike("name", `%${trimmed}%`);
+  if (languageError) throw languageError;
+  const languageIds = (languageRows || []).map((l: any) => l.id).filter((id: any) => Number.isFinite(Number(id)));
+  if (languageIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
+
+  const { data: recordRows, error: recordError } = await supabase
+    .from("record_languages")
+    .select("record_id")
+    .in("language_id", languageIds);
+  if (recordError) throw recordError;
+
+  const recordIds = new Set<number>();
+  (recordRows || []).forEach((row: any) => {
+    const id = Number(row.record_id);
+    if (Number.isFinite(id)) recordIds.add(id);
+  });
+
+  return { ids: recordIds, mode: "IN" };
+}
+
+async function fetchMagazineIdsByName(value: string) {
+  const trimmed = normalizeFilterValue(value);
+  if (!trimmed) return null;
+
+  const { data, error } = await supabase.from("magazines").select("id").ilike("name", `%${trimmed}%`);
+  if (error) throw error;
+  const ids = (data || []).map((row: any) => row.id).filter((id: any) => Number.isFinite(Number(id)));
+  return new Set<number>(ids.map((id) => Number(id)));
+}
+
+async function fetchRecordIdsByGlobalFilter(value: string) {
+  const trimmed = normalizeFilterValue(value);
+  if (!trimmed) return null;
+
+  const { data: directRows, error: directError } = await supabase
+    .from("records")
+    .select("id")
+    .or(`summary.ilike.%${trimmed}%,conclusion.ilike.%${trimmed}%,title_name.ilike.%${trimmed}%`);
+  if (directError) throw directError;
+
+  const ids = new Set<number>();
+  (directRows || []).forEach((row: any) => {
+    const id = Number(row.id);
+    if (Number.isFinite(id)) ids.add(id);
+  });
+
+  const magazineIds = await fetchMagazineIdsByName(trimmed);
+  if (magazineIds && magazineIds.size > 0) {
+    const chunked = chunkArray(Array.from(magazineIds), 1000);
+    for (const chunk of chunked) {
+      const { data: recordRows, error: recordError } = await supabase
+        .from("records")
+        .select("id")
+        .in("magazine_id", chunk);
+      if (recordError) throw recordError;
+      (recordRows || []).forEach((row: any) => {
+        const id = Number(row.id);
+        if (Number.isFinite(id)) ids.add(id);
+      });
+    }
+  }
+
+  return ids;
+}
+
+async function fetchRecordIdsByIdPrefix(prefix: string) {
+  const trimmed = normalizeFilterValue(prefix);
+  if (!trimmed) return null;
+
+  const { data, error } = await supabase.from("records").select("id");
+  if (error) throw error;
+
+  const ids = new Set<number>();
+  (data || []).forEach((row: any) => {
+    const id = Number(row.id);
+    if (!Number.isFinite(id)) return;
+    if (String(id).startsWith(trimmed)) {
+      ids.add(id);
+    }
+  });
+
+  return ids;
+}
+
+async function fetchRelationsForRecords(recordIds: number[]) {
+  if (recordIds.length === 0) {
+    return {
+      tagMap: new Map<number, RelationRow[]>(),
+      authorMap: new Map<number, RelationRow[]>(),
+      languageMap: new Map<number, RelationRow[]>(),
+    };
+  }
+
+  const chunks = chunkArray(recordIds, 1000);
+  const tagRows: any[] = [];
+  const authorRows: any[] = [];
+  const languageRows: any[] = [];
+
+  for (const chunk of chunks) {
+    const [tags, authors, languages] = await Promise.all([
+      supabase.from("record_tags").select("record_id, tags(id, name)").in("record_id", chunk),
+      supabase.from("record_authors").select("record_id, authors(id, name)").in("record_id", chunk),
+      supabase.from("record_languages").select("record_id, languages(id, name)").in("record_id", chunk),
+    ]);
+
+    if (tags.error) throw tags.error;
+    if (authors.error) throw authors.error;
+    if (languages.error) throw languages.error;
+
+    tagRows.push(...(tags.data || []));
+    authorRows.push(...(authors.data || []));
+    languageRows.push(...(languages.data || []));
+  }
+
+  return {
+    tagMap: mapRelationsByRecordId(tagRows),
+    authorMap: mapRelationsByRecordId(authorRows),
+    languageMap: mapRelationsByRecordId(languageRows),
+  };
+}
+
+function applyIdFilter(query: any, ids: Set<number>) {
+  const idList = Array.from(ids).filter((id) => Number.isFinite(id));
+  if (idList.length === 0) {
+    return { query, empty: true };
+  }
+
+  const chunks = chunkArray(idList, 1000);
+  if (chunks.length === 1) {
+    return { query: query.in("id", chunks[0]), empty: false };
+  }
+
+  const or = chunks.map((chunk) => `id.in.(${chunk.join(",")})`).join(",");
+  return { query: query.or(or), empty: false };
+}
+
+function applyNotInFilter(query: any, ids: Set<number>) {
+  const idList = Array.from(ids).filter((id) => Number.isFinite(id));
+  if (idList.length === 0) return query;
+  return query.not("id", "in", `(${idList.join(",")})`);
+}
+
+async function fetchPaginatedRecords(params: FilterParams) {
+  const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
+
+  let query = supabase.from("records").select(RECORD_BASE_SELECT, { count: "exact" });
+
+  const filterSets: Set<number>[] = [];
+
+  if (email) {
+    const emailIds = await fetchRecordIdsByEmail(email);
+    filterSets.push(emailIds);
+  }
+
+  const tagsFilter = filters.tags ?? filters.tag;
+  if (tagsFilter !== undefined && tagsFilter !== null && tagsFilter !== "") {
+    const result = await fetchRecordIdsByTagFilter(tagsFilter);
+    if (result) {
+      if (result.mode === "__EMPTY__") {
+        query = applyNotInFilter(query, result.ids);
+      } else if (result.mode === "__NONEMPTY__") {
+        filterSets.push(result.ids);
+      } else {
+        filterSets.push(result.ids);
+      }
+    }
+  }
+
+  const authorsFilter = filters.authors ?? filters.author;
+  if (authorsFilter !== undefined && authorsFilter !== null && authorsFilter !== "") {
+    const result = await fetchRecordIdsByAuthorFilter(authorsFilter);
+    if (result) {
+      if (result.mode === "__EMPTY__") {
+        query = applyNotInFilter(query, result.ids);
+      } else if (result.mode === "__NONEMPTY__") {
+        filterSets.push(result.ids);
+      } else {
+        filterSets.push(result.ids);
+      }
+    }
+  }
+
+  const languageFilter = filters.language ?? filters.languages;
+  if (languageFilter !== undefined && languageFilter !== null && languageFilter !== "") {
+    const result = await fetchRecordIdsByLanguageFilter(languageFilter);
+    if (result) {
+      if (result.mode === "__EMPTY__") {
+        query = applyNotInFilter(query, result.ids);
+      } else if (result.mode === "__NONEMPTY__") {
+        filterSets.push(result.ids);
+      } else {
+        filterSets.push(result.ids);
+      }
+    }
+  }
+
+  const magazineFilter = filters.name ?? filters.magazine ?? filters.magazine_name;
+  if (magazineFilter !== undefined && magazineFilter !== null && magazineFilter !== "") {
+    const trimmed = normalizeFilterValue(magazineFilter);
+    if (trimmed === "__EMPTY__") {
+      query = query.is("magazine_id", null);
+    } else if (trimmed === "__NONEMPTY__") {
+      query = query.not("magazine_id", "is", null);
+    } else {
+      const magazineIds = await fetchMagazineIdsByName(trimmed);
+      if (!magazineIds || magazineIds.size === 0) {
+        return { data: [], count: 0, editHistory: {} };
+      }
+      filterSets.push(magazineIds);
+    }
+  }
+
+  if (globalFilter) {
+    const globalIds = await fetchRecordIdsByGlobalFilter(globalFilter);
+    if (!globalIds || globalIds.size === 0) {
+      return { data: [], count: 0, editHistory: {} };
+    }
+    filterSets.push(globalIds);
+  }
+
+  for (const [key, rawValue] of Object.entries(filters)) {
+    if (rawValue === null || rawValue === undefined || rawValue === "") continue;
+    if (key === "tags" || key === "tag" || key === "authors" || key === "author" || key === "language" || key === "languages") continue;
+    if (key === "name" || key === "magazine" || key === "magazine_name") continue;
+
+    const value = normalizeFilterValue(rawValue);
+    if (!value) continue;
+
+    if (value === "__EMPTY__") {
+      query = query.or(`${key}.is.null,${key}.eq.""`);
+      continue;
+    }
+    if (value === "__NONEMPTY__") {
+      query = query.not(key, "is", null).not(key, "eq", "");
+      continue;
+    }
+
+    if (key === "id") {
+      const idSet = await fetchRecordIdsByIdPrefix(value);
+      if (!idSet || idSet.size === 0) {
+        return { data: [], count: 0, editHistory: {} };
+      }
+      filterSets.push(idSet);
+      continue;
+    }
+
+    if (typeof rawValue === "string") {
+      query = query.ilike(key, `%${value}%`);
+    } else {
+      query = query.eq(key, rawValue as any);
+    }
+  }
+
+  const intersected = intersectSets(filterSets);
+  if (intersected) {
+    const { query: filteredQuery, empty } = applyIdFilter(query, intersected);
+    if (empty) return { data: [], count: 0, editHistory: {} };
+    query = filteredQuery;
+  }
+
+  const sortCol = sortBy === "tags" || sortBy === "authors" ? "id" : sortBy;
+  if (sortCol === "name") {
+    query = query.order("name", { ascending: sortOrder === "asc", foreignTable: "magazines" });
+  } else {
+    query = query.order(sortCol, { ascending: sortOrder === "asc" });
+  }
+
+  const from = page * pageSize;
+  const to = from + pageSize - 1;
+  const maxRange = 1000;
+  let baseRecords: any[] = [];
+  let totalCount: number | null = null;
+
+  for (let start = from; start <= to; start += maxRange) {
+    const end = Math.min(to, start + maxRange - 1);
+    const { data, error, count } = await query.range(start, end);
+    if (error) throw error;
+    if (totalCount === null && typeof count === "number") {
+      totalCount = count;
+    }
+    baseRecords = baseRecords.concat(data || []);
+    if (!data || data.length < maxRange) {
+      break;
+    }
+  }
+  const recordIds = baseRecords.map((record: any) => Number(record.id)).filter((id: number) => Number.isFinite(id));
+
+  const { tagMap, authorMap, languageMap } = await fetchRelationsForRecords(recordIds);
+
+  const formattedRecords = baseRecords.map((record: any) => {
+    const recordId = Number(record.id);
+    const merged = {
+      ...record,
+      record_languages: languageMap.get(recordId) || [],
+      record_tags: tagMap.get(recordId) || [],
+      record_authors: authorMap.get(recordId) || [],
+    };
+    return withFormattedRecord(merged);
+  });
+
+  const editHistoryByRecord: Record<string, RawEditHistory> = {};
+  if (recordIds.length > 0) {
+    const { data: summaryRows, error: summaryError } = await supabase
+      .from("summaries")
+      .select("record_id, email, name, created_at")
+      .in("record_id", recordIds);
+    if (summaryError) throw summaryError;
+    Object.assign(editHistoryByRecord, buildEditHistoryMap(summaryRows || []));
+  }
+
+  const recordsWithHistory = formattedRecords.map((record: any) => {
+    const history = editHistoryByRecord[String(record.id)];
+    return {
+      ...record,
+      editHistory: toResponseEditHistory(history),
+    };
+  });
+
+  return {
+    data: recordsWithHistory,
+    count: totalCount || 0,
+    editHistory: editHistoryByRecord,
+  };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
-    invalidateIfStale();
-
     const {
       page = "0",
       pageSize = "20",
@@ -758,7 +758,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       globalFilter = "",
       email = "",
       noCache = "false",
-      rebuildDataset = "false",
     } = req.query;
 
     const params: FilterParams = {
@@ -772,32 +771,32 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
 
     const bypassQueryCache = String(noCache) === "true";
-    const forceDatasetRebuild = String(rebuildDataset) === "true";
-    const cacheKey = `${CACHE_VERSION_KEY}:${cacheVersion}:${getCacheKey(params)}`;
+    const cacheKey = getCacheKey(params);
+
     if (!bypassQueryCache) {
-      const cachedData = queryCache.get(cacheKey);
-      if (cachedData) {
-        return res.status(200).json(cachedData);
+      const cached = getCachedResponse(cacheKey);
+      if (cached) {
+        res.setHeader("Cache-Control", "public, max-age=15, s-maxage=60, stale-while-revalidate=300");
+        return res.status(200).json(cached);
       }
     }
 
-    const { dataset, source } = await getOrBuildDataset(forceDatasetRebuild);
-    const result = await fetchPaginatedRecords(params, dataset);
-    const datasetAgeMs = getDatasetAgeMs(dataset);
-
+    const result = await fetchPaginatedRecords(params);
+    const cacheTtlMs = getRecordsQueryCacheTtlMs();
     const responsePayload = {
       ...result,
       cacheInfo: {
-        source,
-        generatedAt: dataset.generatedAt,
-        ageMs: datasetAgeMs,
-        ttlMs: DATASET_CACHE_TTL_MS,
-        datasetStats: dataset.stats,
-        filePath: "cache/records-paginated-dataset-v1.json",
+        source: "database",
+        generatedAt: new Date().toISOString(),
+        ttlMs: cacheTtlMs,
       },
     };
 
-    queryCache.set(cacheKey, responsePayload);
+    if (!bypassQueryCache) {
+      setCachedResponse(cacheKey, responsePayload);
+    }
+
+    res.setHeader("Cache-Control", bypassQueryCache ? "no-store" : "public, max-age=15, s-maxage=60, stale-while-revalidate=300");
     return res.status(200).json(responsePayload);
   } catch (error) {
     console.error("Server error:", error);

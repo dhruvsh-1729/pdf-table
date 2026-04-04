@@ -7,7 +7,6 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
-    // Pull only relevant columns
     const [{ data: records }, { data: summaries }, { data: conclusions }] = await Promise.all([
       supabase
         .from("records")
@@ -24,7 +23,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       language: extractLanguageDisplay(record),
     }));
 
-    // Build map
     type UserMagazineActivity = {
       userName: string;
       userEmail: string;
@@ -63,7 +61,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (val && !arr.includes(val)) arr.push(val);
     };
 
-    // Records created
     recordsWithLegacyShape.forEach((r: any) => {
       if (!r.creator_name || !r.email) return;
       const key = k(r.creator_name, r.email);
@@ -108,7 +105,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const recById = new Map<number, any>(recordsWithLegacyShape.map((r: any) => [r.id, r]));
 
-    // Summaries edited
     (summaries ?? []).forEach((s: any) => {
       if (!s.name || !s.email || !s.record_id) return;
       const r = recById.get(s.record_id);
@@ -138,7 +134,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       u.totalActivity++;
     });
 
-    // Conclusions edited
     (conclusions ?? []).forEach((c: any) => {
       if (!c.name || !c.email || !c.record_id) return;
       const r = recById.get(c.record_id);
@@ -169,6 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     const out = Array.from(byUser.values()).sort((a, b) => b.totalActivity - a.totalActivity);
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
     res.status(200).json({ userMagazineActivities: out });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

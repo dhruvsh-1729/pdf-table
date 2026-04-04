@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { uploadWithCompressFallback } from "@/lib/ocrPipeline";
 import { ensureUploadThingToken, getUploadThingUrl } from "@/lib/uploadthing";
 import { extractMagazineName } from "@/lib/recordRelations";
+import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 const LIGHTPDF_API_KEY = process.env.LIGHTPDF_API_KEY;
 
@@ -163,6 +164,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .update({ pdf_url: finalUrl, pdf_public_id: key })
       .eq("id", id)
       .throwOnError();
+
+    invalidateRecordsCache();
 
     const compressionCount =
       compression_events?.filter(

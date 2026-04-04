@@ -918,19 +918,35 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
 
   const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-  try {
-    // 1) Query tags with aggregated record counts
-    let query = supabase.from("tags").select(
-      `
-        id,
-        name,
-        created_at,
-        important,
-        record_tags(count)
-      `,
-    );
+  const chunkArray = <T,>(items: T[], size: number) => {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      out.push(items.slice(i, i + size));
+    }
+    return out;
+  };
 
-    // Apply filters at DB level where possible
+  const fetchTagCountsByIds = async (ids: number[]) => {
+    const counts = new Map<number, number>();
+    const cleanIds = ids.filter((id) => Number.isFinite(id));
+    if (cleanIds.length === 0) return counts;
+
+    const chunks = chunkArray(cleanIds, 1000);
+    for (const chunk of chunks) {
+      const { data, error } = await supabase.from("record_tags").select("tag_id").in("tag_id", chunk);
+      if (error) throw error;
+      (data || []).forEach((row: any) => {
+        const id = Number(row.tag_id);
+        if (!Number.isFinite(id)) return;
+        counts.set(id, (counts.get(id) || 0) + 1);
+      });
+    }
+    return counts;
+  };
+
+  try {
+    let query = supabase.from("tags").select("id, name, created_at, important", { count: "exact" });
+
     if (filters.search) query = query.ilike("name", `%${filters.search}%`);
     if (filters.dateFrom) query = query.gte("created_at", `${filters.dateFrom}T00:00:00.000Z`);
     if (filters.dateTo) query = query.lte("created_at", `${filters.dateTo}T23:59:59.999Z`);
@@ -939,21 +955,49 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     else if (filters.important === "false") query = query.eq("important", false);
     else if (filters.important === "null") query = query.is("important", null);
 
-    const { data, error } = await query;
+    const ascending = filters.sortOrder === "asc";
+    const orderBy = filters.sortBy === "created_at" ? "created_at" : "name";
 
+    const hasCountFilters = Boolean(filters.hasRecords || filters.minRecords);
+
+    if (!hasCountFilters) {
+      const { data, error, count } = await query.order(orderBy, { ascending }).range(offset, offset + limit - 1);
+      if (error) throw error;
+
+      const tagIds = (data || []).map((t: any) => Number(t.id)).filter((id) => Number.isFinite(id));
+      const countMap = await fetchTagCountsByIds(tagIds);
+      const tags = (data || []).map((t: any) => ({
+        ...t,
+        recordsCount: countMap.get(Number(t.id)) || 0,
+      }));
+
+      const total = count || 0;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        props: {
+          tags,
+          total,
+          currentPage: page,
+          totalPages,
+          filters,
+        },
+      };
+    }
+
+    const { data, error } = await query.order(orderBy, { ascending });
     if (error) throw error;
 
-    // 2) Convert supabase `record_tags(count)` into usable number
-    let tags = (data || []).map((t: any) => ({
+    const allTags = data || [];
+    const countMap = await fetchTagCountsByIds(allTags.map((t: any) => Number(t.id)));
+    let tags = allTags.map((t: any) => ({
       ...t,
-      recordsCount: t.record_tags?.[0]?.count || 0,
+      recordsCount: countMap.get(Number(t.id)) || 0,
     }));
 
-    // 3) Apply hasRecords and minRecords in-memory
     if (filters.hasRecords === "with") tags = tags.filter((t) => t.recordsCount > 0);
     if (filters.hasRecords === "without") tags = tags.filter((t) => t.recordsCount === 0);
 
-    // Special handling for minRecords=0: only tags with no records
     if (filters.minRecords === "0") {
       tags = tags.filter((t) => t.recordsCount === 0);
     } else if (filters.minRecords) {
@@ -961,23 +1005,6 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
       if (!isNaN(min)) tags = tags.filter((t) => t.recordsCount >= min);
     }
 
-    // 4) Sorting
-    const ascending = filters.sortOrder === "asc";
-    tags.sort((a, b) => {
-      if (filters.sortBy === "created_at") {
-        const va = new Date(a.created_at).getTime();
-        const vb = new Date(b.created_at).getTime();
-        return ascending ? va - vb : vb - va;
-      } else {
-        const va = a.name.toLowerCase();
-        const vb = b.name.toLowerCase();
-        if (va < vb) return ascending ? -1 : 1;
-        if (va > vb) return ascending ? 1 : -1;
-        return 0;
-      }
-    });
-
-    // 5) Pagination
     const total = tags.length;
     const totalPages = Math.ceil(total / limit);
     const pageSlice = tags.slice(offset, offset + limit);

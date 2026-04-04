@@ -23,6 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 name: item.name.replace(/^\[|\]$/g, '').replace(/^"|"$/g, '')
             }));
 
+            res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
             res.status(200).json(formattedData);
         } catch (err) {
             res.status(500).json({ error: 'Something went wrong' });
