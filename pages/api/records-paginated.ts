@@ -28,6 +28,18 @@ const RECORD_BASE_SELECT = `
   magazines(id, name)
 `;
 
+function buildRecordSelect(options: {
+  includeTagJoin?: boolean;
+  includeAuthorJoin?: boolean;
+  includeLanguageJoin?: boolean;
+}) {
+  const parts = [RECORD_BASE_SELECT.trim()];
+  if (options.includeTagJoin) parts.push("record_tags!left(record_id)");
+  if (options.includeAuthorJoin) parts.push("record_authors!left(record_id)");
+  if (options.includeLanguageJoin) parts.push("record_languages!left(record_id)");
+  return parts.join(", ");
+}
+
 type RawEditHistory = {
   count: number;
   editors: string[];
@@ -333,14 +345,7 @@ async function fetchRecordIdsByTagFilter(value: string) {
   if (!trimmed) return null;
 
   if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
-    const { data, error } = await supabase.from("record_tags").select("record_id");
-    if (error) throw error;
-    const tagged = new Set<number>();
-    (data || []).forEach((row: any) => {
-      const id = Number(row.record_id);
-      if (Number.isFinite(id)) tagged.add(id);
-    });
-    return { ids: tagged, mode: trimmed };
+    return null;
   }
 
   const { data: tagRows, error: tagError } = await supabase.from("tags").select("id").ilike("name", `%${trimmed}%`);
@@ -367,14 +372,7 @@ async function fetchRecordIdsByAuthorFilter(value: string) {
   if (!trimmed) return null;
 
   if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
-    const { data, error } = await supabase.from("record_authors").select("record_id");
-    if (error) throw error;
-    const linked = new Set<number>();
-    (data || []).forEach((row: any) => {
-      const id = Number(row.record_id);
-      if (Number.isFinite(id)) linked.add(id);
-    });
-    return { ids: linked, mode: trimmed };
+    return null;
   }
 
   const { data: authorRows, error: authorError } = await supabase
@@ -405,14 +403,7 @@ async function fetchRecordIdsByLanguageFilter(value: string) {
   if (!trimmed) return null;
 
   if (trimmed === "__EMPTY__" || trimmed === "__NONEMPTY__") {
-    const { data, error } = await supabase.from("record_languages").select("record_id");
-    if (error) throw error;
-    const linked = new Set<number>();
-    (data || []).forEach((row: any) => {
-      const id = Number(row.record_id);
-      if (Number.isFinite(id)) linked.add(id);
-    });
-    return { ids: linked, mode: trimmed };
+    return null;
   }
 
   const { data: languageRows, error: languageError } = await supabase
@@ -563,7 +554,26 @@ function applyNotInFilter(query: any, ids: Set<number>) {
 async function fetchPaginatedRecords(params: FilterParams) {
   const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
 
-  let query = supabase.from("records").select(RECORD_BASE_SELECT, { count: "exact" });
+  const tagsFilterRaw = filters.tags ?? filters.tag;
+  const authorsFilterRaw = filters.authors ?? filters.author;
+  const languageFilterRaw = filters.language ?? filters.languages;
+
+  const tagsFilter = normalizeFilterValue(tagsFilterRaw);
+  const authorsFilter = normalizeFilterValue(authorsFilterRaw);
+  const languageFilter = normalizeFilterValue(languageFilterRaw);
+
+  const includeTagJoin = tagsFilter === "__EMPTY__" || tagsFilter === "__NONEMPTY__";
+  const includeAuthorJoin = authorsFilter === "__EMPTY__" || authorsFilter === "__NONEMPTY__";
+  const includeLanguageJoin = languageFilter === "__EMPTY__" || languageFilter === "__NONEMPTY__";
+
+  let query = supabase.from("records").select(
+    buildRecordSelect({
+      includeTagJoin,
+      includeAuthorJoin,
+      includeLanguageJoin,
+    }),
+    { count: "exact" },
+  );
 
   const filterSets: Set<number>[] = [];
 
@@ -572,45 +582,42 @@ async function fetchPaginatedRecords(params: FilterParams) {
     filterSets.push(emailIds);
   }
 
-  const tagsFilter = filters.tags ?? filters.tag;
-  if (tagsFilter !== undefined && tagsFilter !== null && tagsFilter !== "") {
-    const result = await fetchRecordIdsByTagFilter(tagsFilter);
+  if (includeTagJoin) {
+    if (tagsFilter === "__EMPTY__") {
+      query = query.is("record_tags.record_id", null);
+    } else {
+      query = query.not("record_tags.record_id", "is", null);
+    }
+  } else if (tagsFilterRaw !== undefined && tagsFilterRaw !== null && tagsFilterRaw !== "") {
+    const result = await fetchRecordIdsByTagFilter(tagsFilterRaw as any);
     if (result) {
-      if (result.mode === "__EMPTY__") {
-        query = applyNotInFilter(query, result.ids);
-      } else if (result.mode === "__NONEMPTY__") {
-        filterSets.push(result.ids);
-      } else {
-        filterSets.push(result.ids);
-      }
+      filterSets.push(result.ids);
     }
   }
 
-  const authorsFilter = filters.authors ?? filters.author;
-  if (authorsFilter !== undefined && authorsFilter !== null && authorsFilter !== "") {
-    const result = await fetchRecordIdsByAuthorFilter(authorsFilter);
+  if (includeAuthorJoin) {
+    if (authorsFilter === "__EMPTY__") {
+      query = query.is("record_authors.record_id", null);
+    } else {
+      query = query.not("record_authors.record_id", "is", null);
+    }
+  } else if (authorsFilterRaw !== undefined && authorsFilterRaw !== null && authorsFilterRaw !== "") {
+    const result = await fetchRecordIdsByAuthorFilter(authorsFilterRaw as any);
     if (result) {
-      if (result.mode === "__EMPTY__") {
-        query = applyNotInFilter(query, result.ids);
-      } else if (result.mode === "__NONEMPTY__") {
-        filterSets.push(result.ids);
-      } else {
-        filterSets.push(result.ids);
-      }
+      filterSets.push(result.ids);
     }
   }
 
-  const languageFilter = filters.language ?? filters.languages;
-  if (languageFilter !== undefined && languageFilter !== null && languageFilter !== "") {
-    const result = await fetchRecordIdsByLanguageFilter(languageFilter);
+  if (includeLanguageJoin) {
+    if (languageFilter === "__EMPTY__") {
+      query = query.is("record_languages.record_id", null);
+    } else {
+      query = query.not("record_languages.record_id", "is", null);
+    }
+  } else if (languageFilterRaw !== undefined && languageFilterRaw !== null && languageFilterRaw !== "") {
+    const result = await fetchRecordIdsByLanguageFilter(languageFilterRaw as any);
     if (result) {
-      if (result.mode === "__EMPTY__") {
-        query = applyNotInFilter(query, result.ids);
-      } else if (result.mode === "__NONEMPTY__") {
-        filterSets.push(result.ids);
-      } else {
-        filterSets.push(result.ids);
-      }
+      filterSets.push(result.ids);
     }
   }
 
