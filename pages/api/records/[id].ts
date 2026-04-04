@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextApiRequest, NextApiResponse } from "next";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
+import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 // Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
@@ -101,6 +102,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     invalidateRecordsCache();
+    invalidateRelationSnapshot();
 
     // Success response
     return res.status(200).json({
@@ -136,6 +138,7 @@ export async function deleteRecordById(recordId: number): Promise<void> {
   }
 
   invalidateRecordsCache();
+  invalidateRelationSnapshot();
 }
 
 /**

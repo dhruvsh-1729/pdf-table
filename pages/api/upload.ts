@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureUploadThingToken, uploadPdfBuffer } from "@/lib/uploadthing";
 import { ensureMagazineId, syncRecordLanguages, withRecordLegacyShape } from "@/lib/recordRelations";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
+import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 export const config = {
   api: { bodyParser: false, sizeLimit: "150mb" },
@@ -155,6 +156,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     invalidateRecordsCache();
+    invalidateRelationSnapshot();
     return res.status(200).json({
       ok: true,
       record: insertedRecord

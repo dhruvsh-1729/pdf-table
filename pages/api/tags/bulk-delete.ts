@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
+import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -46,6 +47,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const deletedCount = deletedTags?.length || 0;
 
       invalidateRecordsCache();
+      invalidateRelationSnapshot();
       return res.status(200).json({
         message: `Successfully deleted ${deletedCount} tag(s) and ${recordAssociationsCount || 0} record associations`,
         deletedTags: deletedCount,

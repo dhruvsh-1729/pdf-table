@@ -6,6 +6,7 @@ import {
   invalidateRecordsCache,
   setCachedResponse,
 } from "@/lib/recordsQueryCache";
+import { getRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -27,18 +28,6 @@ const RECORD_BASE_SELECT = `
   extracted_text,
   magazines(id, name)
 `;
-
-function buildRecordSelect(options: {
-  includeTagJoin?: boolean;
-  includeAuthorJoin?: boolean;
-  includeLanguageJoin?: boolean;
-}) {
-  const parts = [RECORD_BASE_SELECT.trim()];
-  if (options.includeTagJoin) parts.push("record_tags!left(record_id)");
-  if (options.includeAuthorJoin) parts.push("record_authors!left(record_id)");
-  if (options.includeLanguageJoin) parts.push("record_languages!left(record_id)");
-  return parts.join(", ");
-}
 
 type RawEditHistory = {
   count: number;
@@ -545,12 +534,6 @@ function applyIdFilter(query: any, ids: Set<number>) {
   return { query: query.or(or), empty: false };
 }
 
-function applyNotInFilter(query: any, ids: Set<number>) {
-  const idList = Array.from(ids).filter((id) => Number.isFinite(id));
-  if (idList.length === 0) return query;
-  return query.not("id", "in", `(${idList.join(",")})`);
-}
-
 async function fetchPaginatedRecords(params: FilterParams) {
   const { page, pageSize, sortBy = "id", sortOrder = "desc", filters = {}, globalFilter, email } = params;
 
@@ -561,33 +544,67 @@ async function fetchPaginatedRecords(params: FilterParams) {
   const tagsFilter = normalizeFilterValue(tagsFilterRaw);
   const authorsFilter = normalizeFilterValue(authorsFilterRaw);
   const languageFilter = normalizeFilterValue(languageFilterRaw);
+  const needsRelationSnapshot =
+    tagsFilter === "__EMPTY__" ||
+    tagsFilter === "__NONEMPTY__" ||
+    authorsFilter === "__EMPTY__" ||
+    authorsFilter === "__NONEMPTY__" ||
+    languageFilter === "__EMPTY__" ||
+    languageFilter === "__NONEMPTY__";
 
-  const includeTagJoin = tagsFilter === "__EMPTY__" || tagsFilter === "__NONEMPTY__";
-  const includeAuthorJoin = authorsFilter === "__EMPTY__" || authorsFilter === "__NONEMPTY__";
-  const includeLanguageJoin = languageFilter === "__EMPTY__" || languageFilter === "__NONEMPTY__";
+  const relationSnapshot = needsRelationSnapshot ? await getRelationSnapshot() : null;
 
-  let query = supabase.from("records").select(
-    buildRecordSelect({
-      includeTagJoin,
-      includeAuthorJoin,
-      includeLanguageJoin,
-    }),
-    { count: "exact" },
-  );
+  let query = supabase.from("records").select(RECORD_BASE_SELECT, { count: "exact" });
 
   const filterSets: Set<number>[] = [];
+  let appliedNotIn = false;
+
+  const applyNotInFilterChunked = (ids: Set<number>) => {
+    const idList = Array.from(ids).filter((id) => Number.isFinite(id));
+    if (idList.length === 0) return;
+    const chunks = chunkArray(idList, 1000);
+    for (const chunk of chunks) {
+      query = query.not("id", "in", `(${chunk.join(",")})`);
+    }
+    appliedNotIn = true;
+  };
+
+  const applyEmptyOrNonempty = (mode: string, ids: Set<number>, allIds: Set<number>) => {
+    if (mode === "__NONEMPTY__") {
+      if (ids.size === 0) return { emptyResult: true };
+      filterSets.push(ids);
+      return { emptyResult: false };
+    }
+    if (mode === "__EMPTY__") {
+      if (allIds.size === 0) return { emptyResult: true };
+      if (ids.size === 0) {
+        // no relations at all => all records are empty
+        return { emptyResult: false };
+      }
+      const emptyCount = allIds.size - ids.size;
+      if (emptyCount <= 0) return { emptyResult: true };
+      if (ids.size < emptyCount) {
+        applyNotInFilterChunked(ids);
+        return { emptyResult: false };
+      }
+      const emptyIds = new Set<number>();
+      allIds.forEach((id) => {
+        if (!ids.has(id)) emptyIds.add(id);
+      });
+      filterSets.push(emptyIds);
+      return { emptyResult: false };
+    }
+    return { emptyResult: false };
+  };
 
   if (email) {
     const emailIds = await fetchRecordIdsByEmail(email);
     filterSets.push(emailIds);
   }
 
-  if (includeTagJoin) {
-    if (tagsFilter === "__EMPTY__") {
-      query = query.is("record_tags.record_id", null);
-    } else {
-      query = query.not("record_tags.record_id", "is", null);
-    }
+  if ((tagsFilter === "__EMPTY__" || tagsFilter === "__NONEMPTY__") && relationSnapshot) {
+    const result = applyEmptyOrNonempty(tagsFilter, relationSnapshot.tagRecordIds, relationSnapshot.allRecordIds);
+    if (result.emptyResult) return { data: [], count: 0, editHistory: {} };
   } else if (tagsFilterRaw !== undefined && tagsFilterRaw !== null && tagsFilterRaw !== "") {
     const result = await fetchRecordIdsByTagFilter(tagsFilterRaw as any);
     if (result) {
@@ -595,12 +612,9 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   }
 
-  if (includeAuthorJoin) {
-    if (authorsFilter === "__EMPTY__") {
-      query = query.is("record_authors.record_id", null);
-    } else {
-      query = query.not("record_authors.record_id", "is", null);
-    }
+  if ((authorsFilter === "__EMPTY__" || authorsFilter === "__NONEMPTY__") && relationSnapshot) {
+    const result = applyEmptyOrNonempty(authorsFilter, relationSnapshot.authorRecordIds, relationSnapshot.allRecordIds);
+    if (result.emptyResult) return { data: [], count: 0, editHistory: {} };
   } else if (authorsFilterRaw !== undefined && authorsFilterRaw !== null && authorsFilterRaw !== "") {
     const result = await fetchRecordIdsByAuthorFilter(authorsFilterRaw as any);
     if (result) {
@@ -608,12 +622,13 @@ async function fetchPaginatedRecords(params: FilterParams) {
     }
   }
 
-  if (includeLanguageJoin) {
-    if (languageFilter === "__EMPTY__") {
-      query = query.is("record_languages.record_id", null);
-    } else {
-      query = query.not("record_languages.record_id", "is", null);
-    }
+  if ((languageFilter === "__EMPTY__" || languageFilter === "__NONEMPTY__") && relationSnapshot) {
+    const result = applyEmptyOrNonempty(
+      languageFilter,
+      relationSnapshot.languageRecordIds,
+      relationSnapshot.allRecordIds,
+    );
+    if (result.emptyResult) return { data: [], count: 0, editHistory: {} };
   } else if (languageFilterRaw !== undefined && languageFilterRaw !== null && languageFilterRaw !== "") {
     const result = await fetchRecordIdsByLanguageFilter(languageFilterRaw as any);
     if (result) {
@@ -683,6 +698,8 @@ async function fetchPaginatedRecords(params: FilterParams) {
     const { query: filteredQuery, empty } = applyIdFilter(query, intersected);
     if (empty) return { data: [], count: 0, editHistory: {} };
     query = filteredQuery;
+  } else if (appliedNotIn) {
+    // no-op, query already constrained by not-in filters
   }
 
   const sortCol = sortBy === "tags" || sortBy === "authors" ? "id" : sortBy;

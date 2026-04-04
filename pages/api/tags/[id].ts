@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
+import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -87,6 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       invalidateRecordsCache();
+      invalidateRelationSnapshot();
       return res.status(200).json(data[0]);
     } catch (error) {
       console.error("Error updating tag:", error);
@@ -116,6 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       invalidateRecordsCache();
+      invalidateRelationSnapshot();
       return res.status(200).json({
         message: "Tag deleted successfully",
       });
