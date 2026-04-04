@@ -1,6 +1,6 @@
 // pages/dashboard.tsx
 import { createClient } from "@supabase/supabase-js";
-import { GetStaticProps } from "next";
+import { GetServerSideProps } from "next";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, Tooltip } from "recharts";
@@ -203,9 +203,9 @@ function normalizeMaybe(input: unknown): string | undefined {
 }
 
 /** -----------------------------
- * Server: getStaticProps (ISR)
+ * Server: getServerSideProps
  * ------------------------------ */
-export const getStaticProps: GetStaticProps<DashboardProps> = async () => {
+export const getServerSideProps: GetServerSideProps<DashboardProps> = async () => {
   const supabaseAdmin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   // Count queries (fast)
@@ -311,7 +311,6 @@ export const getStaticProps: GetStaticProps<DashboardProps> = async () => {
       conclusions,
       unconfirmedUsers,
     },
-    revalidate: 300,
   };
 };
 
