@@ -43,7 +43,7 @@ const Header = memo<HeaderProps>(
           <div className="flex items-center justify-between gap-2">
             <div className="flex-shrink-0">
               <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-800 to-indigo-600 bg-clip-text text-transparent">
-                📚 Magazine Portal
+                📚 Magazine Summary
               </h1>
             </div>
 
