@@ -16,6 +16,11 @@ export interface Tag {
   name: string;
 }
 
+export interface Language {
+  id: number;
+  name: string;
+}
+
 export interface MagazineRecord {
   id: number;
   magazine_id?: number | null;
@@ -31,6 +36,7 @@ export interface MagazineRecord {
   authors: string | null;
   language: string | null;
   languages?: string[];
+  languages_linked?: Language[];
   email: string | null;
   creator_name: string | null;
   conclusion: string | null;

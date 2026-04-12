@@ -7,7 +7,7 @@ import BugModal from "@/components/BugModal";
 import { MagicWand, Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { MagazineRecord, Tag, User } from "../types";
+import { Language, MagazineRecord, Tag, User } from "../types";
 import ExtractedTextModal from "@/components/ExtractedTextModal";
 import Header from "../components/Header";
 import ServerDataTable from "../components/DataTable";
@@ -16,6 +16,7 @@ import TagsModal from "../components/TagsModal";
 import EditTextModal from "../components/EditTextModal";
 import AuthorsModal from "@/components/AuthorsModal";
 import ExportColumnsModal from "@/components/ExportColumnsModal";
+import LanguagesModal from "@/components/LanguagesModal";
 
 export default function Home() {
   const router = useRouter();
@@ -51,6 +52,8 @@ export default function Home() {
   const [selectedTags, setSelectedTags] = useState<{ label: string; value: number }[]>([]);
   const [authorsModalOpen, setAuthorsModalOpen] = useState(false);
   const [selectedAuthors, setSelectedAuthors] = useState<{ label: string; value: number }[]>([]);
+  const [languagesModalOpen, setLanguagesModalOpen] = useState(false);
+  const [selectedLanguages, setSelectedLanguages] = useState<{ label: string; value: number }[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [access, setAccess] = useState<string | null>(null);
   const isAdmin = useMemo(() => {
@@ -149,7 +152,7 @@ export default function Home() {
             if (sorting.length > 0) {
               const sortCol = sorting[0].id;
               // Map columns that don't exist directly in the database
-              if (sortCol === "tags" || sortCol === "authors") {
+              if (sortCol === "tags" || sortCol === "authors" || sortCol === "language") {
                 sortBy = "id"; // Default to id for relation columns
               } else {
                 sortBy = sortCol;
@@ -263,7 +266,12 @@ export default function Home() {
     const params = new URLSearchParams({
       page: String(pagination.pageIndex),
       pageSize: String(pagination.pageSize),
-      sortBy: sorting.length > 0 ? sorting[0].id : "id",
+      sortBy:
+        sorting.length > 0 && ["tags", "authors", "language"].includes(sorting[0].id)
+          ? "id"
+          : sorting.length > 0
+            ? sorting[0].id
+            : "id",
       sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
       filters: JSON.stringify(Object.fromEntries(columnFilters.map((f) => [f.id, f.value]))),
       globalFilter: globalFilter || "",
@@ -547,6 +555,99 @@ export default function Home() {
     }
   };
 
+  const resolveLanguageId = async (option: { label: string; value: number }) => {
+    if (option.value > 0) return option.value;
+
+    const name = option.label.trim();
+    if (!name) throw new Error("Language name cannot be empty");
+
+    const lookupResponse = await fetch(`/api/languages?q=${encodeURIComponent(name)}&limit=20&offset=0`);
+    if (lookupResponse.ok) {
+      const payload = await lookupResponse.json();
+      const existing = (payload.languages || []).find(
+        (language: Language) => language.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+      if (existing?.id) return Number(existing.id);
+    }
+
+    const createResponse = await fetch("/api/languages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+
+    if (!createResponse.ok) {
+      const payload = await createResponse.json().catch(() => null);
+      if (createResponse.status === 409) {
+        const retryResponse = await fetch(`/api/languages?q=${encodeURIComponent(name)}&limit=20&offset=0`);
+        const retryPayload = retryResponse.ok ? await retryResponse.json() : null;
+        const existing = (retryPayload?.languages || []).find(
+          (language: Language) => language.name.trim().toLowerCase() === name.toLowerCase(),
+        );
+        if (existing?.id) return Number(existing.id);
+      }
+      throw new Error(payload?.error || "Failed to create language");
+    }
+
+    const created = await createResponse.json();
+    const createdId = Number(created?.id);
+    if (!Number.isFinite(createdId)) throw new Error("Failed to resolve created language");
+    return createdId;
+  };
+
+  const handleLanguageSubmit = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    e.preventDefault();
+    if (!editingRecord) return;
+    try {
+      setLoading(true);
+
+      const resolvedLanguageIds: number[] = [];
+      for (const languageOption of selectedLanguages) {
+        const languageId = await resolveLanguageId(languageOption);
+        if (!resolvedLanguageIds.includes(languageId)) resolvedLanguageIds.push(languageId);
+      }
+
+      const currentLanguages = editingRecord.languages_linked || [];
+      const currentLanguageIds = currentLanguages.map((item) => item.id);
+
+      const languagesToAdd = resolvedLanguageIds.filter((id) => !currentLanguageIds.includes(id));
+      const languagesToRemove = currentLanguageIds.filter((id) => !resolvedLanguageIds.includes(id));
+
+      if (languagesToAdd.length > 0) {
+        const addResponse = await fetch("/api/record-languages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: editingRecord.id, languageIds: languagesToAdd }),
+        });
+        if (!addResponse.ok) {
+          const payload = await addResponse.json().catch(() => null);
+          throw new Error(payload?.error || "Failed to attach languages to record");
+        }
+      }
+
+      if (languagesToRemove.length > 0) {
+        const removeResponse = await fetch("/api/record-languages", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId: editingRecord.id, languageIds: languagesToRemove }),
+        });
+        if (!removeResponse.ok) {
+          const payload = await removeResponse.json().catch(() => null);
+          throw new Error(payload?.error || "Failed to remove languages from record");
+        }
+      }
+
+      await refreshRecords();
+      setLanguagesModalOpen(false);
+      setSelectedLanguages([]);
+      setEditingRecord(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const columns = useMemo<ColumnDef<MagazineRecord>[]>(
     () => [
       {
@@ -793,13 +894,66 @@ export default function Home() {
       },
       {
         accessorKey: "language",
-        header: "Language",
+        header: "Languages",
         id: "language",
-        cell: ({ row }) => (
-          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
-            {row.original.language || "—"}
-          </span>
-        ),
+        enableSorting: false,
+        cell: ({ row }) => {
+          const linked = row.original.languages_linked || [];
+          const fallbackNames =
+            !linked.length && row.original.language
+              ? row.original.language
+                  .split(",")
+                  .map((name) => name.trim())
+                  .filter(Boolean)
+              : [];
+          return (
+            <div className="flex flex-wrap gap-2 items-center">
+              {linked.length > 0
+                ? linked.slice(0, 2).map((languageItem) => (
+                    <span
+                      key={languageItem.id}
+                      className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-teal-100 to-cyan-100 text-teal-800 border border-teal-200"
+                    >
+                      {languageItem.name}
+                    </span>
+                  ))
+                : fallbackNames.slice(0, 2).map((languageName) => (
+                    <span
+                      key={languageName}
+                      className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-teal-100 to-cyan-100 text-teal-800 border border-teal-200"
+                    >
+                      {languageName}
+                    </span>
+                  ))}
+              {linked.length > 2 && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800 border border-gray-300">
+                  +{linked.length - 2} more
+                </span>
+              )}
+              {!linked.length && fallbackNames.length > 2 && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800 border border-gray-300">
+                  +{fallbackNames.length - 2} more
+                </span>
+              )}
+              {!linked.length && fallbackNames.length === 0 && <span className="text-slate-500 text-sm">—</span>}
+              <button
+                className="ml-2 px-2 py-1 text-xs bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100"
+                onClick={() => {
+                  setEditingRecord(row.original);
+                  setSelectedLanguages(
+                    (row.original.languages_linked || []).map((languageItem) => ({
+                      label: languageItem.name,
+                      value: languageItem.id,
+                    })),
+                  );
+                  setLanguagesModalOpen(true);
+                }}
+              >
+                <Pencil size={21} />
+              </button>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "pdf_url",
@@ -1015,7 +1169,7 @@ export default function Home() {
       { id: "title_name", label: "Title Name" },
       { id: "page_numbers", label: "Page Numbers" },
       { id: "authors", label: "Authors" },
-      { id: "language", label: "Language" },
+      { id: "language", label: "Languages" },
       { id: "pdf_url", label: "PDF URL" },
       { id: "creator_name", label: "Creator" },
     ];
@@ -1231,8 +1385,6 @@ export default function Home() {
           setPageNumbers={setPageNumbers}
           authors={authors}
           setAuthors={setAuthors}
-          language={language}
-          setLanguage={setLanguage}
           loading={loading}
           error={error}
           user={user}
@@ -1265,6 +1417,15 @@ export default function Home() {
           selectedAuthors={selectedAuthors}
           setSelectedAuthors={setSelectedAuthors}
           handleAuthorSubmit={handleAuthorSubmit}
+        />
+        <LanguagesModal
+          languagesModalOpen={languagesModalOpen}
+          setLanguagesModalOpen={setLanguagesModalOpen}
+          loading={loading}
+          error={error}
+          selectedLanguages={selectedLanguages}
+          setSelectedLanguages={setSelectedLanguages}
+          handleLanguageSubmit={handleLanguageSubmit}
         />
         <EditTextModal
           isOpen={summaryOpen}

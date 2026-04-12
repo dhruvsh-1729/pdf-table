@@ -191,6 +191,9 @@ function withFormattedRecord(record: any) {
 
   formatted.tags = uniqueById((record.record_tags || []).map((rt: any) => rt?.tags).filter(Boolean));
   formatted.authors_linked = uniqueById((record.record_authors || []).map((ra: any) => ra?.authors).filter(Boolean));
+  formatted.languages_linked = uniqueById(
+    (record.record_languages || []).map((rl: any) => rl?.languages).filter(Boolean),
+  );
   formatted.name = extractMagazineNameFromRelation(record.magazines);
   formatted.languages = extractLanguageNamesFromRelations(record.record_languages || []);
   formatted.language = formatted.languages.length > 0 ? formatted.languages.join(", ") : null;
@@ -702,7 +705,7 @@ async function fetchPaginatedRecords(params: FilterParams) {
     // no-op, query already constrained by not-in filters
   }
 
-  const sortCol = sortBy === "tags" || sortBy === "authors" ? "id" : sortBy;
+  const sortCol = sortBy === "tags" || sortBy === "authors" || sortBy === "language" ? "id" : sortBy;
   if (sortCol === "name") {
     query = query.order("name", { ascending: sortOrder === "asc", foreignTable: "magazines" });
   } else {

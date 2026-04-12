@@ -1,35 +1,53 @@
-const KNOWN_LANGUAGE_TOKENS = new Set(
-  [
-    "arabic",
-    "assamese",
-    "bengali",
-    "bodo",
-    "dogri",
-    "english",
-    "french",
-    "german",
-    "gujarati",
-    "hindi",
-    "kannada",
-    "kashmiri",
-    "konkani",
-    "maithili",
-    "malayalam",
-    "manipuri",
-    "marathi",
-    "nepali",
-    "odia",
-    "oriya",
-    "punjabi",
-    "sanskrit",
-    "santhali",
-    "sindhi",
-    "spanish",
-    "tamil",
-    "telugu",
-    "urdu",
-  ].map((v) => v.toLowerCase()),
+const LANGUAGE_NAME_BY_TOKEN = new Map(
+  Object.entries({
+    afr: "Afrikaans",
+    afrikaans: "Afrikaans",
+    apabhramsa: "Apabhramsa",
+    apabhramsha: "Apabhramsa",
+    arabic: "Arabic",
+    assamese: "Assamese",
+    bengali: "Bengali",
+    bodo: "Bodo",
+    chinese: "Chinese",
+    dogri: "Dogri",
+    eng: "English",
+    english: "English",
+    french: "French",
+    german: "German",
+    gujarati: "Gujarati",
+    hau: "Hausa",
+    hausa: "Hausa",
+    hindi: "Hindi",
+    italian: "Italian",
+    kannada: "Kannada",
+    kashmiri: "Kashmiri",
+    konkani: "Konkani",
+    lin: "Lingala",
+    lingala: "Lingala",
+    maithili: "Maithili",
+    malayalam: "Malayalam",
+    manipuri: "Manipuri",
+    marathi: "Marathi",
+    nepali: "Nepali",
+    odia: "Odia",
+    oriya: "Odia",
+    pali: "Pali",
+    persian: "Persian",
+    prakrit: "Prakrit",
+    punjabi: "Punjabi",
+    sanskrit: "Sanskrit",
+    santhali: "Santhali",
+    sindhi: "Sindhi",
+    spanish: "Spanish",
+    tamil: "Tamil",
+    telugu: "Telugu",
+    urdu: "Urdu",
+    war: "Waray",
+    waray: "Waray",
+  }),
 );
+
+const IGNORED_LANGUAGE_TOKENS = new Set(["various"]);
 
 function stripJsonArrayWrapper(value: string): string {
   const trimmed = value.trim();
@@ -53,8 +71,28 @@ function splitByAndSafely(chunk: string): string[] {
     .map((part) => part.trim())
     .filter(Boolean);
   if (parts.length < 2) return [chunk];
-  const allKnown = parts.every((part) => KNOWN_LANGUAGE_TOKENS.has(part.toLowerCase()));
+  const allKnown = parts.every((part) => {
+    const key = normalizeLanguageToken(part).toLowerCase();
+    return LANGUAGE_NAME_BY_TOKEN.has(key) || IGNORED_LANGUAGE_TOKENS.has(key);
+  });
   return allKnown ? parts : [chunk];
+}
+
+function normalizeLanguageToken(value: string): string {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/^[\s`"[\]]+|[\s`"[\];:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function canonicalizeLanguageToken(value: string): string | null {
+  const normalized = normalizeLanguageToken(value);
+  if (!normalized) return null;
+
+  const key = normalized.toLowerCase();
+  if (IGNORED_LANGUAGE_TOKENS.has(key)) return null;
+  return LANGUAGE_NAME_BY_TOKEN.get(key) || toTitleCase(normalized);
 }
 
 export function normalizeOptionalText(value: unknown): string | null {
@@ -68,17 +106,20 @@ export function parseLanguageValues(raw?: string | null): string[] {
   if (!normalized) return [];
 
   const tokens: string[] = [];
-  const splitByCommaOrAmp = normalized
-    .split(/\s*(?:,|&)\s*/g)
+  const splitByDelimiter = normalized
+    .replace(/\u00a0/g, " ")
+    .replace(/[\[\]"]/g, "")
+    .replace(/`/g, "")
+    .split(/\s*(?:,|&|\/|\.)\s*/g)
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 
-  for (const chunk of splitByCommaOrAmp) {
+  for (const chunk of splitByDelimiter) {
     const pieces = splitByAndSafely(chunk);
     for (const piece of pieces) {
-      const cleaned = normalizeOptionalText(piece);
+      const cleaned = canonicalizeLanguageToken(piece);
       if (!cleaned) continue;
-      tokens.push(toTitleCase(cleaned));
+      tokens.push(cleaned);
     }
   }
 

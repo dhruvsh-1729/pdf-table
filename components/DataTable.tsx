@@ -186,6 +186,7 @@ export default function ServerDataTable({
                                 />
                               ) : header.column.id === "name" ? (
                                 <AsyncSelect
+                                  instanceId="magazine-name-filter"
                                   isClearable
                                   value={
                                     header.column.getFilterValue()
@@ -433,7 +434,7 @@ export default function ServerDataTable({
                                           header.column.setFilterValue(e.target.value);
                                           setPagination({ ...pagination, pageIndex: 0 });
                                         }}
-                                        placeholder="Search language…"
+                                        placeholder="Search languages…"
                                         className={`border rounded-md px-2 py-1 text-xs w-full bg-white focus:border-indigo-500 focus:ring-0 ${
                                           isFiltered ? "border-red-400" : "border-slate-300"
                                         }`}
@@ -465,7 +466,7 @@ export default function ServerDataTable({
                                               : "bg-slate-100 border-slate-200 text-slate-700 hover:border-slate-300"
                                           }`}
                                         >
-                                          Has text
+                                          Has languages
                                         </button>
                                         <button
                                           type="button"

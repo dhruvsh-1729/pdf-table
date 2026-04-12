@@ -28,8 +28,6 @@ interface RecordFormModalProps {
   setPageNumbers: (pageNumbers: string) => void;
   authors: string;
   setAuthors: (authors: string) => void;
-  language: string;
-  setLanguage: (language: string) => void;
   loading: boolean;
   error: string | null;
   user: User | null;
@@ -65,8 +63,6 @@ export default function RecordFormModal({
   setPageNumbers,
   authors,
   setAuthors,
-  language,
-  setLanguage,
   loading,
   error,
   user,
@@ -278,7 +274,7 @@ export default function RecordFormModal({
               />
             </div> */}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Volume</label>
               <input
@@ -323,17 +319,6 @@ export default function RecordFormModal({
                 disabled={loading}
               />
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Language</label>
-              <input
-                type="text"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                placeholder="e.g., English, Hindi, etc."
-                className="w-full rounded-xl border-2 border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-0 text-sm disabled:bg-gray-100 px-4 py-3 bg-gradient-to-r from-slate-50 to-gray-50"
-                disabled={loading}
-              />
-            </div>
           </div>
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -364,7 +349,6 @@ export default function RecordFormModal({
               setTitleName("");
               setPageNumbers("");
               setAuthors("");
-              setLanguage("");
               setError(null);
             }}
             className="py-4 px-6 rounded-xl shadow-sm text-slate-700 bg-gradient-to-r from-slate-200 to-gray-300 hover:from-slate-300 hover:to-gray-400 text-sm font-semibold transition-all duration-200 transform focus:outline-none focus:ring-4 focus:ring-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"

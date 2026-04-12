@@ -30,6 +30,11 @@ describe("recordRelations helpers", () => {
       ["English, Hindi & Gujarati", ["English", "Hindi", "Gujarati"]],
       ["English and Hindi and Gujarati", ["English", "Hindi", "Gujarati"]],
       ["english, ENGLISH, hindi", ["English", "Hindi"]],
+      ["English, Sanskrit/Prakrit", ["English", "Sanskrit", "Prakrit"]],
+      ["Hindi. Gujarati", ["Hindi", "Gujarati"]],
+      ["Hindi`", ["Hindi"]],
+      ["English, Sanskrit, various", ["English", "Sanskrit"]],
+      ["afr, lin, war", ["Afrikaans", "Lingala", "Waray"]],
       ["English and Applied Linguistics", ["English And Applied Linguistics"]],
     ])("parses %p -> %p", (input, expected) => {
       expect(parseLanguageValues(input as string | null | undefined)).toEqual(expected);

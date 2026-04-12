@@ -28,14 +28,24 @@ function normalizeLanguageName(value: unknown) {
   return toTitleCase(normalized);
 }
 
-function buildCountMap(rows: any[] | null | undefined) {
-  const map = new Map<number, number>();
-  for (const row of rows || []) {
-    const languageId = Number(row?.language_id);
-    if (!Number.isFinite(languageId)) continue;
-    map.set(languageId, (map.get(languageId) || 0) + 1);
-  }
-  return map;
+async function fetchLanguageRelationCounts(
+  table: "record_languages" | "magazine_languages",
+  countColumn: "record_id" | "magazine_id",
+  ids: number[],
+) {
+  const entries = await Promise.all(
+    ids.map(async (id) => {
+      const { count, error } = await supabase
+        .from(table)
+        .select(countColumn, { count: "exact", head: true })
+        .eq("language_id", id);
+
+      if (error) throw error;
+      return [id, count || 0] as const;
+    }),
+  );
+
+  return new Map<number, number>(entries);
 }
 
 async function attachLanguageCounts(rows: any[]) {
@@ -44,16 +54,10 @@ async function attachLanguageCounts(rows: any[]) {
     return (rows || []).map((row) => ({ ...row, records_count: 0, magazines_count: 0 }));
   }
 
-  const [{ data: recordRows, error: recordError }, { data: magazineRows, error: magazineError }] = await Promise.all([
-    supabase.from("record_languages").select("language_id").in("language_id", ids),
-    supabase.from("magazine_languages").select("language_id").in("language_id", ids),
+  const [recordCountMap, magazineCountMap] = await Promise.all([
+    fetchLanguageRelationCounts("record_languages", "record_id", ids),
+    fetchLanguageRelationCounts("magazine_languages", "magazine_id", ids),
   ]);
-
-  if (recordError) throw recordError;
-  if (magazineError) throw magazineError;
-
-  const recordCountMap = buildCountMap(recordRows);
-  const magazineCountMap = buildCountMap(magazineRows);
 
   return rows.map((row) => {
     const id = Number(row?.id);

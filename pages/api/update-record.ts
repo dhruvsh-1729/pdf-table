@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { deleteUploadThingFile, ensureUploadThingToken, uploadPdfBuffer } from "@/lib/uploadthing";
 import { ensureMagazineId, extractMagazineName, syncRecordLanguages } from "@/lib/recordRelations";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
+import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 export const config = {
   api: { bodyParser: false, sizeLimit: "150mb" },
@@ -155,6 +156,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (incomingLanguage !== undefined) {
       await syncRecordLanguages(supabase, id, incomingLanguage);
+      invalidateRelationSnapshot();
     }
 
     invalidateRecordsCache();
