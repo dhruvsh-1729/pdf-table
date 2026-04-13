@@ -16,6 +16,15 @@ type ExtractedTextResponse =
       error: string;
     };
 
+type ExtractionRedactionRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type ExtractionRedactionsByPage = Record<number, ExtractionRedactionRect[]>;
+
 const DEFAULT_LANG = "eng";
 const MIN_VALID_LETTER_COUNT = 40;
 const OCR_SCALE = 2;
@@ -229,14 +238,91 @@ async function loadPdfDocument(data: Uint8Array) {
   return loadingTask.promise;
 }
 
-async function extractTextFromPdf(pdf: any): Promise<string> {
+const clamp01Number = (value: number) => Math.min(1, Math.max(0, value));
+
+function transformMatrix(m1: number[], m2: number[]) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+function normalizePdfRedactionToView(rect: ExtractionRedactionRect) {
+  const x = clamp01Number(Number(rect.x) || 0);
+  const y = clamp01Number(Number(rect.y) || 0);
+  const width = clamp01Number(Number(rect.width) || 0);
+  const height = clamp01Number(Number(rect.height) || 0);
+  const left = x;
+  const top = clamp01Number(1 - (y + height));
+  return {
+    left,
+    top,
+    right: clamp01Number(left + width),
+    bottom: clamp01Number(top + height),
+  };
+}
+
+function getTextItemViewBounds(item: any, viewport: any) {
+  if (!item?.transform || !Array.isArray(item.transform) || !viewport?.transform) return null;
+  const tx = transformMatrix(viewport.transform, item.transform);
+  const transformWidth = Math.hypot(tx[0] || 0, tx[1] || 0);
+  const transformHeight = Math.hypot(tx[2] || 0, tx[3] || 0);
+  const itemWidth = Math.abs(Number(item.width) || 0);
+  const itemHeight = Math.abs(Number(item.height) || 0);
+  const fallbackWidth = transformWidth * Math.max(1, String(item.str || "").length) * 0.5;
+  const width = Math.max(itemWidth, fallbackWidth, 1);
+  const height = Math.max(itemHeight, transformHeight, 1);
+  const x = Number(tx[4]) || 0;
+  const y = Number(tx[5]) || 0;
+  const left = Math.min(x, x + width);
+  const right = Math.max(x, x + width);
+  const top = Math.min(y - height, y);
+  const bottom = Math.max(y - height, y);
+
+  if (!viewport.width || !viewport.height) return null;
+  return {
+    left: clamp01Number(left / viewport.width),
+    top: clamp01Number(top / viewport.height),
+    right: clamp01Number(right / viewport.width),
+    bottom: clamp01Number(bottom / viewport.height),
+  };
+}
+
+function boxesOverlap(
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number },
+) {
+  const centerX = (a.left + a.right) / 2;
+  const centerY = (a.top + a.bottom) / 2;
+  if (centerX >= b.left && centerX <= b.right && centerY >= b.top && centerY <= b.bottom) return true;
+
+  const overlapX = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const overlapY = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  return overlapX > 0 && overlapY > 0;
+}
+
+function isTextItemRedacted(item: any, viewport: any, redactions: ExtractionRedactionRect[]) {
+  if (!redactions.length) return false;
+  const itemBounds = getTextItemViewBounds(item, viewport);
+  if (!itemBounds) return false;
+  return redactions.some((rect) => boxesOverlap(itemBounds, normalizePdfRedactionToView(rect)));
+}
+
+async function extractTextFromPdf(pdf: any, redactionsByPage?: ExtractionRedactionsByPage): Promise<string> {
   let fullText = "";
 
   for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex++) {
     const page = await pdf.getPage(pageIndex);
     const textContent = await page.getTextContent();
+    const redactions = redactionsByPage?.[pageIndex] || [];
+    const viewport = redactions.length ? page.getViewport({ scale: 1, rotation: 0 }) : null;
 
     const pageText = textContent.items
+      .filter((item: any) => !viewport || !isTextItemRedacted(item, viewport, redactions))
       .map((item: any) => {
         const str = typeof item.str === "string" ? item.str : "";
         return item.hasEOL ? `${str}\n` : `${str} `;
@@ -409,7 +495,7 @@ function resolvePdfUrl(pdfUrl: string, req?: NextApiRequest) {
 export async function extractTextFromBytes(
   pdfBytes: Uint8Array,
   language?: string | null,
-  opts?: { allowOcr?: boolean; allowEmpty?: boolean },
+  opts?: { allowOcr?: boolean; allowEmpty?: boolean; redactionsByPage?: ExtractionRedactionsByPage },
 ) {
   let pdf: any | null = null;
   let finalText = "";
@@ -422,7 +508,7 @@ export async function extractTextFromBytes(
     pdf = await loadPdfDocument(pdfBytes);
     let extractedText = "";
     try {
-      extractedText = await extractTextFromPdf(pdf);
+      extractedText = await extractTextFromPdf(pdf, opts?.redactionsByPage);
     } catch (error) {
       console.warn("Primary text extraction failed; falling back to OCR.", error);
     }
