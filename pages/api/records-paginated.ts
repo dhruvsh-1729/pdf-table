@@ -291,6 +291,23 @@ function chunkArray<T>(items: T[], size: number) {
   return out;
 }
 
+async function fetchAllRows<T>(buildQuery: () => any) {
+  const rows: T[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+
+    const batch = (data || []) as T[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  return rows;
+}
+
 function intersectSets(sets: Set<number>[]) {
   if (sets.length === 0) return null;
   let out = new Set<number>(sets[0]);
@@ -310,21 +327,21 @@ async function fetchRecordIdsByEmail(email: string) {
   const candidates = [raw, normalized || "", formattedRaw, formattedNormalized].filter((v) => v);
 
   const [records, summaries, conclusions] = await Promise.all([
-    supabase.from("records").select("id, email").in("email", candidates),
-    supabase.from("summaries").select("record_id, email").in("email", candidates),
-    supabase.from("conclusions").select("record_id, email").in("email", candidates),
+    fetchAllRows<any>(() => supabase.from("records").select("id, email").in("email", candidates)),
+    fetchAllRows<any>(() => supabase.from("summaries").select("record_id, email").in("email", candidates)),
+    fetchAllRows<any>(() => supabase.from("conclusions").select("record_id, email").in("email", candidates)),
   ]);
 
   const ids = new Set<number>();
-  (records.data || []).forEach((row: any) => {
+  records.forEach((row: any) => {
     const id = Number(row.id);
     if (Number.isFinite(id)) ids.add(id);
   });
-  (summaries.data || []).forEach((row: any) => {
+  summaries.forEach((row: any) => {
     const id = Number(row.record_id);
     if (Number.isFinite(id)) ids.add(id);
   });
-  (conclusions.data || []).forEach((row: any) => {
+  conclusions.forEach((row: any) => {
     const id = Number(row.record_id);
     if (Number.isFinite(id)) ids.add(id);
   });
@@ -340,22 +357,21 @@ async function fetchRecordIdsByTagFilter(value: string) {
     return null;
   }
 
-  const { data: tagRows, error: tagError } = await supabase.from("tags").select("id").ilike("name", `%${trimmed}%`);
-  if (tagError) throw tagError;
-  const tagIds = (tagRows || []).map((t: any) => t.id).filter((id: any) => Number.isFinite(Number(id)));
+  const tagRows = await fetchAllRows<any>(() => supabase.from("tags").select("id").ilike("name", `%${trimmed}%`));
+  const tagIds = tagRows.map((t: any) => t.id).filter((id: any) => Number.isFinite(Number(id)));
   if (tagIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
 
-  const { data: recordRows, error: recordError } = await supabase
-    .from("record_tags")
-    .select("record_id")
-    .in("tag_id", tagIds);
-  if (recordError) throw recordError;
-
   const recordIds = new Set<number>();
-  (recordRows || []).forEach((row: any) => {
-    const id = Number(row.record_id);
-    if (Number.isFinite(id)) recordIds.add(id);
-  });
+  const tagIdChunks = chunkArray(tagIds, 1000);
+  for (const chunk of tagIdChunks) {
+    const recordRows = await fetchAllRows<any>(() =>
+      supabase.from("record_tags").select("record_id").in("tag_id", chunk),
+    );
+    recordRows.forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) recordIds.add(id);
+    });
+  }
   return { ids: recordIds, mode: "IN" };
 }
 
@@ -367,25 +383,23 @@ async function fetchRecordIdsByAuthorFilter(value: string) {
     return null;
   }
 
-  const { data: authorRows, error: authorError } = await supabase
-    .from("authors")
-    .select("id")
-    .ilike("name", `%${trimmed}%`);
-  if (authorError) throw authorError;
-  const authorIds = (authorRows || []).map((a: any) => a.id).filter((id: any) => Number.isFinite(Number(id)));
+  const authorRows = await fetchAllRows<any>(() =>
+    supabase.from("authors").select("id").ilike("name", `%${trimmed}%`),
+  );
+  const authorIds = authorRows.map((a: any) => a.id).filter((id: any) => Number.isFinite(Number(id)));
   if (authorIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
 
-  const { data: recordRows, error: recordError } = await supabase
-    .from("record_authors")
-    .select("record_id")
-    .in("author_id", authorIds);
-  if (recordError) throw recordError;
-
   const recordIds = new Set<number>();
-  (recordRows || []).forEach((row: any) => {
-    const id = Number(row.record_id);
-    if (Number.isFinite(id)) recordIds.add(id);
-  });
+  const authorIdChunks = chunkArray(authorIds, 1000);
+  for (const chunk of authorIdChunks) {
+    const recordRows = await fetchAllRows<any>(() =>
+      supabase.from("record_authors").select("record_id").in("author_id", chunk),
+    );
+    recordRows.forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) recordIds.add(id);
+    });
+  }
 
   return { ids: recordIds, mode: "IN" };
 }
@@ -398,25 +412,23 @@ async function fetchRecordIdsByLanguageFilter(value: string) {
     return null;
   }
 
-  const { data: languageRows, error: languageError } = await supabase
-    .from("languages")
-    .select("id")
-    .ilike("name", `%${trimmed}%`);
-  if (languageError) throw languageError;
-  const languageIds = (languageRows || []).map((l: any) => l.id).filter((id: any) => Number.isFinite(Number(id)));
+  const languageRows = await fetchAllRows<any>(() =>
+    supabase.from("languages").select("id").ilike("name", `%${trimmed}%`),
+  );
+  const languageIds = languageRows.map((l: any) => l.id).filter((id: any) => Number.isFinite(Number(id)));
   if (languageIds.length === 0) return { ids: new Set<number>(), mode: "IN" };
 
-  const { data: recordRows, error: recordError } = await supabase
-    .from("record_languages")
-    .select("record_id")
-    .in("language_id", languageIds);
-  if (recordError) throw recordError;
-
   const recordIds = new Set<number>();
-  (recordRows || []).forEach((row: any) => {
-    const id = Number(row.record_id);
-    if (Number.isFinite(id)) recordIds.add(id);
-  });
+  const languageIdChunks = chunkArray(languageIds, 1000);
+  for (const chunk of languageIdChunks) {
+    const recordRows = await fetchAllRows<any>(() =>
+      supabase.from("record_languages").select("record_id").in("language_id", chunk),
+    );
+    recordRows.forEach((row: any) => {
+      const id = Number(row.record_id);
+      if (Number.isFinite(id)) recordIds.add(id);
+    });
+  }
 
   return { ids: recordIds, mode: "IN" };
 }
@@ -425,43 +437,51 @@ async function fetchMagazineIdsByName(value: string) {
   const trimmed = normalizeFilterValue(value);
   if (!trimmed) return null;
 
-  const { data, error } = await supabase.from("magazines").select("id").ilike("name", `%${trimmed}%`);
-  if (error) throw error;
-  const ids = (data || []).map((row: any) => row.id).filter((id: any) => Number.isFinite(Number(id)));
+  const data = await fetchAllRows<any>(() => supabase.from("magazines").select("id").ilike("name", `%${trimmed}%`));
+  const ids = data.map((row: any) => row.id).filter((id: any) => Number.isFinite(Number(id)));
   return new Set<number>(ids.map((id) => Number(id)));
+}
+
+async function fetchRecordIdsByMagazineName(value: string) {
+  const magazineIds = await fetchMagazineIdsByName(value);
+  return fetchRecordIdsByMagazineIds(magazineIds);
+}
+
+async function fetchRecordIdsByMagazineIds(magazineIds: Set<number> | null) {
+  if (!magazineIds || magazineIds.size === 0) return new Set<number>();
+
+  const ids = new Set<number>();
+  const chunks = chunkArray(Array.from(magazineIds), 1000);
+  for (const chunk of chunks) {
+    const recordRows = await fetchAllRows<any>(() => supabase.from("records").select("id").in("magazine_id", chunk));
+    recordRows.forEach((row: any) => {
+      const id = Number(row.id);
+      if (Number.isFinite(id)) ids.add(id);
+    });
+  }
+
+  return ids;
 }
 
 async function fetchRecordIdsByGlobalFilter(value: string) {
   const trimmed = normalizeFilterValue(value);
   if (!trimmed) return null;
 
-  const { data: directRows, error: directError } = await supabase
-    .from("records")
-    .select("id")
-    .or(`summary.ilike.%${trimmed}%,conclusion.ilike.%${trimmed}%,title_name.ilike.%${trimmed}%`);
-  if (directError) throw directError;
+  const directRows = await fetchAllRows<any>(() =>
+    supabase
+      .from("records")
+      .select("id")
+      .or(`summary.ilike.%${trimmed}%,conclusion.ilike.%${trimmed}%,title_name.ilike.%${trimmed}%`),
+  );
 
   const ids = new Set<number>();
-  (directRows || []).forEach((row: any) => {
+  directRows.forEach((row: any) => {
     const id = Number(row.id);
     if (Number.isFinite(id)) ids.add(id);
   });
 
-  const magazineIds = await fetchMagazineIdsByName(trimmed);
-  if (magazineIds && magazineIds.size > 0) {
-    const chunked = chunkArray(Array.from(magazineIds), 1000);
-    for (const chunk of chunked) {
-      const { data: recordRows, error: recordError } = await supabase
-        .from("records")
-        .select("id")
-        .in("magazine_id", chunk);
-      if (recordError) throw recordError;
-      (recordRows || []).forEach((row: any) => {
-        const id = Number(row.id);
-        if (Number.isFinite(id)) ids.add(id);
-      });
-    }
-  }
+  const magazineRecordIds = await fetchRecordIdsByMagazineName(trimmed);
+  magazineRecordIds.forEach((id) => ids.add(id));
 
   return ids;
 }
@@ -470,11 +490,10 @@ async function fetchRecordIdsByIdPrefix(prefix: string) {
   const trimmed = normalizeFilterValue(prefix);
   if (!trimmed) return null;
 
-  const { data, error } = await supabase.from("records").select("id");
-  if (error) throw error;
+  const data = await fetchAllRows<any>(() => supabase.from("records").select("id").order("id", { ascending: true }));
 
   const ids = new Set<number>();
-  (data || []).forEach((row: any) => {
+  data.forEach((row: any) => {
     const id = Number(row.id);
     if (!Number.isFinite(id)) return;
     if (String(id).startsWith(trimmed)) {
@@ -501,18 +520,18 @@ async function fetchRelationsForRecords(recordIds: number[]) {
 
   for (const chunk of chunks) {
     const [tags, authors, languages] = await Promise.all([
-      supabase.from("record_tags").select("record_id, tags(id, name)").in("record_id", chunk),
-      supabase.from("record_authors").select("record_id, authors(id, name)").in("record_id", chunk),
-      supabase.from("record_languages").select("record_id, languages(id, name)").in("record_id", chunk),
+      fetchAllRows<any>(() => supabase.from("record_tags").select("record_id, tags(id, name)").in("record_id", chunk)),
+      fetchAllRows<any>(() =>
+        supabase.from("record_authors").select("record_id, authors(id, name)").in("record_id", chunk),
+      ),
+      fetchAllRows<any>(() =>
+        supabase.from("record_languages").select("record_id, languages(id, name)").in("record_id", chunk),
+      ),
     ]);
 
-    if (tags.error) throw tags.error;
-    if (authors.error) throw authors.error;
-    if (languages.error) throw languages.error;
-
-    tagRows.push(...(tags.data || []));
-    authorRows.push(...(authors.data || []));
-    languageRows.push(...(languages.data || []));
+    tagRows.push(...tags);
+    authorRows.push(...authors);
+    languageRows.push(...languages);
   }
 
   return {
@@ -651,7 +670,11 @@ async function fetchPaginatedRecords(params: FilterParams) {
       if (!magazineIds || magazineIds.size === 0) {
         return { data: [], count: 0, editHistory: {} };
       }
-      filterSets.push(magazineIds);
+      const magazineRecordIds = await fetchRecordIdsByMagazineIds(magazineIds);
+      if (magazineRecordIds.size === 0) {
+        return { data: [], count: 0, editHistory: {} };
+      }
+      filterSets.push(magazineRecordIds);
     }
   }
 
@@ -747,12 +770,15 @@ async function fetchPaginatedRecords(params: FilterParams) {
 
   const editHistoryByRecord: Record<string, RawEditHistory> = {};
   if (recordIds.length > 0) {
-    const { data: summaryRows, error: summaryError } = await supabase
-      .from("summaries")
-      .select("record_id, email, name, created_at")
-      .in("record_id", recordIds);
-    if (summaryError) throw summaryError;
-    Object.assign(editHistoryByRecord, buildEditHistoryMap(summaryRows || []));
+    const summaryRows: any[] = [];
+    const chunks = chunkArray(recordIds, 1000);
+    for (const chunk of chunks) {
+      const rows = await fetchAllRows<any>(() =>
+        supabase.from("summaries").select("record_id, email, name, created_at").in("record_id", chunk),
+      );
+      summaryRows.push(...rows);
+    }
+    Object.assign(editHistoryByRecord, buildEditHistoryMap(summaryRows));
   }
 
   const recordsWithHistory = formattedRecords.map((record: any) => {
