@@ -1,14 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { SarvamAIClient } from "sarvamai";
+import { createDeepSeekChatCompletion, hasDeepSeekApiKey } from "@/lib/aiText";
 import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
-// sarvam client
-const sarvamClient =
-  process.env.SARVAM_API_KEY && process.env.SARVAM_API_KEY.trim()
-    ? new SarvamAIClient({ apiSubscriptionKey: process.env.SARVAM_API_KEY.trim() })
-    : null;
 
 type AiMode = "summary" | "conclusion" | "tags";
 
@@ -66,8 +61,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  if (!sarvamClient) {
-    return res.status(500).json({ error: "SARVAM_API_KEY is not configured on the server." });
+  if (!hasDeepSeekApiKey()) {
+    return res.status(500).json({ error: "DEEPSEEK_API_KEY is not configured on the server." });
   }
 
   try {
@@ -101,18 +96,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       variant === "regen" ? "regen" : "primary",
     );
 
-    const response = await sarvamClient.chat.completions({
+    const content = await createDeepSeekChatCompletion({
       messages,
       temperature: mode === "tags" ? 0.1 : 0.25,
-      top_p: 0.9,
-      max_tokens: mode === "tags" ? 96 : 360,
-      n: 1,
+      topP: 0.9,
+      maxTokens: mode === "tags" ? 96 : 360,
     });
-
-    const content = response.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      return res.status(500).json({ error: "AI response was empty." });
-    }
 
     if (mode === "tags") {
       const normalizeTag = (raw: string) => {

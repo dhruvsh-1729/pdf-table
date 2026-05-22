@@ -1,10 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { SarvamAIClient } from "sarvamai";
-
-const sarvamClient =
-  process.env.SARVAM_API_KEY && process.env.SARVAM_API_KEY.trim()
-    ? new SarvamAIClient({ apiSubscriptionKey: process.env.SARVAM_API_KEY.trim() })
-    : null;
+import { createDeepSeekChatCompletion, hasDeepSeekApiKey } from "@/lib/aiText";
 
 type FieldKey =
   | "name"
@@ -191,8 +186,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  if (!sarvamClient) {
-    return res.status(500).json({ error: "SARVAM_API_KEY is not configured on the server." });
+  if (!hasDeepSeekApiKey()) {
+    return res.status(500).json({ error: "DEEPSEEK_API_KEY is not configured on the server." });
   }
 
   try {
@@ -229,18 +224,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const isLongForm = field === "summary" || field === "conclusion";
     const isListField = field === "tags" || field === "authors";
-    const response = await sarvamClient.chat.completions({
+    const content = await createDeepSeekChatCompletion({
       messages,
       temperature: isListField ? 0.1 : isLongForm ? 0.25 : 0.15,
-      top_p: 0.9,
-      max_tokens: field === "summary" ? 420 : field === "conclusion" ? 200 : isListField ? 96 : 80,
-      n: 1,
+      topP: 0.9,
+      maxTokens: field === "summary" ? 420 : field === "conclusion" ? 200 : isListField ? 96 : 80,
     });
-
-    const content = response.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      return res.status(500).json({ error: "AI response was empty." });
-    }
 
     if (field === "tags") {
       const tags = normalizeTags(content);

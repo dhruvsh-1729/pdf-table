@@ -5,7 +5,7 @@
  * Steps:
  *   1) For each record missing summary AND conclusion, ensure extracted_text is present
  *      (download PDF -> extract text with pdfjs).
- *   2) Generate summary + conclusion via Sarvam AI (same prompts as API).
+ *   2) Generate summary + conclusion via DeepSeek (same prompts as API).
  *   3) Update records table with extracted_text, summary, and conclusion.
  *
  * Usage:
@@ -15,28 +15,68 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { getUploadThingUrl } from "../lib/uploadthing.js";
-import { SarvamAIClient } from "sarvamai";
 
 dotenv.config();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").trim().replace(/\/+$/, "");
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
   process.exit(1);
 }
-if (!SARVAM_API_KEY) {
-  console.error("Missing SARVAM_API_KEY.");
+if (!DEEPSEEK_API_KEY) {
+  console.error("Missing DEEPSEEK_API_KEY.");
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-const sarvamClient = new SarvamAIClient({ apiSubscriptionKey: SARVAM_API_KEY.trim() });
 
 if (!process.env.UPLOADTHING_TOKEN) {
   console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
+}
+
+function extractDeepSeekErrorMessage(payload, status) {
+  const message =
+    payload?.error?.message ||
+    payload?.message ||
+    payload?.error ||
+    `DeepSeek API request failed with status ${status}.`;
+
+  return typeof message === "string" && message.trim() ? message.trim() : `DeepSeek API request failed with status ${status}.`;
+}
+
+async function createDeepSeekChatCompletion({ messages, temperature, topP, maxTokens }) {
+  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${DEEPSEEK_API_KEY.trim()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: DEEPSEEK_MODEL,
+      messages,
+      temperature,
+      top_p: topP,
+      max_tokens: maxTokens,
+      stream: false,
+    }),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(extractDeepSeekErrorMessage(payload, response.status));
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("DeepSeek API response was empty.");
+  }
+
+  return content.trim();
 }
 
 function getMagazineName(record) {
@@ -165,16 +205,12 @@ function buildMessages(mode, text, title, name) {
 
 async function generateText(mode, text, title, name) {
   const messages = buildMessages(mode, trimContext(text, mode === "summary" ? 9000 : 6000), title, name);
-  const response = await sarvamClient.chat.completions({
+  return createDeepSeekChatCompletion({
     messages,
     temperature: mode === "summary" ? 0.25 : 0.25,
-    top_p: 0.9,
-    max_tokens: mode === "summary" ? 360 : 220,
-    n: 1,
+    topP: 0.9,
+    maxTokens: mode === "summary" ? 360 : 220,
   });
-  const content = response.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error(`AI returned empty ${mode}.`);
-  return content;
 }
 
 function isBlank(value) {
