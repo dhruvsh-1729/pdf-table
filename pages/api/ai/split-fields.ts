@@ -16,7 +16,7 @@ type FieldKey =
 type Variant = "primary" | "regen";
 
 const baseInstruction =
-  "You are an expert metadata extractor for magazine PDFs. Use only the provided extracted text. Do not invent facts, add disclaimers, or include any labels. Return clean plain text only.";
+  "You are an expert metadata extractor for magazine PDFs. Use only the provided extracted text. Do not invent facts, add disclaimers, or include any labels. Return clean plain text only. Return the final answer in English only. If the PDF text is in another language, translate the meaning into natural English before answering. Do not output non-English script. If a proper noun or title has no standard English translation, transliterate it into Latin script and keep the rest of the answer in English.";
 
 function trimContext(text: string, maxChars = 12000) {
   if (!text) return "";

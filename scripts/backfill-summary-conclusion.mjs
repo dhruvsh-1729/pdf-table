@@ -183,7 +183,7 @@ function trimContext(text, maxChars = 9000) {
 
 function buildMessages(mode, text, title, name) {
   const baseInstruction =
-    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise and accurate.";
+    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise and accurate. Return the final answer in English only. If the PDF text is in another language, translate the meaning into natural English before answering. Do not output non-English script. If a proper noun or title has no standard English translation, transliterate it into Latin script and keep the rest of the answer in English.";
   const label = title || name || "the article";
   if (mode === "summary") {
     return [
