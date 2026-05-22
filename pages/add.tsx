@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Copy,
   Download,
-  Eraser,
   Eye,
   FileText,
   Loader2,
@@ -54,7 +53,6 @@ type SplitRecord = {
   pages: number[];
   blob: Blob;
   objectUrl: string;
-  redactions?: Record<number, WhiteoutRect[]>;
   extraction: {
     status: "idle" | "running" | "done" | "error";
     text?: string;
@@ -104,28 +102,6 @@ type WhiteoutDraft = {
   currentX: number;
   currentY: number;
 };
-
-type StoredOcrPdf = {
-  fileUrl: string;
-  fileKey?: string | null;
-  fileName?: string;
-  originalName?: string;
-  language?: string;
-  createdAt?: string;
-};
-
-const ADD_PAGE_OCR_STORAGE_KEY = "add-page-uploadthing-ocr-pdf";
-
-const OCR_LANGUAGE_OPTIONS = [
-  { value: "eng", label: "English" },
-  { value: "hin", label: "Hindi" },
-  { value: "guj", label: "Gujarati" },
-  { value: "san", label: "Sanskrit" },
-  { value: "mar", label: "Marathi" },
-];
-
-const getOcrLanguageLabel = (value?: string | null) =>
-  OCR_LANGUAGE_OPTIONS.find((option) => option.value === value)?.label || "English";
 
 const PAGE_MARKER_RE = /^\s*-*\s*Page\s+(\d+)\s*-*\s*$/i;
 
@@ -293,12 +269,7 @@ function Add() {
   const [autoSplitInterval, setAutoSplitInterval] = useState(1);
   const [skippedSections, setSkippedSections] = useState<Set<number>>(new Set());
   const [previewPosition, setPreviewPosition] = useState<number | null>(null);
-  const [regionEditPosition, setRegionEditPosition] = useState<number | null>(null);
   const [generatingSplits, setGeneratingSplits] = useState(false);
-  const [ocrLanguage, setOcrLanguage] = useState("eng");
-  const [ocrBusy, setOcrBusy] = useState(false);
-  const [restoringOcrPdf, setRestoringOcrPdf] = useState(false);
-  const [ocrPdfInfo, setOcrPdfInfo] = useState<StoredOcrPdf | null>(null);
 
   // Step 2 state
   const [splitRecords, setSplitRecords] = useState<SplitRecord[]>([]);
@@ -453,98 +424,10 @@ function Add() {
     setSavingAll(false);
   }, []);
 
-  const clearStoredOcrPdf = useCallback(() => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(ADD_PAGE_OCR_STORAGE_KEY);
-    }
-    setOcrPdfInfo(null);
-  }, []);
-
-  const persistStoredOcrPdf = useCallback((info: StoredOcrPdf) => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(ADD_PAGE_OCR_STORAGE_KEY, JSON.stringify(info));
-    }
-    setOcrPdfInfo(info);
-  }, []);
-
-  const getStoredPdfFetchUrl = useCallback((info: StoredOcrPdf) => {
-    const id = info.fileKey || info.fileUrl;
-    return apiUrl(`/api/pdf/view?id=${encodeURIComponent(id)}`);
-  }, []);
-
-  const fetchStoredOcrPdfAsFile = useCallback(
-    async (info: StoredOcrPdf) => {
-      const response = await fetch(getStoredPdfFetchUrl(info));
-      if (!response.ok) {
-        throw new Error(`Failed to load OCRed PDF (HTTP ${response.status}).`);
-      }
-      const blob = await response.blob();
-      const filename = info.fileName || info.originalName || "ocred-uploadthing.pdf";
-      return new File([blob], filename.endsWith(".pdf") ? filename : `${filename}.pdf`, {
-        type: "application/pdf",
-      });
-    },
-    [getStoredPdfFetchUrl],
-  );
-
-  const applySelectedPdf = useCallback(
-    (selected: File, opts?: { ocrInfo?: StoredOcrPdf | null; clearStoredOcr?: boolean }) => {
-      setFile(selected);
-      setWhiteoutRegionsByPage({});
-      setWhiteoutDraft(null);
-      setWhiteoutEditMode(false);
-      setPreviewPosition(null);
-      setRegionEditPosition(null);
-      resetSplits();
-
-      if (opts?.ocrInfo) {
-        setOcrPdfInfo(opts.ocrInfo);
-      } else if (opts?.clearStoredOcr !== false) {
-        clearStoredOcrPdf();
-      }
-    },
-    [clearStoredOcrPdf, resetSplits],
-  );
-
   useEffect(() => {
     if (!splitRecords.length) return;
     setSplitRecords((prev) => prev.map((split) => applyCommonFields(split)));
   }, [applyCommonFields, splitRecords.length]);
-
-  useEffect(() => {
-    if (!isClient) return;
-    const raw = localStorage.getItem(ADD_PAGE_OCR_STORAGE_KEY);
-    if (!raw) return;
-
-    const stored = safeJsonParse<StoredOcrPdf>(raw);
-    if (!stored?.fileUrl) {
-      localStorage.removeItem(ADD_PAGE_OCR_STORAGE_KEY);
-      return;
-    }
-
-    let cancelled = false;
-    setRestoringOcrPdf(true);
-    void fetchStoredOcrPdfAsFile(stored)
-      .then((restoredFile) => {
-        if (cancelled) return;
-        applySelectedPdf(restoredFile, { ocrInfo: stored, clearStoredOcr: false });
-        setOcrLanguage(stored.language || "eng");
-        toast.success("Loaded the saved OCRed PDF from UploadThing.");
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error("Failed to restore OCRed PDF:", error);
-        clearStoredOcrPdf();
-        toast.error(error instanceof Error ? error.message : "Failed to restore OCRed PDF.");
-      })
-      .finally(() => {
-        if (!cancelled) setRestoringOcrPdf(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [applySelectedPdf, clearStoredOcrPdf, fetchStoredOcrPdfAsFile, isClient]);
 
   const onDocumentLoadSuccess = useCallback(
     ({ numPages: nextNumPages }: { numPages: number }) => {
@@ -555,7 +438,6 @@ function Add() {
       setSkippedSections(new Set());
       setWhiteoutRegionsByPage({});
       setWhiteoutDraft(null);
-      setRegionEditPosition(null);
       resetSplits();
     },
     [resetSplits],
@@ -564,62 +446,13 @@ function Add() {
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0] || null;
     if (selected) {
-      applySelectedPdf(selected, { clearStoredOcr: true });
+      setFile(selected);
+      setWhiteoutRegionsByPage({});
+      setWhiteoutDraft(null);
+      setWhiteoutEditMode(false);
+      resetSplits();
     }
   };
-
-  const handleOcrCurrentPdf = useCallback(async () => {
-    if (!file) {
-      toast.error("Choose a PDF before running OCR.");
-      return;
-    }
-    if (ocrBusy) return;
-
-    setOcrBusy(true);
-    try {
-      const formData = new FormData();
-      formData.append("pdf", file, file.name || "input.pdf");
-      formData.append("language", ocrLanguage);
-
-      const response = await fetch(apiUrl("/api/pdf/ocr"), { method: "POST", body: formData });
-      const { data: payload, raw } = await readJsonResponse<any>(response);
-      if (!response.ok) {
-        const message = payload?.error || summarizeResponseText(raw) || `OCR failed (HTTP ${response.status}).`;
-        throw new Error(message);
-      }
-      if (!payload?.fileUrl && !payload?.pdf_url) {
-        const message = summarizeResponseText(raw) || "OCR finished but no UploadThing PDF URL was returned.";
-        throw new Error(message);
-      }
-
-      const stored: StoredOcrPdf = {
-        fileUrl: payload.fileUrl || payload.pdf_url,
-        fileKey: payload.fileKey || payload.pdf_public_id || null,
-        fileName: payload.output_filename || file.name.replace(/\.pdf$/i, "-ocr.pdf"),
-        originalName: file.name,
-        language: payload.language || ocrLanguage,
-        createdAt: new Date().toISOString(),
-      };
-      const ocrFile = await fetchStoredOcrPdfAsFile(stored);
-      persistStoredOcrPdf(stored);
-      applySelectedPdf(ocrFile, { ocrInfo: stored, clearStoredOcr: false });
-      resetSkips();
-      toast.success(`OCR complete. Using ${getOcrLanguageLabel(stored.language)} OCRed PDF for splitting.`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "OCR failed.";
-      toast.error(message);
-    } finally {
-      setOcrBusy(false);
-    }
-  }, [
-    applySelectedPdf,
-    fetchStoredOcrPdfAsFile,
-    file,
-    ocrBusy,
-    ocrLanguage,
-    persistStoredOcrPdf,
-    resetSkips,
-  ]);
 
   const rotatePage = (logicalIndex: number, direction: "left" | "right") => {
     setRotations((prev) => {
@@ -688,16 +521,6 @@ function Add() {
         })()
       : null;
 
-  const regionEditContext =
-    regionEditPosition !== null && regionEditPosition >= 0 && regionEditPosition < pageOrder.length && file
-      ? (() => {
-          const logicalIndex = pageOrder[regionEditPosition];
-          const occurrence = pageOrder.slice(0, regionEditPosition + 1).filter((idx) => idx === logicalIndex).length;
-          const totalOccurrences = pageOrder.filter((idx) => idx === logicalIndex).length;
-          return { logicalIndex, occurrence, totalOccurrences };
-        })()
-      : null;
-
   const addWhiteoutRectForPage = useCallback(
     (pageIndex: number, viewRect: WhiteoutViewRect) => {
       if (viewRect.width < 0.003 || viewRect.height < 0.003) return;
@@ -754,35 +577,25 @@ function Add() {
     });
   }, []);
 
-  const getWhiteoutViewRectsForPage = useCallback(
-    (pageIndex: number, rotation = rotations[pageIndex] || 0) =>
-      (whiteoutRegionsByPage[pageIndex] || []).map((rect) => ({
-        id: rect.id,
-        viewRect: pdfRectToViewRect(rect, rotation),
-      })),
-    [rotations, whiteoutRegionsByPage],
-  );
-
   const previewWhiteoutRects = useMemo(() => {
     if (!previewContext) return [] as Array<{ id: string; viewRect: WhiteoutViewRect }>;
-    return getWhiteoutViewRectsForPage(previewContext.logicalIndex);
-  }, [getWhiteoutViewRectsForPage, previewContext]);
+    const rotation = rotations[previewContext.logicalIndex] || 0;
+    return (whiteoutRegionsByPage[previewContext.logicalIndex] || []).map((rect) => ({
+      id: rect.id,
+      viewRect: pdfRectToViewRect(rect, rotation),
+    }));
+  }, [previewContext, rotations, whiteoutRegionsByPage]);
 
-  const regionWhiteoutRects = useMemo(() => {
-    if (!regionEditContext) return [] as Array<{ id: string; viewRect: WhiteoutViewRect }>;
-    return getWhiteoutViewRectsForPage(regionEditContext.logicalIndex);
-  }, [getWhiteoutViewRectsForPage, regionEditContext]);
-
-  const regionDraftViewRect = useMemo(() => {
-    if (!whiteoutDraft || !regionEditContext) return null;
-    if (whiteoutDraft.pageIndex !== regionEditContext.logicalIndex) return null;
+  const previewDraftViewRect = useMemo(() => {
+    if (!whiteoutDraft || !previewContext) return null;
+    if (whiteoutDraft.pageIndex !== previewContext.logicalIndex) return null;
     return createViewRectFromPoints(
       whiteoutDraft.startX,
       whiteoutDraft.startY,
       whiteoutDraft.currentX,
       whiteoutDraft.currentY,
     );
-  }, [whiteoutDraft, regionEditContext]);
+  }, [whiteoutDraft, previewContext]);
 
   const getWhiteoutPointerPoint = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const surface = previewWhiteoutSurfaceRef.current;
@@ -797,7 +610,7 @@ function Add() {
 
   const handlePreviewWhiteoutPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!whiteoutEditMode || !regionEditContext) return;
+      if (!whiteoutEditMode || !previewContext) return;
       if (event.button !== 0) return;
       const point = getWhiteoutPointerPoint(event);
       if (!point) return;
@@ -809,14 +622,14 @@ function Add() {
         // no-op
       }
       setWhiteoutDraft({
-        pageIndex: regionEditContext.logicalIndex,
+        pageIndex: previewContext.logicalIndex,
         startX: point.x,
         startY: point.y,
         currentX: point.x,
         currentY: point.y,
       });
     },
-    [getWhiteoutPointerPoint, regionEditContext, whiteoutEditMode],
+    [getWhiteoutPointerPoint, previewContext, whiteoutEditMode],
   );
 
   const handlePreviewWhiteoutPointerMove = useCallback(
@@ -895,15 +708,8 @@ function Add() {
   }, [file, pageOrder, previewPosition]);
 
   useEffect(() => {
-    if (regionEditPosition === null) return;
-    if (!file || regionEditPosition < 0 || regionEditPosition >= pageOrder.length) {
-      setRegionEditPosition(null);
-    }
-  }, [file, pageOrder, regionEditPosition]);
-
-  useEffect(() => {
     setWhiteoutDraft(null);
-  }, [regionEditContext?.logicalIndex]);
+  }, [previewContext?.logicalIndex]);
 
   const runFieldGeneration = useCallback(
     async (splitId: string, field: FieldKey, providedText?: string, variant: "primary" | "regen" = "primary") => {
@@ -1012,9 +818,6 @@ function Add() {
         const formData = new FormData();
         formData.append("pdf", new File([split.blob], split.fileName, { type: "application/pdf" }));
         formData.append("allowOcr", "false");
-        if (split.redactions && Object.keys(split.redactions).length > 0) {
-          formData.append("redactions", JSON.stringify(split.redactions));
-        }
 
         const response = await fetch(apiUrl("/api/extract-text-file"), { method: "POST", body: formData });
         const { data: payload, raw } = await readJsonResponse<any>(response);
@@ -1248,13 +1051,10 @@ function Add() {
         for (let i = 0; i < activeSections.length; i++) {
           const { pages, idx } = activeSections[i];
           const newPdf = await PDFDocument.create();
-          const redactions: Record<number, WhiteoutRect[]> = {};
-          for (let pageOffset = 0; pageOffset < pages.length; pageOffset++) {
-            const logicalIdx = pages[pageOffset];
+          for (const logicalIdx of pages) {
             const [copiedPage] = await newPdf.copyPages(originalPdf, [logicalIdx]);
             const whiteoutRects = whiteoutRegionsByPage[logicalIdx] || [];
             if (whiteoutRects.length) {
-              redactions[pageOffset + 1] = whiteoutRects.map((rect) => ({ ...rect }));
               const { width, height } = copiedPage.getSize();
               for (const rect of whiteoutRects) {
                 const rectWidth = Math.max(0, rect.width * width);
@@ -1295,7 +1095,6 @@ function Add() {
             pages: pageNumbers,
             blob,
             objectUrl,
-            redactions,
             extraction: { status: "idle", language: null },
             fields: buildInitialFields(rangeLabel),
             saving: "idle",
@@ -1555,13 +1354,6 @@ function Add() {
     setSavingAll(false);
   }, [saveRecord]);
 
-  useEffect(() => {
-    if (!ocrPdfInfo?.fileUrl || savingAll || !splitRecords.length) return;
-    if (!splitRecords.every((split) => split.saving === "saved")) return;
-    clearStoredOcrPdf();
-    toast.success("All splits saved. Cleared the temporary OCRed PDF reference.");
-  }, [clearStoredOcrPdf, ocrPdfInfo?.fileUrl, savingAll, splitRecords]);
-
   const removeWatermarkForAll = useCallback(async () => {
     if (removingWatermark) return;
     const currentSplits = [...splitRecordsRef.current].sort((a, b) => a.sectionIndex - b.sectionIndex);
@@ -1660,7 +1452,7 @@ function Add() {
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => generateSplits({ downloadZip: false })}
-                disabled={!file || sections.length === 0 || generatingSplits || ocrBusy || restoringOcrPdf}
+                disabled={!file || sections.length === 0 || generatingSplits}
                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-zinc-800 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {generatingSplits ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
@@ -1668,7 +1460,7 @@ function Add() {
               </button>
               <button
                 onClick={() => generateSplits({ downloadZip: true })}
-                disabled={!file || sections.length === 0 || generatingSplits || ocrBusy || restoringOcrPdf}
+                disabled={!file || sections.length === 0 || generatingSplits}
                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-800 shadow-sm transition-all hover:border-zinc-300 hover:bg-zinc-50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Download className="h-4 w-4" />
@@ -1701,8 +1493,6 @@ function Add() {
                       const rotation = rotations[pageIndex] || 0;
                       const isSplit = splitIndices.has(logicalPosition);
                       const isLast = logicalPosition === pageOrder.length - 1;
-                      const whiteoutRects = getWhiteoutViewRectsForPage(pageIndex, rotation);
-                      const whiteoutCount = whiteoutRects.length;
                       return (
                         <div
                           key={`${pageIndex}-${logicalPosition}`}
@@ -1718,30 +1508,16 @@ function Add() {
                           <div className="relative overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-zinc-300 hover:shadow-md">
                             <div className="relative flex h-[280px] items-center justify-center overflow-hidden bg-zinc-50 p-4">
                               <div className="rounded border border-zinc-200 bg-white p-2 shadow-sm">
-                                <div className="relative inline-block">
-                                  <PageComp
-                                    key={`page_${pageIndex}_${logicalPosition}`}
-                                    pageNumber={pageIndex + 1}
-                                    renderMode="canvas"
-                                    renderAnnotationLayer={false}
-                                    renderTextLayer={false}
-                                    height={220}
-                                    rotate={rotation}
-                                    className="pointer-events-none select-none"
-                                  />
-                                  {whiteoutRects.map((rect) => (
-                                    <div
-                                      key={`thumb-whiteout-${rect.id}`}
-                                      className="pointer-events-none absolute border border-zinc-100 bg-white"
-                                      style={{
-                                        left: `${rect.viewRect.x * 100}%`,
-                                        top: `${rect.viewRect.y * 100}%`,
-                                        width: `${rect.viewRect.width * 100}%`,
-                                        height: `${rect.viewRect.height * 100}%`,
-                                      }}
-                                    />
-                                  ))}
-                                </div>
+                                <PageComp
+                                  key={`page_${pageIndex}_${logicalPosition}`}
+                                  pageNumber={pageIndex + 1}
+                                  renderMode="canvas"
+                                  renderAnnotationLayer={false}
+                                  renderTextLayer={false}
+                                  height={220}
+                                  rotate={rotation}
+                                  className="pointer-events-none select-none"
+                                />
                               </div>
 
                               <div className="absolute inset-x-0 top-0 flex justify-center gap-2 p-3 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
@@ -1776,16 +1552,6 @@ function Add() {
                                     <Eye className="h-4 w-4" />
                                   </button>
                                   <button
-                                    onClick={() => {
-                                      setRegionEditPosition(logicalPosition);
-                                      setWhiteoutEditMode(true);
-                                    }}
-                                    className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-white text-base text-zinc-700 transition-all hover:bg-zinc-50 active:scale-95"
-                                    title="Remove a region from this page"
-                                  >
-                                    <Eraser className="h-4 w-4" />
-                                  </button>
-                                  <button
                                     onClick={() => deletePageAt(logicalPosition, pageIndex)}
                                     className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-white text-base text-zinc-700 transition-all hover:bg-zinc-50 active:scale-95"
                                     title="Delete page"
@@ -1798,11 +1564,6 @@ function Add() {
                               {rotation !== 0 && (
                                 <div className="absolute bottom-3 right-3 rounded border border-zinc-300 bg-white px-2 py-0.5 text-xs font-semibold text-zinc-700 shadow-sm">
                                   {rotation}°
-                                </div>
-                              )}
-                              {whiteoutCount > 0 && (
-                                <div className="absolute bottom-3 left-3 rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 shadow-sm">
-                                  {whiteoutCount} removed
                                 </div>
                               )}
                             </div>
@@ -1877,57 +1638,6 @@ function Add() {
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
               />
             </label>
-            <div className="space-y-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">OCR before split</p>
-                  <p className="text-xs text-zinc-500">Run full-PDF OCR, then split the OCRed PDF.</p>
-                </div>
-                {(ocrBusy || restoringOcrPdf) && <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-zinc-700" />}
-              </div>
-              <div className="grid gap-2">
-                <label className="text-xs font-semibold text-zinc-700">OCR language</label>
-                <select
-                  value={ocrLanguage}
-                  onChange={(e) => setOcrLanguage(e.target.value)}
-                  disabled={ocrBusy || restoringOcrPdf}
-                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 shadow-sm focus:border-zinc-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {OCR_LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="button"
-                onClick={handleOcrCurrentPdf}
-                disabled={!file || ocrBusy || restoringOcrPdf || generatingSplits || extractionInProgress || aiBusy}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {ocrBusy || restoringOcrPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                <span>
-                  {restoringOcrPdf ? "Loading OCRed PDF..." : ocrBusy ? "Running OCR..." : "OCR full PDF"}
-                </span>
-              </button>
-              {ocrPdfInfo?.fileUrl && (
-                <div className="space-y-1 rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                  <p className="font-semibold">Using OCRed PDF from UploadThing</p>
-                  <p>
-                    Language: {getOcrLanguageLabel(ocrPdfInfo.language)}
-                    {ocrPdfInfo.fileName ? ` · ${ocrPdfInfo.fileName}` : ""}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={clearStoredOcrPdf}
-                    className="mt-1 text-xs font-semibold text-emerald-900 underline-offset-2 hover:underline"
-                  >
-                    Clear saved OCR reference
-                  </button>
-                </div>
-              )}
-            </div>
             <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
               <label className="flex items-center gap-2 text-sm font-medium text-zinc-800">
                 <input
@@ -2450,32 +2160,18 @@ function Add() {
             </div>
             <div className="flex flex-1 items-center justify-center overflow-auto p-3">
               <DocumentComp file={file}>
-                <div className="relative inline-block">
-                  <PageComp
-                    pageNumber={hoverPreview.pageNumber}
-                    renderAnnotationLayer={false}
-                    renderTextLayer={false}
-                    height={typeof window !== "undefined" ? Math.min(window.innerHeight - 200, 1200) : 900}
-                    rotate={hoverPreview.rotation || 0}
-                    loading={
-                      <div className="flex h-[400px] w-full items-center justify-center">
-                        <Loader2 className="h-8 w-8 animate-spin text-zinc-300" />
-                      </div>
-                    }
-                  />
-                  {getWhiteoutViewRectsForPage(hoverPreview.pageNumber - 1, hoverPreview.rotation || 0).map((rect) => (
-                    <div
-                      key={`hover-whiteout-${rect.id}`}
-                      className="pointer-events-none absolute border border-zinc-100 bg-white"
-                      style={{
-                        left: `${rect.viewRect.x * 100}%`,
-                        top: `${rect.viewRect.y * 100}%`,
-                        width: `${rect.viewRect.width * 100}%`,
-                        height: `${rect.viewRect.height * 100}%`,
-                      }}
-                    />
-                  ))}
-                </div>
+                <PageComp
+                  pageNumber={hoverPreview.pageNumber}
+                  renderAnnotationLayer={false}
+                  renderTextLayer={false}
+                  height={typeof window !== "undefined" ? Math.min(window.innerHeight - 200, 1200) : 900}
+                  rotate={hoverPreview.rotation || 0}
+                  loading={
+                    <div className="flex h-[400px] w-full items-center justify-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-zinc-300" />
+                    </div>
+                  }
+                />
               </DocumentComp>
             </div>
           </div>
@@ -2517,50 +2213,169 @@ function Add() {
               </button>
             </div>
 
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-xl bg-zinc-950 p-4 sm:p-6">
-              <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
-                {DocumentComp && PageComp ? (
-                  <DocumentComp file={file}>
-                    <div className="relative inline-block">
-                      <PageComp
-                        pageNumber={previewContext.logicalIndex + 1}
-                        renderMode="canvas"
-                        renderAnnotationLayer={false}
-                        renderTextLayer={false}
-                        width={(() => {
-                          if (typeof window === "undefined") return 600;
-                          const maxWidth = Math.min(window.innerWidth - 100, 1200);
-                          const maxHeight = window.innerHeight - 300;
-                          const widthFromHeight = maxHeight / 1.414;
-                          return Math.min(maxWidth, widthFromHeight);
-                        })()}
-                        rotate={rotations[previewContext.logicalIndex] || 0}
-                        loading={
-                          <div className="flex h-[600px] w-[424px] items-center justify-center">
-                            <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
-                          </div>
-                        }
-                      />
-                      {previewWhiteoutRects.map((rect) => (
-                        <div
-                          key={`preview-whiteout-${rect.id}`}
-                          className="pointer-events-none absolute border border-zinc-100 bg-white"
-                          style={{
-                            left: `${rect.viewRect.x * 100}%`,
-                            top: `${rect.viewRect.y * 100}%`,
-                            width: `${rect.viewRect.width * 100}%`,
-                            height: `${rect.viewRect.height * 100}%`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </DocumentComp>
-                ) : (
-                  <div className="flex h-[600px] w-[424px] items-center justify-center">
-                    <Loader2 className="h-10 w-10 animate-spin text-white" />
-                  </div>
-                )}
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden rounded-xl bg-zinc-950 p-4 sm:p-6">
+              <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Page whiteout</p>
+                  <p className="text-sm text-zinc-200">
+                    Draw one or more rectangles to hide parts of this page in generated split PDFs.
+                  </p>
+                  <p className="text-xs text-zinc-400">
+                    {whiteoutEditMode
+                      ? "Drag on the page to add a white rectangle. Click an existing rectangle or use the list to remove it."
+                      : "Enable draw mode to add white rectangles."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-semibold text-zinc-200">
+                    {whiteoutRegionsByPage[previewContext.logicalIndex]?.length || 0} region
+                    {(whiteoutRegionsByPage[previewContext.logicalIndex]?.length || 0) === 1 ? "" : "s"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWhiteoutEditMode((prev) => !prev);
+                      setWhiteoutDraft(null);
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold shadow-sm transition ${
+                      whiteoutEditMode
+                        ? "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500"
+                        : "border-zinc-700 bg-zinc-800 text-white hover:bg-zinc-700"
+                    }`}
+                  >
+                    {whiteoutEditMode ? "Draw mode on" : "Enable draw mode"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => undoLastWhiteoutForPage(previewContext.logicalIndex)}
+                    disabled={(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Undo last
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => clearWhiteoutsForPage(previewContext.logicalIndex)}
+                    disabled={(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg border border-rose-700 bg-rose-700 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Clear page
+                  </button>
+                </div>
               </div>
+
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto">
+                <div className="flex items-center justify-center">
+                  <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
+                    {DocumentComp && PageComp ? (
+                      <DocumentComp file={file}>
+                        <div className="relative inline-block" ref={previewWhiteoutSurfaceRef}>
+                          <PageComp
+                            pageNumber={previewContext.logicalIndex + 1}
+                            renderMode="canvas"
+                            renderAnnotationLayer={false}
+                            renderTextLayer={false}
+                            width={(() => {
+                              if (typeof window === "undefined") return 600;
+                              const maxWidth = Math.min(window.innerWidth - 100, 1200);
+                              const maxHeight = window.innerHeight - 360;
+                              const widthFromHeight = maxHeight / 1.414;
+                              return Math.min(maxWidth, widthFromHeight);
+                            })()}
+                            rotate={rotations[previewContext.logicalIndex] || 0}
+                            loading={
+                              <div className="flex h-[600px] w-[424px] items-center justify-center">
+                                <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
+                              </div>
+                            }
+                          />
+                          <div
+                            className={`absolute inset-0 ${whiteoutEditMode ? "cursor-crosshair" : "pointer-events-none"}`}
+                            style={{ touchAction: "none" }}
+                            onPointerDown={handlePreviewWhiteoutPointerDown}
+                            onPointerMove={handlePreviewWhiteoutPointerMove}
+                            onPointerUp={handlePreviewWhiteoutPointerUp}
+                            onPointerCancel={handlePreviewWhiteoutPointerCancel}
+                          >
+                            {previewWhiteoutRects.map((rect, idx) => (
+                              <button
+                                key={rect.id}
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (!whiteoutEditMode) return;
+                                  removeWhiteoutRectForPage(previewContext.logicalIndex, rect.id);
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                title={
+                                  whiteoutEditMode
+                                    ? `Whiteout region ${idx + 1} (click to remove)`
+                                    : `Whiteout region ${idx + 1}`
+                                }
+                                className={`absolute border-2 ${
+                                  whiteoutEditMode
+                                    ? "border-zinc-100 bg-white/40 hover:bg-white/55"
+                                    : "pointer-events-none border-zinc-100/70 bg-white/65"
+                                }`}
+                                style={{
+                                  left: `${rect.viewRect.x * 100}%`,
+                                  top: `${rect.viewRect.y * 100}%`,
+                                  width: `${rect.viewRect.width * 100}%`,
+                                  height: `${rect.viewRect.height * 100}%`,
+                                }}
+                              />
+                            ))}
+                            {previewDraftViewRect && whiteoutEditMode && (
+                              <div
+                                className="absolute border-2 border-dashed border-emerald-300 bg-white/35"
+                                style={{
+                                  left: `${previewDraftViewRect.x * 100}%`,
+                                  top: `${previewDraftViewRect.y * 100}%`,
+                                  width: `${previewDraftViewRect.width * 100}%`,
+                                  height: `${previewDraftViewRect.height * 100}%`,
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </DocumentComp>
+                    ) : (
+                      <div className="flex h-[600px] w-[424px] items-center justify-center">
+                        <Loader2 className="h-10 w-10 animate-spin text-white" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {(whiteoutRegionsByPage[previewContext.logicalIndex] || []).length > 0 && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.15em] text-zinc-500">Regions</p>
+                    <p className="text-xs text-zinc-400">Stored for this source page (applies to duplicate copies too)</p>
+                  </div>
+                  <div className="max-h-28 space-y-2 overflow-auto pr-1">
+                    {(whiteoutRegionsByPage[previewContext.logicalIndex] || []).map((rect, idx) => (
+                      <div
+                        key={`whiteout-list-${rect.id}`}
+                        className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+                      >
+                        <span>
+                          Region {idx + 1} ({Math.round(rect.width * 100)}% x {Math.round(rect.height * 100)}%)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeWhiteoutRectForPage(previewContext.logicalIndex, rect.id)}
+                          className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-semibold text-white transition hover:bg-zinc-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-shrink-0 items-center justify-between border-t border-zinc-800 p-4 sm:p-6">
@@ -2601,192 +2416,6 @@ function Add() {
                 <span className="hidden sm:inline">Next</span>
                 <ChevronRight className="h-4 w-4" />
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {regionEditPosition !== null && regionEditContext && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6"
-          onClick={() => {
-            setRegionEditPosition(null);
-            setWhiteoutDraft(null);
-            setWhiteoutEditMode(false);
-          }}
-        >
-          <div
-            className="relative flex max-h-[95vh] w-full max-w-7xl flex-col rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex flex-shrink-0 flex-col gap-3 border-b border-zinc-800 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-100">
-                  <Eraser className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-base font-semibold text-white">Remove Page Region</h3>
-                  <p className="text-sm text-zinc-400">
-                    Page {regionEditContext.logicalIndex + 1} of {numPages}
-                    {regionEditContext.totalOccurrences > 1 && (
-                      <span className="ml-2 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200">
-                        Copy {regionEditContext.occurrence} of {regionEditContext.totalOccurrences}
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-semibold text-zinc-200">
-                  {whiteoutRegionsByPage[regionEditContext.logicalIndex]?.length || 0} removed
-                </span>
-                <button
-                  type="button"
-                  onClick={() => undoLastWhiteoutForPage(regionEditContext.logicalIndex)}
-                  disabled={(whiteoutRegionsByPage[regionEditContext.logicalIndex] || []).length === 0}
-                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Undo last
-                </button>
-                <button
-                  type="button"
-                  onClick={() => clearWhiteoutsForPage(regionEditContext.logicalIndex)}
-                  disabled={(whiteoutRegionsByPage[regionEditContext.logicalIndex] || []).length === 0}
-                  className="inline-flex items-center gap-2 rounded-lg border border-rose-700 bg-rose-700 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Clear page
-                </button>
-                <button
-                  onClick={() => {
-                    setRegionEditPosition(null);
-                    setWhiteoutDraft(null);
-                    setWhiteoutEditMode(false);
-                  }}
-                  className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-zinc-700 active:scale-95"
-                >
-                  <X className="h-4 w-4" />
-                  <span className="hidden sm:inline">Done</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="grid min-h-0 flex-1 gap-4 overflow-hidden rounded-xl bg-zinc-950 p-4 lg:grid-cols-[1fr_300px] sm:p-6">
-              <div className="flex min-h-0 items-center justify-center overflow-auto">
-                <div className="rounded-lg bg-white p-3 shadow-xl sm:p-4">
-                  {DocumentComp && PageComp ? (
-                    <DocumentComp file={file}>
-                      <div className="relative inline-block" ref={previewWhiteoutSurfaceRef}>
-                        <PageComp
-                          pageNumber={regionEditContext.logicalIndex + 1}
-                          renderMode="canvas"
-                          renderAnnotationLayer={false}
-                          renderTextLayer={false}
-                          width={(() => {
-                            if (typeof window === "undefined") return 600;
-                            const maxWidth = Math.min(window.innerWidth - 430, 1100);
-                            const maxHeight = window.innerHeight - 300;
-                            const widthFromHeight = maxHeight / 1.414;
-                            return Math.max(360, Math.min(maxWidth, widthFromHeight));
-                          })()}
-                          rotate={rotations[regionEditContext.logicalIndex] || 0}
-                          loading={
-                            <div className="flex h-[600px] w-[424px] items-center justify-center">
-                              <Loader2 className="h-10 w-10 animate-spin text-zinc-900" />
-                            </div>
-                          }
-                        />
-                        <div
-                          className="absolute inset-0 cursor-crosshair"
-                          style={{ touchAction: "none" }}
-                          onPointerDown={handlePreviewWhiteoutPointerDown}
-                          onPointerMove={handlePreviewWhiteoutPointerMove}
-                          onPointerUp={handlePreviewWhiteoutPointerUp}
-                          onPointerCancel={handlePreviewWhiteoutPointerCancel}
-                        >
-                          {regionWhiteoutRects.map((rect, idx) => (
-                            <button
-                              key={`region-whiteout-${rect.id}`}
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                removeWhiteoutRectForPage(regionEditContext.logicalIndex, rect.id);
-                              }}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              title={`Removed region ${idx + 1} (click to restore)`}
-                              className="absolute border-2 border-emerald-500 bg-white hover:border-rose-500"
-                              style={{
-                                left: `${rect.viewRect.x * 100}%`,
-                                top: `${rect.viewRect.y * 100}%`,
-                                width: `${rect.viewRect.width * 100}%`,
-                                height: `${rect.viewRect.height * 100}%`,
-                              }}
-                            />
-                          ))}
-                          {regionDraftViewRect && (
-                            <div
-                              className="absolute border-2 border-dashed border-emerald-300 bg-white/70"
-                              style={{
-                                left: `${regionDraftViewRect.x * 100}%`,
-                                top: `${regionDraftViewRect.y * 100}%`,
-                                width: `${regionDraftViewRect.width * 100}%`,
-                                height: `${regionDraftViewRect.height * 100}%`,
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </DocumentComp>
-                  ) : (
-                    <div className="flex h-[600px] w-[424px] items-center justify-center">
-                      <Loader2 className="h-10 w-10 animate-spin text-white" />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="min-h-0 space-y-3 overflow-auto rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Region removal</p>
-                  <p className="mt-1 text-sm text-zinc-200">Drag on the page to remove a rectangle.</p>
-                  <p className="mt-1 text-xs text-zinc-400">
-                    Removed regions are hidden in previews, painted out in generated splits, and ignored during text
-                    extraction.
-                  </p>
-                </div>
-
-                {(whiteoutRegionsByPage[regionEditContext.logicalIndex] || []).length > 0 ? (
-                  <div className="space-y-2">
-                    {(whiteoutRegionsByPage[regionEditContext.logicalIndex] || []).map((rect, idx) => (
-                      <div
-                        key={`region-list-${rect.id}`}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
-                      >
-                        <span>
-                          Region {idx + 1} ({Math.round(rect.width * 100)}% x {Math.round(rect.height * 100)}%)
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeWhiteoutRectForPage(regionEditContext.logicalIndex, rect.id)}
-                          className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 font-semibold text-white transition hover:bg-zinc-700"
-                        >
-                          Restore
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-lg border border-dashed border-zinc-700 bg-zinc-950 p-3 text-xs text-zinc-400">
-                    No removed regions on this page yet.
-                  </p>
-                )}
-
-                {splitRecords.length > 0 && (whiteoutRegionsByPage[regionEditContext.logicalIndex] || []).length > 0 && (
-                  <p className="rounded-lg border border-amber-700/60 bg-amber-950/30 p-3 text-xs text-amber-200">
-                    Regenerate splits to apply these removals to already-created split PDFs.
-                  </p>
-                )}
-              </div>
             </div>
           </div>
         </div>
