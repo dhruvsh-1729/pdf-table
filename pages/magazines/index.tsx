@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
+import ManagementPagination from "@/components/ManagementPagination";
 
 type MagazineAuthor = {
   id: number;
@@ -96,6 +97,9 @@ export default function MagazinesPage() {
   const router = useRouter();
   const [magazines, setMagazines] = useState<Magazine[]>([]);
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,20 +141,26 @@ export default function MagazinesPage() {
     }
   }, [router]);
 
-  const loadMagazines = useCallback(async (q = "") => {
+  const loadMagazines = useCallback(async (q = "", page = 1, nextPageSize = pageSize) => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`/api/magazines?q=${encodeURIComponent(q)}&limit=100&offset=0`);
+      const offset = (page - 1) * nextPageSize;
+      const resp = await fetch(`/api/magazines?q=${encodeURIComponent(q)}&limit=${nextPageSize}&offset=${offset}`);
       const payload = await resp.json();
       if (!resp.ok) throw new Error(payload?.error || "Failed to fetch magazines");
       setMagazines(payload.magazines || []);
+      setTotalCount(Number(payload.count || 0));
+      setCurrentPage(page);
+      setPageSize(nextPageSize);
     } catch (err: any) {
       setError(err?.message || "Failed to fetch magazines");
+      setMagazines([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [pageSize]);
 
   const loadAuthors = useCallback(async (q = "") => {
     setAuthorLoading(true);
@@ -168,8 +178,8 @@ export default function MagazinesPage() {
   }, []);
 
   useEffect(() => {
-    loadMagazines("");
-  }, [loadMagazines]);
+    loadMagazines("", 1, pageSize);
+  }, [loadMagazines, pageSize]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -243,7 +253,7 @@ export default function MagazinesPage() {
       }
 
       setModalOpen(false);
-      await loadMagazines(search);
+      await loadMagazines(search, currentPage, pageSize);
     } catch (err: any) {
       alert(err?.message || "Failed to save magazine");
     }
@@ -258,7 +268,8 @@ export default function MagazinesPage() {
       if (!resp.ok) {
         throw new Error(body?.error || "Failed to delete magazine");
       }
-      await loadMagazines(search);
+      const nextPage = magazines.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage;
+      await loadMagazines(search, nextPage, pageSize);
     } catch (err: any) {
       alert(err?.message || "Failed to delete magazine");
     }
@@ -327,11 +338,16 @@ export default function MagazinesPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  loadMagazines(search, 1, pageSize);
+                }
+              }}
               placeholder="Search by name, short name, slug..."
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
             />
             <button
-              onClick={() => loadMagazines(search)}
+              onClick={() => loadMagazines(search, 1, pageSize)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
             >
               Search
@@ -346,73 +362,84 @@ export default function MagazinesPage() {
         ) : magazines.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">No magazines found.</div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
-            {magazines.map((magazine) => (
-              <div key={magazine.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">{magazine.name}</h2>
-                    <p className="text-xs text-slate-500">#{magazine.id} • {magazine.slug || "-"}</p>
-                    {magazine.short_name ? <p className="text-sm text-slate-600">{magazine.short_name}</p> : null}
+          <>
+            <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+              {magazines.map((magazine) => (
+                <div key={magazine.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900">{magazine.name}</h2>
+                      <p className="text-xs text-slate-500">#{magazine.id} • {magazine.slug || "-"}</p>
+                      {magazine.short_name ? <p className="text-sm text-slate-600">{magazine.short_name}</p> : null}
+                    </div>
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                        magazine.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {magazine.is_active ? "Active" : "Inactive"}
+                    </span>
                   </div>
-                  <span
-                    className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                      magazine.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
-                    }`}
-                  >
-                    {magazine.is_active ? "Active" : "Inactive"}
-                  </span>
-                </div>
 
-                {magazine.description ? <p className="mt-3 text-sm text-slate-700">{magazine.description}</p> : null}
+                  {magazine.description ? <p className="mt-3 text-sm text-slate-700">{magazine.description}</p> : null}
 
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                  <div>Records: <span className="font-semibold">{magazine.records_count || 0}</span></div>
-                  <div>Authors: <span className="font-semibold">{magazine.authors?.length || 0}</span></div>
-                  <div>Languages: <span className="font-semibold">{magazine.languages?.length || 0}</span></div>
-                  <div>Founded: <span className="font-semibold">{magazine.founded_year || "-"}</span></div>
-                </div>
-
-                {magazine.website_url ? (
-                  <a href={magazine.website_url} target="_blank" rel="noreferrer" className="mt-2 block text-xs text-blue-600 underline">
-                    {magazine.website_url}
-                  </a>
-                ) : null}
-
-                {!!magazine.authors?.length && (
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {magazine.authors!.slice(0, 8).map((author) => (
-                      <span key={author.id} className="rounded-full bg-indigo-100 px-2 py-1 text-xs text-indigo-700">
-                        {author.short_name || author.name}
-                      </span>
-                    ))}
-                    {(magazine.authors?.length || 0) > 8 && (
-                      <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
-                        +{(magazine.authors?.length || 0) - 8}
-                      </span>
-                    )}
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                    <div>Records: <span className="font-semibold">{magazine.records_count || 0}</span></div>
+                    <div>Authors: <span className="font-semibold">{magazine.authors?.length || 0}</span></div>
+                    <div>Languages: <span className="font-semibold">{magazine.languages?.length || 0}</span></div>
+                    <div>Founded: <span className="font-semibold">{magazine.founded_year || "-"}</span></div>
                   </div>
-                )}
 
-                <div className="mt-4 flex gap-2">
-                  <button
-                    onClick={() => openEdit(magazine)}
-                    className="rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(magazine)}
-                    className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
-                  >
-                    Delete
-                  </button>
+                  {magazine.website_url ? (
+                    <a href={magazine.website_url} target="_blank" rel="noreferrer" className="mt-2 block text-xs text-blue-600 underline">
+                      {magazine.website_url}
+                    </a>
+                  ) : null}
+
+                  {!!magazine.authors?.length && (
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {magazine.authors!.slice(0, 8).map((author) => (
+                        <span key={author.id} className="rounded-full bg-indigo-100 px-2 py-1 text-xs text-indigo-700">
+                          {author.short_name || author.name}
+                        </span>
+                      ))}
+                      {(magazine.authors?.length || 0) > 8 && (
+                        <span className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700">
+                          +{(magazine.authors?.length || 0) - 8}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      onClick={() => openEdit(magazine)}
+                      className="rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(magazine)}
+                      className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
+                    >
+                      Delete
+                    </button>
+                  </div>
+
+                  <p className="mt-3 text-[11px] text-slate-400">Updated: {formatDate(magazine.updated_at || magazine.created_at)}</p>
                 </div>
-
-                <p className="mt-3 text-[11px] text-slate-400">Updated: {formatDate(magazine.updated_at || magazine.created_at)}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            <ManagementPagination
+              currentPage={currentPage}
+              totalPages={Math.max(1, Math.ceil(totalCount / pageSize))}
+              pageSize={pageSize}
+              totalItems={totalCount}
+              visibleCount={magazines.length}
+              onPageChange={(page) => loadMagazines(search, page, pageSize)}
+              onPageSizeChange={(nextPageSize) => loadMagazines(search, 1, nextPageSize)}
+            />
+          </>
         )}
       </div>
 

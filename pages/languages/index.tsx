@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
+import ManagementPagination from "@/components/ManagementPagination";
 
 type Language = {
   id: number;
@@ -30,6 +31,9 @@ export default function LanguagesPage() {
   const router = useRouter();
   const [languages, setLanguages] = useState<Language[]>([]);
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,25 +71,30 @@ export default function LanguagesPage() {
     }
   }, [router]);
 
-  const loadLanguages = useCallback(async (q = "") => {
+  const loadLanguages = useCallback(async (q = "", page = 1, nextPageSize = pageSize) => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`/api/languages?q=${encodeURIComponent(q)}&limit=200&offset=0`);
+      const offset = (page - 1) * nextPageSize;
+      const resp = await fetch(`/api/languages?q=${encodeURIComponent(q)}&limit=${nextPageSize}&offset=${offset}`);
       const payload: LanguageResponse = await resp.json();
       if (!resp.ok) throw new Error(payload?.error || "Failed to fetch languages");
       setLanguages(Array.isArray(payload.languages) ? payload.languages : []);
+      setTotalCount(Number(payload.count || 0));
+      setCurrentPage(page);
+      setPageSize(nextPageSize);
     } catch (err: any) {
       setError(err?.message || "Failed to fetch languages");
       setLanguages([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [pageSize]);
 
   useEffect(() => {
-    loadLanguages("");
-  }, [loadLanguages]);
+    loadLanguages("", 1, pageSize);
+  }, [loadLanguages, pageSize]);
 
   const openCreate = () => {
     setEditing(null);
@@ -122,7 +131,7 @@ export default function LanguagesPage() {
       }
 
       setModalOpen(false);
-      await loadLanguages(search);
+      await loadLanguages(search, currentPage, pageSize);
     } catch (err: any) {
       alert(err?.message || "Failed to save language");
     } finally {
@@ -143,7 +152,8 @@ export default function LanguagesPage() {
           linkedRecords > 0 || linkedMagazines > 0 ? ` (linked records: ${linkedRecords}, linked magazines: ${linkedMagazines})` : "";
         throw new Error((body?.error || "Failed to delete language") + suffix);
       }
-      await loadLanguages(search);
+      const nextPage = languages.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage;
+      await loadLanguages(search, nextPage, pageSize);
     } catch (err: any) {
       alert(err?.message || "Failed to delete language");
     }
@@ -207,14 +217,14 @@ export default function LanguagesPage() {
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  loadLanguages(search);
+                  loadLanguages(search, 1, pageSize);
                 }
               }}
               placeholder="Search languages..."
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
             />
             <button
-              onClick={() => loadLanguages(search)}
+              onClick={() => loadLanguages(search, 1, pageSize)}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
             >
               Search
@@ -229,45 +239,56 @@ export default function LanguagesPage() {
         ) : languages.length === 0 ? (
           <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">No languages found.</div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {languages.map((language) => (
-              <div key={language.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">{language.name}</h2>
-                    <p className="text-xs text-slate-500">#{language.id}</p>
+          <>
+            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {languages.map((language) => (
+                <div key={language.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900">{language.name}</h2>
+                      <p className="text-xs text-slate-500">#{language.id}</p>
+                    </div>
+                    <span className="rounded-full bg-teal-100 px-2 py-1 text-xs font-semibold text-teal-700">Language</span>
                   </div>
-                  <span className="rounded-full bg-teal-100 px-2 py-1 text-xs font-semibold text-teal-700">Language</span>
-                </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                  <div>
-                    Records: <span className="font-semibold">{language.records_count || 0}</span>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                    <div>
+                      Records: <span className="font-semibold">{language.records_count || 0}</span>
+                    </div>
+                    <div>
+                      Magazines: <span className="font-semibold">{language.magazines_count || 0}</span>
+                    </div>
                   </div>
-                  <div>
-                    Magazines: <span className="font-semibold">{language.magazines_count || 0}</span>
+
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      onClick={() => openEdit(language)}
+                      className="rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete(language)}
+                      className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
+                    >
+                      Delete
+                    </button>
                   </div>
-                </div>
 
-                <div className="mt-4 flex gap-2">
-                  <button
-                    onClick={() => openEdit(language)}
-                    className="rounded-lg bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-800 hover:bg-blue-200"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(language)}
-                    className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
-                  >
-                    Delete
-                  </button>
+                  <p className="mt-3 text-[11px] text-slate-400">Created: {formatDate(language.created_at)}</p>
                 </div>
-
-                <p className="mt-3 text-[11px] text-slate-400">Created: {formatDate(language.created_at)}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+            <ManagementPagination
+              currentPage={currentPage}
+              totalPages={Math.max(1, Math.ceil(totalCount / pageSize))}
+              pageSize={pageSize}
+              totalItems={totalCount}
+              visibleCount={languages.length}
+              onPageChange={(page) => loadLanguages(search, page, pageSize)}
+              onPageSizeChange={(nextPageSize) => loadLanguages(search, 1, nextPageSize)}
+            />
+          </>
         )}
       </div>
 

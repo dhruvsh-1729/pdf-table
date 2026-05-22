@@ -13,10 +13,17 @@
  */
 
 import dotenv from "dotenv";
+import fs from "node:fs";
+import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { fileURLToPath } from "node:url";
 import { getUploadThingUrl } from "../lib/uploadthing.js";
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -34,6 +41,8 @@ if (!DEEPSEEK_API_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+const defaultPromptCatalog = JSON.parse(fs.readFileSync(path.join(rootDir, "lib", "aiPromptCatalog.json"), "utf8"));
+const promptCache = new Map();
 
 if (!process.env.UPLOADTHING_TOKEN) {
   console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
@@ -181,30 +190,66 @@ function trimContext(text, maxChars = 9000) {
   return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
-function buildMessages(mode, text, title, name) {
-  const baseInstruction =
-    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise and accurate. Return the final answer in English only. If the PDF text is in another language, translate the meaning into natural English before answering. Do not output non-English script. If a proper noun or title has no standard English translation, transliterate it into Latin script and keep the rest of the answer in English.";
-  const label = title || name || "the article";
-  if (mode === "summary") {
-    return [
-      { role: "system", content: baseInstruction },
-      {
-        role: "user",
-        content: `Create a short accurate summary (~300 words) of all details mentioned in ${label}. Ensure no details are false, inaccurate, or hallucinated. After generating, review the summary against the PDF content to correct any mistakes, inaccuracies, or discrepancies. Use appropriate language for regular readers and research scholars - keep it sharp and concise without extra words. You may add relevant post-publication updates in brackets if applicable. Verify all information carefully before summarizing. Avoid bullet points and introductions like "Sure" or "Summary:".\n\nExtracted text:\n${text}`,
-      },
-    ];
+function renderPromptTemplate(template, variables) {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => variables[key] ?? "");
+}
+
+function getDefaultPrompt(scope, fieldKey, variant) {
+  return (
+    defaultPromptCatalog.find(
+      (prompt) => prompt.scope === scope && prompt.field_key === fieldKey && prompt.variant === variant,
+    ) || null
+  );
+}
+
+async function getPromptTemplate(scope, fieldKey, variant) {
+  const cacheKey = `${scope}:${fieldKey}:${variant}`;
+  if (promptCache.has(cacheKey)) {
+    return promptCache.get(cacheKey);
   }
+
+  const fallback = getDefaultPrompt(scope, fieldKey, variant);
+  const { data, error } = await supabase
+    .from("ai_prompts")
+    .select("system_prompt, user_prompt_template")
+    .eq("scope", scope)
+    .eq("field_key", fieldKey)
+    .eq("variant", variant)
+    .maybeSingle();
+
+  if (error) {
+    if (!fallback) throw error;
+    console.error("Failed to load AI prompt from Supabase, using fallback:", error);
+    promptCache.set(cacheKey, fallback);
+    return fallback;
+  }
+
+  const prompt = data || fallback;
+  if (!prompt) {
+    throw new Error(`Missing AI prompt for ${scope}.${fieldKey}.${variant}`);
+  }
+
+  promptCache.set(cacheKey, prompt);
+  return prompt;
+}
+
+async function buildMessages(mode, text, title, name) {
+  const prompt = await getPromptTemplate("record", mode, "primary");
+  const label = title || name || "the article";
   return [
-    { role: "system", content: baseInstruction },
+    { role: "system", content: prompt.system_prompt },
     {
       role: "user",
-      content: `Write a short, unique and distinctive conclusion (110-140 words) from ${label}. Focus on key implications, outcomes, and significance rather than repeating summary content. Ensure the conclusion is specific to this document's findings and contributions. Output only the conclusion paragraph.\n\nExtracted text:\n${text}`,
+      content: renderPromptTemplate(prompt.user_prompt_template, {
+        label,
+        text,
+      }),
     },
   ];
 }
 
 async function generateText(mode, text, title, name) {
-  const messages = buildMessages(mode, trimContext(text, mode === "summary" ? 9000 : 6000), title, name);
+  const messages = await buildMessages(mode, trimContext(text, mode === "summary" ? 9000 : 6000), title, name);
   return createDeepSeekChatCompletion({
     messages,
     temperature: mode === "summary" ? 0.25 : 0.25,

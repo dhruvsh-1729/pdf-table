@@ -20,6 +20,7 @@ const sqlSteps = [
   "007_verify.sql",
   "009_extend_magazines.sql",
   "010_verify_magazines.sql",
+  "011_create_ai_prompts.sql",
 ];
 
 function projectRefFromSupabaseUrl(url = "") {

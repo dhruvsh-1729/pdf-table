@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createDeepSeekChatCompletion, hasDeepSeekApiKey } from "@/lib/aiText";
+import { buildStoredPromptMessages } from "@/lib/aiPromptStore";
 import { extractMagazineName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
@@ -11,49 +12,6 @@ function trimContext(text: string, maxChars = 30000) {
   // const compact = text.replace(/\s+/g, " ").trim();
   // return compact.slice(0, maxChars);
   return text;
-}
-function buildMessages(mode: AiMode, text: string, title?: string, name?: string, variant?: "primary" | "regen") {
-  const baseInstruction =
-    "You are an expert editor for academic PDF content. Use only the provided extracted text. Do not make up facts, add disclaimers, or include pre/post text. Keep output concise and accurate. Return the final answer in English only. If the PDF text is in another language, translate the meaning into natural English before answering. Do not output non-English script. If a proper noun or title has no standard English translation, transliterate it into Latin script and keep the rest of the answer in English.";
-
-  const label = title || name || "the article";
-
-  if (mode === "summary") {
-    const regenNote =
-      variant === "regen" ? "Rewrite with different wording and emphasis (avoid repeating prior phrasing). " : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Create a short accurate summary (~300 words) of all details mentioned in ${label}. Ensure no details are false, inaccurate, or hallucinated. After generating, review the summary against the PDF content to correct any mistakes, inaccuracies, or discrepancies. Use appropriate language for regular readers and research scholars - keep it sharp and concise without extra words. You may add relevant post-publication updates in brackets if applicable. Verify all information carefully before summarizing. Avoid bullet points and introductions like "Sure" or "Summary:".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (mode === "conclusion") {
-    const regenNote =
-      variant === "regen"
-        ? "Provide a fresh take (avoid repeating prior wording) and keep focus on implications. "
-        : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Write a short, unique and distinctive conclusion (110-140 words) from ${label}. Focus on key implications, outcomes, and significance rather than repeating summary content. Ensure the conclusion is specific to this document's findings and contributions. Output only the conclusion paragraph.\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  // tags
-  const regenNote =
-    variant === "regen" ? "Generate an alternate set (avoid generic or previously suggested words). " : "";
-  return [
-    { role: "system" as const, content: baseInstruction },
-    {
-      role: "user" as const,
-      content: `${regenNote}Generate exactly 5 tags that best capture the essence of ${label}. Each tag must be exactly 3 words, Title Case, and directly relevant to the PDF content only. Use only proper English letters (A-Z, a-z) and spaces - absolutely no special characters, symbols, asterisks, dashes, dots, or any punctuation marks in the tags. Avoid generic words (article, pdf, document). Return exactly 5 tags, one per line, with no additional text, explanations, or formatting.\n\nExtracted text:\n${text}`,
-    },
-  ];
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -88,13 +46,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const context = trimContext(extracted, mode === "tags" ? 6000 : 9000);
-    const messages = buildMessages(
-      mode,
-      context,
-      record.title_name,
-      extractMagazineName(record),
-      variant === "regen" ? "regen" : "primary",
-    );
+    const label = record.title_name || extractMagazineName(record) || "the article";
+    const messages = await buildStoredPromptMessages({
+      scope: "record",
+      fieldKey: mode,
+      variant: variant === "regen" ? "regen" : "primary",
+      variables: {
+        label,
+        text: context,
+      },
+    });
 
     const content = await createDeepSeekChatCompletion({
       messages,

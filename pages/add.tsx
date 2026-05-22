@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import JSZip from "jszip";
 import AsyncCreatableSelect from "react-select/async-creatable";
+import AiPromptManager from "@/components/AiPromptManager";
 import {
   ChevronLeft,
   ChevronRight,
@@ -225,6 +226,7 @@ const pdfRectToViewRect = (rect: Omit<WhiteoutRect, "id">, rotation: number): Wh
 };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "").replace(/\/$/, "");
+const ADMIN_EMAILS = ["dharmsasanwork99@gmail.com", "dhruvshdarshansh@gmail.com"];
 
 const apiUrl = (path: string) => `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 
@@ -258,6 +260,7 @@ function Add() {
   const [isClient, setIsClient] = useState(false);
   const [reactPdf, setReactPdf] = useState<{ Document: any; Page: any } | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [activeTab, setActiveTab] = useState<"records" | "prompts">("records");
 
   // PDF split state (step 1)
   const [file, setFile] = useState<File | null>(null);
@@ -1440,15 +1443,52 @@ function Add() {
 
   const extractionInProgress = splitRecords.some((s) => s.extraction.status === "running");
   const aiBusy = splitRecords.some((s) => Object.values(s.fields).some((f) => f.status === "loading"));
+  const isAdmin = useMemo(() => ADMIN_EMAILS.includes((user?.email || "").toLowerCase()), [user?.email]);
 
   return (
     <div className="min-h-screen bg-zinc-50">
       <Toaster position="top-right" />
       <div className="mx-auto w-full space-y-10 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-zinc-500">Workflow</p>
+              <h1 className="text-2xl font-semibold text-zinc-900">Add Records and Manage AI Prompts</h1>
+              <p className="mt-1 text-sm text-zinc-600">
+                Split PDFs into records, then manage the exact DeepSeek prompts used for record and split field generation.
+              </p>
+            </div>
+            <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab("records")}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  activeTab === "records" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-700 hover:bg-white"
+                }`}
+              >
+                Split and Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("prompts")}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  activeTab === "prompts" ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-700 hover:bg-white"
+                }`}
+              >
+                AI Prompts
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {activeTab === "prompts" ? (
+          <AiPromptManager canEdit={isAdmin} />
+        ) : (
+          <div className="space-y-10">
         <div className="flex flex-col gap-2">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-zinc-500">Step 1</p>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h1 className="text-2xl font-semibold text-zinc-900">Split PDF into sections</h1>
+            <h2 className="text-2xl font-semibold text-zinc-900">Split PDF into sections</h2>
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => generateSplits({ downloadZip: false })}
@@ -2138,7 +2178,6 @@ function Add() {
             </div>
           )}
         </div>
-      </div>
 
       {hoverPreview && DocumentComp && PageComp && file && (
         <div className="pointer-events-none fixed inset-y-4 right-4 z-50 hidden lg:flex items-center">
@@ -2420,6 +2459,9 @@ function Add() {
           </div>
         </div>
       )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

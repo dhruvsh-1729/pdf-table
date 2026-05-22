@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { GetServerSideProps } from "next";
+import { useRouter } from "next/router";
 import { createClient } from "@supabase/supabase-js";
+import ManagementPagination from "@/components/ManagementPagination";
 import {
   LoadingSpinner,
   Toast,
@@ -43,6 +45,7 @@ interface AuthorsPageProps {
   total: number;
   currentPage: number;
   totalPages: number;
+  pageSize: number;
   filters: {
     search: string;
     sortBy: string;
@@ -561,29 +564,24 @@ const FiltersComponent = ({ filters, onFiltersChange }: { filters: any; onFilter
 const Pagination = ({
   currentPage,
   totalPages,
+  total,
+  pageSize,
+  visibleCount,
   filters,
 }: {
   currentPage: number;
   totalPages: number;
+  total: number;
+  pageSize: number;
+  visibleCount: number;
   filters: any;
 }) => {
-  const pages = [];
-  const maxVisiblePages = 5;
+  const router = useRouter();
 
-  let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-  const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-  if (endPage - startPage + 1 < maxVisiblePages) {
-    startPage = Math.max(1, endPage - maxVisiblePages + 1);
-  }
-
-  for (let i = startPage; i <= endPage; i++) {
-    pages.push(i);
-  }
-
-  const buildUrl = (page: number) => {
+  const navigate = (page: number, nextPageSize = pageSize) => {
     const params = new URLSearchParams();
     params.set("page", page.toString());
+    params.set("pageSize", nextPageSize.toString());
 
     Object.entries(filters).forEach(([key, value]) => {
       if (value && value !== "") {
@@ -591,80 +589,24 @@ const Pagination = ({
       }
     });
 
-    return `?${params.toString()}`;
+    router.push(`?${params.toString()}`);
   };
 
-  if (totalPages <= 1) return null;
-
   return (
-    <div className="flex items-center justify-between mt-8 px-4 py-3 bg-white border border-gray-200 rounded-lg">
-      <div className="text-sm text-gray-700">
-        Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
-      </div>
-
-      <div className="flex items-center space-x-2">
-        {currentPage > 1 && (
-          <Link
-            href={buildUrl(currentPage - 1)}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 transition-colors"
-          >
-            Previous
-          </Link>
-        )}
-
-        {startPage > 1 && (
-          <>
-            <Link
-              href={buildUrl(1)}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 transition-colors"
-            >
-              1
-            </Link>
-            {startPage > 2 && <span className="text-gray-500 px-2">...</span>}
-          </>
-        )}
-
-        {pages.map((page) => (
-          <Link
-            key={page}
-            href={buildUrl(page)}
-            className={`px-3 py-2 text-sm border rounded-md transition-colors ${
-              page === currentPage
-                ? "bg-blue-500 text-white border-blue-500"
-                : "border-gray-300 hover:bg-gray-50 text-gray-700"
-            }`}
-          >
-            {page}
-          </Link>
-        ))}
-
-        {endPage < totalPages && (
-          <>
-            {endPage < totalPages - 1 && <span className="text-gray-500 px-2">...</span>}
-            <Link
-              href={buildUrl(totalPages)}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 transition-colors"
-            >
-              {totalPages}
-            </Link>
-          </>
-        )}
-
-        {currentPage < totalPages && (
-          <Link
-            href={buildUrl(currentPage + 1)}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 transition-colors"
-          >
-            Next
-          </Link>
-        )}
-      </div>
-    </div>
+    <ManagementPagination
+      currentPage={currentPage}
+      totalPages={totalPages}
+      pageSize={pageSize}
+      totalItems={total}
+      visibleCount={visibleCount}
+      onPageChange={(page) => navigate(page)}
+      onPageSizeChange={(nextPageSize) => navigate(1, nextPageSize)}
+    />
   );
 };
 
 // Main Component
-export default function AuthorsPage({ authors, total, currentPage, totalPages, filters }: AuthorsPageProps) {
+export default function AuthorsPage({ authors, total, currentPage, totalPages, pageSize, filters }: AuthorsPageProps) {
   const [selectedAuthor, setSelectedAuthor] = useState<Author | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -884,7 +826,7 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, f
                 <span className="text-sm text-gray-700">Select all ({authors.length} on this page)</span>
               </label>
               <div className="text-sm text-gray-500">
-                Showing {(currentPage - 1) * 20 + 1}-{Math.min(currentPage * 20, total)} of {total}
+                Showing {(currentPage - 1) * pageSize + 1}-{Math.min((currentPage - 1) * pageSize + authors.length, total)} of {total}
               </div>
             </div>
 
@@ -903,7 +845,14 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, f
             </div>
 
             {/* Pagination */}
-            <Pagination currentPage={currentPage} totalPages={totalPages} filters={filters} />
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              total={total}
+              pageSize={pageSize}
+              visibleCount={authors.length}
+              filters={filters}
+            />
           </>
         ) : (
           <div className="text-center py-20">
@@ -969,7 +918,9 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, f
 // Updated getServerSideProps with record filtering
 export const getServerSideProps: GetServerSideProps = async (context) => {
   const page = parseInt(context.query.page as string) || 1;
-  const limit = 20;
+  const pageSizeOptions = new Set([10, 20, 30, 40, 50, 100, 200]);
+  const requestedPageSize = parseInt((context.query.pageSize as string) || "20", 10);
+  const limit = pageSizeOptions.has(requestedPageSize) ? requestedPageSize : 20;
   const offset = (page - 1) * limit;
 
   const filters = {
@@ -1074,6 +1025,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
           total,
           currentPage: page,
           totalPages,
+          pageSize: limit,
           filters,
         },
       };
@@ -1115,6 +1067,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         total,
         currentPage: page,
         totalPages,
+        pageSize: limit,
         filters,
       },
     };
@@ -1126,6 +1079,7 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
         total: 0,
         currentPage: 1,
         totalPages: 0,
+        pageSize: limit,
         filters,
       },
     };

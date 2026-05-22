@@ -11,6 +11,8 @@
     "test:watch": "jest --watch",
     "migration:backup": "node migrations/001_backup.mjs",
     "migration:run": "node run_migration.mjs",
+    "ai-prompts:seed": "node --env-file=.env scripts/seed-ai-prompts.mjs",
+    "ai-prompts:setup": "node --env-file=.env scripts/setup-ai-prompts.mjs",
     "backfill:authors": "node --env-file=.env scripts/backfill-authors.mjs",
     "backfill:extracted-text": "node --env-file=.env scripts/backfill-extracted-text.mjs"
   },

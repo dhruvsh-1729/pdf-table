@@ -1,134 +1,15 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createDeepSeekChatCompletion, hasDeepSeekApiKey } from "@/lib/aiText";
+import { buildStoredPromptMessages } from "@/lib/aiPromptStore";
+import type { SplitPromptFieldKey } from "@/lib/aiPromptTypes";
 
-type FieldKey =
-  | "name"
-  | "volume"
-  | "number"
-  | "timestamp"
-  | "title_name"
-  | "page_numbers"
-  | "summary"
-  | "conclusion"
-  | "tags"
-  | "authors";
-
+type FieldKey = SplitPromptFieldKey;
 type Variant = "primary" | "regen";
-
-const baseInstruction =
-  "You are an expert metadata extractor for magazine PDFs. Use only the provided extracted text. Do not invent facts, add disclaimers, or include any labels. Return clean plain text only. Return the final answer in English only. If the PDF text is in another language, translate the meaning into natural English before answering. Do not output non-English script. If a proper noun or title has no standard English translation, transliterate it into Latin script and keep the rest of the answer in English.";
 
 function trimContext(text: string, maxChars = 12000) {
   if (!text) return "";
   const compact = text.replace(/\s+/g, " ").trim();
   return compact.slice(0, maxChars);
-}
-
-function buildMessages(field: FieldKey, text: string, label?: string, variant: Variant = "primary") {
-  const subject = label ? `for ${label}` : "for this PDF split";
-
-  if (field === "name") {
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `Identify the magazine or publication name ${subject}. Output only the most likely magazine title (max 60 characters). If nothing is clear, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "volume") {
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `Extract the volume identifier ${subject}. Prefer formats like "Volume 12" or "Vol. XII". Output only one value. If not found, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "number") {
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `Extract the issue/number/edition label ${subject}. Prefer forms such as "Issue 3", "No. 3", or "Number 3". Output only one value. If not found, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "timestamp") {
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `Return the publication date ${subject} as "MMM YYYY" (e.g., Jan 2024). If only a year is present, return the year. Use English month abbreviations. If unclear, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "title_name") {
-    const regenNote = variant === "regen" ? "Provide a fresh alternate wording. " : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Provide the best short article title ${subject}. Keep it under 12 words, clear, and specific. Avoid publication names and filler words. If unclear, propose a precise 6-12 word title based only on the text.\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "page_numbers") {
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `Report the page range covered by this split as numbers only. Use "start-end" (e.g., "112-118"). If it's a single page, return that number. If no range is clear, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "summary") {
-    const regenNote = variant === "regen" ? "Use different phrasing from prior attempts. " : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Write a concise, factual summary (250-320 words) of this PDF content. Do not add introductions or bullets. Review against the text to avoid inaccuracies.\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "conclusion") {
-    const regenNote = variant === "regen" ? "Offer a distinct perspective (no repeated phrasing). " : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Write a short conclusion paragraph (110-140 words) focused on implications and outcomes specific to this document. Output only the paragraph.\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  if (field === "authors") {
-    const regenNote = variant === "regen" ? "Return a fresh list. " : "";
-    return [
-      { role: "system" as const, content: baseInstruction },
-      {
-        role: "user" as const,
-        content: `${regenNote}Extract the author(s) ${subject} from the text. Return only author names, one per line. Use the exact name spellings from the text. If no author is present, return "Unknown".\n\nExtracted text:\n${text}`,
-      },
-    ];
-  }
-
-  const regenNote = variant === "regen" ? "Suggest an alternate set without repeating prior wording. " : "";
-  return [
-    { role: "system" as const, content: baseInstruction },
-    {
-      role: "user" as const,
-      content: `${regenNote}Generate exactly 5 tags that capture this content. Each tag must be 2-3 words, Title Case, no punctuation or special characters. One tag per line; no extra text.\n\nExtracted text:\n${text}`,
-    },
-  ];
 }
 
 function normalizeTags(rawText: string) {
@@ -220,7 +101,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const context = trimContext(text, field === "summary" || field === "conclusion" ? 12000 : 8000);
-    const messages = buildMessages(field, context, label, variant === "regen" ? "regen" : "primary");
+    const subject = label ? `for ${label}` : "for this PDF split";
+    const messages = await buildStoredPromptMessages({
+      scope: "split",
+      fieldKey: field,
+      variant: variant === "regen" ? "regen" : "primary",
+      variables: {
+        subject,
+        text: context,
+      },
+    });
 
     const isLongForm = field === "summary" || field === "conclusion";
     const isListField = field === "tags" || field === "authors";
