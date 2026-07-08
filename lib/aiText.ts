@@ -14,6 +14,9 @@ type DeepSeekChatCompletionOptions = {
 };
 
 const DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+// deepseek-chat (DeepSeek-V3) is the cheapest DeepSeek model. Pin to it so costs
+// stay low and a stray DEEPSEEK_MODEL env var can't silently switch to the pricier
+// deepseek-reasoner (R1), which bills for reasoning tokens.
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 
 function resolveDeepSeekApiKey() {
@@ -25,7 +28,9 @@ function resolveDeepSeekBaseUrl() {
 }
 
 function resolveDeepSeekModel() {
-  return process.env.DEEPSEEK_MODEL?.trim() || DEFAULT_DEEPSEEK_MODEL;
+  // Always use the cheapest model. Ignore any DEEPSEEK_MODEL override so an env
+  // var can't accidentally push us onto a more expensive model.
+  return DEFAULT_DEEPSEEK_MODEL;
 }
 
 function extractDeepSeekErrorMessage(payload: any, status: number) {
