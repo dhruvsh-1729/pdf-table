@@ -10,6 +10,9 @@ import { getRelationSnapshot } from "@/lib/recordRelationSnapshot";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
+// Deliberately excludes extracted_text: it averages ~15KB a row and is 85% of the
+// records table on the wire, but the table never renders it. Consumers that need it
+// pull a single record from /api/records/extracted-text instead.
 const RECORD_BASE_SELECT = `
   id,
   magazine_id,
@@ -25,7 +28,6 @@ const RECORD_BASE_SELECT = `
   email,
   creator_name,
   conclusion,
-  extracted_text,
   magazines(id, name)
 `;
 

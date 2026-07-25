@@ -1,5 +1,5 @@
 // pages/index.tsx
-import { useState, useEffect, ChangeEvent, MouseEvent, useMemo, useCallback } from "react";
+import { useState, useEffect, ChangeEvent, MouseEvent, useMemo, useCallback, useRef } from "react";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useRouter } from "next/router";
 import { debounce } from "lodash";
@@ -86,9 +86,6 @@ export default function Home() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedExportColumnIds, setSelectedExportColumnIds] = useState<string[]>([]);
 
-  // For export functionality - fetch all filtered data
-  const [filteredDataForExport, setFilteredDataForExport] = useState<MagazineRecord[]>([]);
-
   // Initialize user
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
@@ -125,92 +122,93 @@ export default function Home() {
     }
   }, []);
 
-  // Debounced fetch records function
-  const debouncedFetchRecords = useMemo(
-    () =>
-      debounce(
-        async (
-          page: number,
-          pageSize: number,
-          filters: ColumnFiltersState,
-          globalFilter: string,
-          sorting: SortingState,
-          email: string | null,
-          forExport: boolean = false,
-        ) => {
-          try {
-            setTableLoading(true);
+  // Core fetch. Returns the rows it fetched so callers that need the data right away
+  // (export) can use the return value instead of reading it back off state.
+  const fetchRecords = useCallback(
+    async (
+      page: number,
+      pageSize: number,
+      filters: ColumnFiltersState,
+      globalFilter: string,
+      sorting: SortingState,
+      email: string | null,
+      forExport: boolean = false,
+    ): Promise<MagazineRecord[]> => {
+      try {
+        setTableLoading(true);
 
-            // Build filter object
-            const filterObj: Record<string, any> = {};
-            filters.forEach((filter) => {
-              filterObj[filter.id] = filter.value;
-            });
+        // Build filter object
+        const filterObj: Record<string, any> = {};
+        filters.forEach((filter) => {
+          filterObj[filter.id] = filter.value;
+        });
 
-            // Handle sorting - map frontend column names to database columns
-            let sortBy = "id";
-            if (sorting.length > 0) {
-              const sortCol = sorting[0].id;
-              // Map columns that don't exist directly in the database
-              if (sortCol === "tags" || sortCol === "authors" || sortCol === "language") {
-                sortBy = "id"; // Default to id for relation columns
-              } else {
-                sortBy = sortCol;
-              }
-            }
-
-            // Build query params
-            const params = new URLSearchParams({
-              page: forExport ? "0" : String(page),
-              pageSize: forExport ? "10000" : String(pageSize), // Large number for export
-              sortBy: sortBy,
-              sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
-              filters: JSON.stringify(filterObj),
-              globalFilter: globalFilter || "",
-              email: email || "",
-              noCache: "false",
-            });
-
-            let response = await fetch(`/api/records-paginated?${params}`);
-            if (!response.ok) {
-              params.set("noCache", "true");
-              response = await fetch(`/api/records-paginated?${params}`);
-            }
-
-            if (!response.ok) {
-              let message = "Failed to fetch records";
-              try {
-                const errorPayload = await response.json();
-                message = errorPayload?.details || errorPayload?.error || message;
-              } catch {
-                // no-op
-              }
-              throw new Error(message);
-            }
-
-            const result = await response.json();
-
-            if (forExport) {
-              setFilteredDataForExport(result.data || []);
-            } else {
-              setRecords(result.data || []);
-              setTotalRecords(result.count || 0);
-            }
-          } catch (err) {
-            console.error("Error:", err);
-            setError(err instanceof Error ? err.message : "Failed to load records");
-            if (!forExport) {
-              setRecords([]);
-              setTotalRecords(0);
-            }
-          } finally {
-            setTableLoading(false);
+        // Handle sorting - map frontend column names to database columns
+        let sortBy = "id";
+        if (sorting.length > 0) {
+          const sortCol = sorting[0].id;
+          // Map columns that don't exist directly in the database
+          if (sortCol === "tags" || sortCol === "authors" || sortCol === "language") {
+            sortBy = "id"; // Default to id for relation columns
+          } else {
+            sortBy = sortCol;
           }
-        },
-        300,
-      ),
+        }
+
+        // Build query params
+        const params = new URLSearchParams({
+          page: forExport ? "0" : String(page),
+          pageSize: forExport ? "10000" : String(pageSize), // Large number for export
+          sortBy: sortBy,
+          sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
+          filters: JSON.stringify(filterObj),
+          globalFilter: globalFilter || "",
+          email: email || "",
+          noCache: "false",
+        });
+
+        let response = await fetch(`/api/records-paginated?${params}`);
+        if (!response.ok) {
+          params.set("noCache", "true");
+          response = await fetch(`/api/records-paginated?${params}`);
+        }
+
+        if (!response.ok) {
+          let message = "Failed to fetch records";
+          try {
+            const errorPayload = await response.json();
+            message = errorPayload?.details || errorPayload?.error || message;
+          } catch {
+            // no-op
+          }
+          throw new Error(message);
+        }
+
+        const result = await response.json();
+        const rows: MagazineRecord[] = result.data || [];
+
+        if (!forExport) {
+          setRecords(rows);
+          setTotalRecords(result.count || 0);
+        }
+        return rows;
+      } catch (err) {
+        console.error("Error:", err);
+        setError(err instanceof Error ? err.message : "Failed to load records");
+        if (!forExport) {
+          setRecords([]);
+          setTotalRecords(0);
+        }
+        return [];
+      } finally {
+        setTableLoading(false);
+      }
+    },
     [],
   );
+
+  // Debounced fetch records function
+  const debouncedFetchRecords = useMemo(() => debounce(fetchRecords, 300), [fetchRecords]);
 
   // Fetch records when dependencies change
   useEffect(() => {
@@ -233,10 +231,21 @@ export default function Home() {
     debouncedFetchRecords,
   ]);
 
-  // Fetch all data for export when needed
-  const fetchAllForExport = useCallback(async () => {
-    await debouncedFetchRecords(0, 10000, columnFilters, globalFilter, sorting, selectedEmail, true);
-  }, [columnFilters, globalFilter, sorting, selectedEmail, debouncedFetchRecords]);
+  // Fetch all data for export when needed.
+  // Stays off the debounced path on purpose: lodash debounce resolves an awaited call
+  // immediately, so exporters used to get stale rows and re-click, and every click
+  // re-pulled the entire filtered table. In-flight clicks share one request.
+  const exportFetchRef = useRef<Promise<MagazineRecord[]> | null>(null);
+  const fetchAllForExport = useCallback(async (): Promise<MagazineRecord[]> => {
+    if (!exportFetchRef.current) {
+      exportFetchRef.current = fetchRecords(0, 10000, columnFilters, globalFilter, sorting, selectedEmail, true);
+    }
+    try {
+      return await exportFetchRef.current;
+    } finally {
+      exportFetchRef.current = null;
+    }
+  }, [columnFilters, globalFilter, sorting, selectedEmail, fetchRecords]);
 
   const fetchAllTags = useCallback(async (): Promise<void> => {
     try {
@@ -1217,14 +1226,14 @@ export default function Home() {
   };
 
   const exportToCSV = async () => {
-    // Fetch all filtered data first
-    await fetchAllForExport();
-
     const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
     if (cols.length === 0) return;
 
+    // Fetch all filtered data first
+    const exportRows = await fetchAllForExport();
+
     const headers = cols.map((c) => c.label);
-    const rows = filteredDataForExport.map((record) =>
+    const rows = exportRows.map((record) =>
       cols.map((c) => {
         const raw = getExportValue(record, c.id);
         return String(raw ?? "");
@@ -1244,15 +1253,15 @@ export default function Home() {
   };
 
   const exportToXLSX = async () => {
-    // Fetch all filtered data first
-    await fetchAllForExport();
-
     const cols = exportableColumns.filter((c) => selectedExportColumnIds.includes(c.id));
     if (cols.length === 0) return;
 
+    // Fetch all filtered data first
+    const exportRows = await fetchAllForExport();
+
     try {
       import("xlsx").then((XLSX) => {
-        const data = filteredDataForExport.map((record) => {
+        const data = exportRows.map((record) => {
           const row: Record<string, any> = {};
           cols.forEach((c) => (row[c.label] = getExportValue(record, c.id)));
           return row;
