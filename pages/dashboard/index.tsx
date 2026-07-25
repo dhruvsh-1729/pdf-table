@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, Tooltip } from "recharts";
 import { extractLanguageDisplay, extractMagazineName } from "@/lib/recordRelations";
+import { getCachedDashboardData, setCachedDashboardData } from "@/lib/dashboardCache";
 
 /** -----------------------------
  * Types
@@ -205,8 +206,30 @@ function normalizeMaybe(input: unknown): string | undefined {
 /** -----------------------------
  * Server: getServerSideProps
  * ------------------------------ */
+type CachedDashboardData = Omit<DashboardProps, "unconfirmedUsers">;
+
 export const getServerSideProps: GetServerSideProps<DashboardProps> = async () => {
   const supabaseAdmin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+
+  // Unconfirmed users stays uncached: it is a tiny filtered query, and it drives an
+  // admin action on this page, so a freshly confirmed user must not linger for the TTL.
+  const { data: unconfirmedUsersRaw } = await supabaseAdmin
+    .from("users")
+    .select("name, email, confirmed")
+    .eq("confirmed", false);
+
+  const unconfirmedUsers =
+    (unconfirmedUsersRaw ?? []).map((u) => ({
+      name: normalizeField(u.name) ?? "",
+      email: normalizeField(u.email) ?? "",
+    })) ?? [];
+
+  // Everything below pages through the whole records table plus every summary and
+  // conclusion. It is all aggregate chart data, so serve it from cache when warm.
+  const cachedData = getCachedDashboardData<CachedDashboardData>();
+  if (cachedData) {
+    return { props: { ...cachedData, unconfirmedUsers } };
+  }
 
   // Count queries (fast)
   const [recordsCount, summariesCount, conclusionsCount, usersCount] = await Promise.all([
@@ -259,12 +282,6 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
   // Conclusions (only minimal columns)
   const { data: conclusionsRaw } = await supabaseAdmin.from("conclusions").select("id, name, email, record_id");
 
-  // Unconfirmed users
-  const { data: unconfirmedUsersRaw } = await supabaseAdmin
-    .from("users")
-    .select("name, email, confirmed")
-    .eq("confirmed", false);
-
   // --- Normalize Records
   const records: RecordRow[] = (recordsRaw ?? []).map((r) => ({
     id: Number(r.id ?? 0),
@@ -296,21 +313,11 @@ export const getServerSideProps: GetServerSideProps<DashboardProps> = async () =
     record_id: c.record_id ? Number(c.record_id) : null,
   }));
 
-  // --- Normalize Unconfirmed Users
-  const unconfirmedUsers =
-    (unconfirmedUsersRaw ?? []).map((u) => ({
-      name: normalizeField(u.name) ?? "",
-      email: normalizeField(u.email) ?? "",
-    })) ?? [];
+  const payload: CachedDashboardData = { totals, records, summaries, conclusions };
+  setCachedDashboardData(payload);
 
   return {
-    props: {
-      totals,
-      records,
-      summaries,
-      conclusions,
-      unconfirmedUsers,
-    },
+    props: { ...payload, unconfirmedUsers },
   };
 };
 
