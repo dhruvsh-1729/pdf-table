@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { GetServerSideProps } from "next";
 import Link from "next/link";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 type Status = "flagged" | "unchecked" | "ai_audited";
 
@@ -314,6 +313,8 @@ export default function ReviewPage({ magazines }: { magazines: { id: number; nam
 }
 
 export const getServerSideProps: GetServerSideProps = async () => {
+  // Imported here, not at module level: the build has no Supabase env.
+  const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
   const { data } = await supabaseAdmin.from("magazines").select("id, name").eq("is_active", true).order("name");
   return { props: { magazines: data ?? [] } };
 };
