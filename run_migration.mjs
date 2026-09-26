@@ -23,6 +23,9 @@ const sqlSteps = [
   "011_create_ai_prompts.sql",
   "012_normalize_languages.sql",
   "014_dedupe_authors_tags.sql",
+  "015_merge_author_variants.sql",
+  "016_merge_author_ocr_variants.sql",
+  "017_merge_author_ocr_prefix_variants.sql",
 ];
 
 function projectRefFromSupabaseUrl(url = "") {
