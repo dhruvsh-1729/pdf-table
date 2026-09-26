@@ -1,0 +1,12 @@
+{
+  "name": "aryanculture-ops",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node run.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.52.0",
+    "resend": "^4.6.0"
+  }
+}

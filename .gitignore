@@ -44,3 +44,4 @@ next-env.d.ts
 
 # ignore addition scripts
 /scripts/create
+ops/node_modules
