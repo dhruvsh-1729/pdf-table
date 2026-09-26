@@ -164,7 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     const out = Array.from(byUser.values()).sort((a, b) => b.totalActivity - a.totalActivity);
-    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
+    res.setHeader("Cache-Control", "private, max-age=60");
     res.status(200).json({ userMagazineActivities: out });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

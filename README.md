@@ -1,5 +1,17 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/pages/api-reference/create-next-app).
 
+## Authentication
+
+Every page and API route requires a signed-in session (see `middleware.ts`), except `/login` and `/api/auth/*`.
+
+- Users sign in with **email + password**. Passwords are hashed with scrypt; sessions are HMAC-signed httpOnly cookies (7 days).
+- Nobody can sign in until a super admin sets a password for them in the **admin panel at `/admin`**. Setting/changing a password, changing a role, or revoking access signs that user out everywhere (within ~1 minute).
+- Without a password, users use **Request access** on the login page, which emails `dhruvshdarshansh@gmail.com` (via Resend) and lists the request in the admin panel.
+- Super admins can also be bootstrapped from the CLI:
+  `node --env-file=.env scripts/set-user-password.mjs <email> <password> [--super-admin]`
+- Set `SESSION_SECRET` (random, 32+ chars, e.g. `openssl rand -base64 48`) in the environment. If absent, a key is derived from `SUPABASE_SERVICE_ROLE_KEY`.
+- Schema: `migrations/013_user_auth.sql` (also enables RLS on `public.users`, since the Supabase project is shared with the public site).
+
 ## Getting Started
 
 First, run the development server:

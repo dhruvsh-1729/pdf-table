@@ -30,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         throw error;
       }
 
-      res.setHeader("Cache-Control", "public, max-age=30, s-maxage=120, stale-while-revalidate=300");
+      res.setHeader("Cache-Control", "private, max-age=30");
       return res.status(200).json(data || []);
     } catch (error) {
       console.error("Error searching authors:", error);

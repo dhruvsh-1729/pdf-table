@@ -48,7 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
 
     // Optional cache headers (adjust as needed)
-    res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=600");
+    res.setHeader("Cache-Control", "private, max-age=3600");
 
     // Pipe the body
     const reader = resp.body.getReader();

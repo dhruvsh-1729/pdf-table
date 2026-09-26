@@ -831,7 +831,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!bypassQueryCache) {
       const cached = getCachedResponse(cacheKey);
       if (cached) {
-        res.setHeader("Cache-Control", "public, max-age=15, s-maxage=60, stale-while-revalidate=300");
+        res.setHeader("Cache-Control", "private, max-age=15");
         return res.status(200).json(cached);
       }
     }
@@ -851,7 +851,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       setCachedResponse(cacheKey, responsePayload);
     }
 
-    res.setHeader("Cache-Control", bypassQueryCache ? "no-store" : "public, max-age=15, s-maxage=60, stale-while-revalidate=300");
+    res.setHeader("Cache-Control", bypassQueryCache ? "no-store" : "private, max-age=15");
     return res.status(200).json(responsePayload);
   } catch (error) {
     console.error("Server error:", error);

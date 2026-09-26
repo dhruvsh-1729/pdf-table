@@ -22,7 +22,8 @@ const Header = memo<HeaderProps>(
 
     const isAdmin = useMemo(() => user?.email && ADMIN_EMAILS.includes(user.email), [user?.email]);
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+      await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
       localStorage.removeItem("user");
       router.push("/login");
     };
@@ -34,6 +35,7 @@ const Header = memo<HeaderProps>(
       { label: "Authors", path: "/authors", colors: "bg-green-200" },
       { label: "Tags", path: "/tags", colors: "bg-purple-200" },
       { label: "Bulk Add", path: "/add", colors: "bg-indigo-200" },
+      { label: "Admin Panel", path: "/admin", colors: "bg-rose-200" },
     ];
 
     return (

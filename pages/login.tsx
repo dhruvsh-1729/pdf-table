@@ -1,146 +1,110 @@
 import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+type Access = "records" | "verifier";
+
+const inputClass =
+  "w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors";
 
 const Login = () => {
-  const [selectedOption, setSelectedOption] = useState<"records" | "verifier" | null>(null);
-  const [userDetails, setUserDetails] = useState({ name: "", email: "", confirmEmail: "" });
-  const [isFormVisible, setIsFormVisible] = useState(false);
+  const [selectedOption, setSelectedOption] = useState<Access | null>(null);
+  const [mode, setMode] = useState<"login" | "request">("login");
+  const [form, setForm] = useState({ name: "", email: "", password: "", message: "" });
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [mode, setMode] = useState<"login" | "signup">("login");
-  const [signupSuccess, setSignupSuccess] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
 
-  const handleOptionClick = (option: "records" | "verifier") => {
-    setSelectedOption(option);
-    setIsFormVisible(true);
-    setSignupSuccess(false);
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setUserDetails((prevDetails) => ({
-      ...prevDetails,
-      [name]: value,
-    }));
+    setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const validateSignupForm = () => {
-    if (!userDetails.name.trim()) {
-      setError("Please enter your full name.");
-      return false;
-    }
-    if (!userDetails.email.trim()) {
-      setError("Please enter your email address.");
-      return false;
-    }
-    if (!userDetails.confirmEmail.trim()) {
-      setError("Please confirm your email address.");
-      return false;
-    }
-    if (userDetails.email !== userDetails.confirmEmail) {
-      setError("Email addresses don't match. Please check and try again.");
-      return false;
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(userDetails.email)) {
-      setError("Please enter a valid email address.");
-      return false;
-    }
-    return true;
-  };
-
-  const validateLoginForm = () => {
-    if (!userDetails.name.trim()) {
-      setError("Please enter your full name.");
-      return false;
-    }
-    if (!userDetails.email.trim()) {
-      setError("Please enter your email address.");
-      return false;
-    }
-    return true;
-  };
-
-  const handleSubmit = async () => {
+  const switchMode = (next: "login" | "request") => {
+    setMode(next);
     setError(null);
-
-    if (mode === "signup") {
-      if (!validateSignupForm()) return;
-    } else {
-      if (!validateLoginForm()) return;
-    }
-
-    try {
-      const endpoint = mode === "signup" ? "/api/signup" : "/api/login";
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: userDetails.name,
-          email: userDetails.email,
-          access: selectedOption,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (mode === "signup") {
-        if (data.success) {
-          setSignupSuccess(true);
-        } else {
-          setError(data.error || "Signup failed. Please try again or contact admin at dhruvsh2003@gmail.com.");
-        }
-      } else {
-        if (!data.success) {
-          setError(
-            "Invalid credentials. Please check your name and email. If you feel something's wrong, contact admin at dhruvsh2003@gmail.com.",
-          );
-          return;
-        }
-
-        const user = {
-          ...userDetails,
-          access: selectedOption,
-        };
-
-        localStorage.setItem("user", JSON.stringify(user));
-        router.push("/");
-      }
-    } catch (err) {
-      setError("An error occurred. Please try again later.");
-    }
+    setNotice(null);
   };
 
   const resetForm = () => {
-    setIsFormVisible(false);
     setSelectedOption(null);
-    setUserDetails({ name: "", email: "", confirmEmail: "" });
+    setForm({ name: "", email: "", password: "", message: "" });
     setError(null);
-    setSignupSuccess(false);
+    setNotice(null);
   };
 
-  const switchMode = () => {
-    setMode(mode === "login" ? "signup" : "login");
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    setUserDetails({ name: "", email: "", confirmEmail: "" });
+    setNotice(null);
+
+    if (!form.email.trim()) return setError("Please enter your email address.");
+    if (mode === "login" && !form.password) return setError("Please enter your password.");
+    if (mode === "request" && !form.name.trim()) return setError("Please enter your full name.");
+
+    setSubmitting(true);
+    try {
+      if (mode === "request") {
+        const response = await fetch("/api/auth/request-access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: form.name, email: form.email, message: form.message }),
+        });
+        const data = await response.json();
+        if (!data.success) return setError(data.error || "Could not send your request. Please try again.");
+        setNotice(data.message);
+        setForm((prev) => ({ ...prev, message: "" }));
+        return;
+      }
+
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: form.email, password: form.password }),
+      });
+      const data = await response.json();
+      if (!data.success) return setError(data.error || "Invalid email or password.");
+
+      // The session itself lives in an httpOnly cookie; this is only display info for the UI.
+      localStorage.setItem(
+        "user",
+        JSON.stringify({ name: data.user.name, email: data.user.email, role: data.user.role, access: selectedOption }),
+      );
+      const next = typeof router.query.next === "string" && router.query.next.startsWith("/") ? router.query.next : "/";
+      router.push(next.startsWith("//") ? "/" : next);
+    } catch {
+      setError("An error occurred. Please try again later.");
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const optionButton = (option: Access, title: string, subtitle: string, tone: "blue" | "green") => (
+    <button
+      onClick={() => setSelectedOption(option)}
+      className={`flex items-center justify-between p-4 rounded-xl border transition-all duration-200 group hover:shadow-md ${
+        tone === "blue"
+          ? "bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100 hover:border-blue-300"
+          : "bg-gradient-to-r from-green-50 to-emerald-50 border-green-100 hover:border-green-300"
+      }`}
+    >
+      <div className="text-left">
+        <h3 className={`font-medium text-gray-800 ${tone === "blue" ? "group-hover:text-blue-600" : "group-hover:text-green-600"}`}>
+          {title}
+        </h3>
+        <p className="text-sm text-gray-500">{subtitle}</p>
+      </div>
+      <span className="text-gray-400">→</span>
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden transition-all duration-300 transform hover:shadow-2xl">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
         <div className="p-8">
           <div className="text-center mb-8">
             <div className="mx-auto bg-gradient-to-r from-blue-500 to-indigo-600 w-16 h-16 rounded-full flex items-center justify-center mb-4">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-8 w-8 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -155,347 +119,107 @@ const Login = () => {
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 rounded-lg border border-red-200">
-              <div className="flex items-start">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5 text-red-500 mt-0.5 mr-2 flex-shrink-0"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                <p className="text-red-700">{error}</p>
-              </div>
+              <p className="text-red-700 text-sm">{error}</p>
             </div>
           )}
-
-          {signupSuccess && (
+          {notice && (
             <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
-              <div className="flex items-start">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5 text-green-500 mt-0.5 mr-2 flex-shrink-0"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                <div>
-                  <p className="text-green-700 font-medium">Registration Submitted Successfully!</p>
-                  <p className="text-green-600 text-sm mt-1">
-                    Your request has been submitted. You will be granted access shortly.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={resetForm}
-                className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-              >
-                Back to Options
-              </button>
+              <p className="text-green-700 text-sm">{notice}</p>
             </div>
           )}
 
-          {!selectedOption && !isFormVisible && !signupSuccess && (
-            <div className="space-y-6">
-              <div>
-                <p className="text-gray-600 mb-4">Select your purpose:</p>
-                <div className="grid grid-cols-1 gap-4">
-                  <button
-                    onClick={() => handleOptionClick("records")}
-                    className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-100 hover:border-blue-300 transition-all duration-200 group hover:shadow-md"
-                  >
-                    <div className="flex items-center">
-                      <div className="mr-4 bg-blue-100 p-2 rounded-lg group-hover:bg-blue-200 transition-colors">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-6 w-6 text-blue-600"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                          />
-                        </svg>
-                      </div>
-                      <div className="text-left">
-                        <h3 className="font-medium text-gray-800 group-hover:text-blue-600">Add New Records</h3>
-                        <p className="text-sm text-gray-500">Submit new data entries</p>
-                      </div>
-                    </div>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5 text-gray-400 group-hover:text-blue-500"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => handleOptionClick("verifier")}
-                    className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-100 hover:border-green-300 transition-all duration-200 group hover:shadow-md"
-                  >
-                    <div className="flex items-center">
-                      <div className="mr-4 bg-green-100 p-2 rounded-lg group-hover:bg-green-200 transition-colors">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-6 w-6 text-green-600"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                          />
-                        </svg>
-                      </div>
-                      <div className="text-left">
-                        <h3 className="font-medium text-gray-800 group-hover:text-green-600">Verify Summaries</h3>
-                        <p className="text-sm text-gray-500">Review and validate information</p>
-                      </div>
-                    </div>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5 text-gray-400 group-hover:text-green-500"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              </div>
+          {!selectedOption ? (
+            <div className="space-y-4">
+              <p className="text-gray-600">Select your purpose:</p>
+              {optionButton("records", "Add New Records", "Submit new data entries", "blue")}
+              {optionButton("verifier", "Verify Summaries", "Review and validate information", "green")}
             </div>
-          )}
-
-          {isFormVisible && !signupSuccess && (
-            <div className="space-y-6">
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-semibold text-gray-800">
-                  {mode === "login" ? "Enter Your Details" : "Create New Account"}
+                  {mode === "login" ? "Sign in" : "Request access"}
                 </h2>
                 <div className="bg-blue-100 text-blue-800 text-xs px-3 py-1 rounded-full">
                   {selectedOption === "records" ? "Add Records" : "Verify Summaries"}
                 </div>
               </div>
 
-              {/* Mode Switch */}
               <div className="flex justify-center">
                 <div className="bg-gray-100 p-1 rounded-lg flex">
-                  <button
-                    onClick={() => setMode("login")}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                      mode === "login" ? "bg-white text-blue-600 shadow-sm" : "text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    Login
-                  </button>
-                  <button
-                    onClick={() => setMode("signup")}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                      mode === "signup" ? "bg-white text-blue-600 shadow-sm" : "text-gray-600 hover:text-gray-900"
-                    }`}
-                  >
-                    Sign Up
-                  </button>
+                  {(["login", "request"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => switchMode(m)}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                        mode === m ? "bg-white text-blue-600 shadow-sm" : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      {m === "login" ? "Login" : "Request access"}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="space-y-4">
+              {mode === "request" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      name="name"
-                      placeholder="John Doe"
-                      value={userDetails.name}
-                      onChange={handleInputChange}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    />
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5 text-gray-400"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      name="email"
-                      placeholder="john@example.com"
-                      value={userDetails.email}
-                      onChange={handleInputChange}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    />
-                    <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5 text-gray-400"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
-                        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-
-                {mode === "signup" && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Email Address</label>
-                    <div className="relative">
-                      <input
-                        type="email"
-                        name="confirmEmail"
-                        placeholder="john@example.com"
-                        value={userDetails.confirmEmail}
-                        onChange={handleInputChange}
-                        className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      />
-                      <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                        {userDetails.email &&
-                          userDetails.confirmEmail &&
-                          (userDetails.email === userDetails.confirmEmail ? (
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              className="h-5 w-5 text-green-500"
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          ) : (
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              className="h-5 w-5 text-red-500"
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          ))}
-                      </div>
-                    </div>
-                    {userDetails.email &&
-                      userDetails.confirmEmail &&
-                      userDetails.email !== userDetails.confirmEmail && (
-                        <p className="text-red-500 text-xs mt-1">Email addresses don&#39;t match</p>
-                      )}
-                  </div>
-                )}
-              </div>
-
-              {mode === "signup" && (
-                <div className="bg-blue-50 p-4 rounded-lg">
-                  <div className="flex items-start">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5 text-blue-500 mt-0.5 mr-2 flex-shrink-0"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    <div>
-                      <p className="text-blue-700 text-sm font-medium">Account Approval Process</p>
-                      <p className="text-blue-600 text-xs mt-1">
-                        After submitting your registration, your account will be reviewed by our admin team.
-                      </p>
-                    </div>
-                  </div>
+                  <input type="text" name="name" autoComplete="name" value={form.name} onChange={handleInputChange} className={inputClass} />
                 </div>
               )}
 
-              <div className="flex justify-between mt-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                <input type="email" name="email" autoComplete="email" value={form.email} onChange={handleInputChange} className={inputClass} />
+              </div>
+
+              {mode === "login" ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    name="password"
+                    autoComplete="current-password"
+                    value={form.password}
+                    onChange={handleInputChange}
+                    className={inputClass}
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    No password yet, or forgot it?{" "}
+                    <button type="button" onClick={() => switchMode("request")} className="text-blue-600 hover:underline">
+                      Request one from the admin
+                    </button>
+                    .
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Message (optional)</label>
+                  <textarea name="message" rows={3} value={form.message} onChange={handleInputChange} className={inputClass} />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Your request is emailed to the admin, who will set a password for you.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-between pt-2">
                 <button
+                  type="button"
                   onClick={resetForm}
-                  className="px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors flex items-center"
+                  className="px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5 mr-2"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M9.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L7.414 9H15a1 1 0 110 2H7.414l2.293 2.293a1 1 0 010 1.414z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
                   Back
                 </button>
                 <button
-                  onClick={handleSubmit}
-                  className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg flex items-center"
+                  type="submit"
+                  disabled={submitting}
+                  className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md disabled:opacity-60"
                 >
-                  {mode === "login" ? "Continue" : "Create Account"}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5 ml-2"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
+                  {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Send request"}
                 </button>
               </div>
-            </div>
+            </form>
           )}
         </div>
 
