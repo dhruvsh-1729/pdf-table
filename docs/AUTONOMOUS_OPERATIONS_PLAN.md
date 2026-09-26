@@ -238,6 +238,8 @@ A Jain monk does not handle money. Any revenue must go to a **trust or legal ent
   - ops-cron: Supabase's direct DB host is IPv6-only and Railway lacked outbound IPv6. Fixed by connecting through the IPv4 session pooler (`SUPABASE_DB_POOLER_HOST=aws-1-ap-south-1.pooler.supabase.com`, in `ops/pipeline/sql.mjs`); outbound IPv6 was also enabled. **Still to verify:** an end-to-end ingest job on Railway once Sarvam has credits (queue one with `payload.dry_run=true` first).
   - Text recovery pass 1: 957/1000 improved. Pass 2 (OCR only) running. Next free migration number: 031 (the other session used 030 for `summary_hi`).
 
+- 2026-09-27 (SEO session, site repo): Shipped to aryanculture.org: 786 `/topics/[id]` pages plus a `/topics` hub (site migration 0020_topics.sql, applied), with tags on article and author pages as crawlable links; www→apex 301; 410 for the old WordPress URLs; keyword titles and descriptions; Google Scholar `citation_*` meta; thin pages noindexed and left out of the sitemap; IndexNow key plus `scripts/indexnow.mjs` (all URLs submitted). Search Console baseline on 2026-09-27: 3.7K indexed, 4,987 discovered but not indexed, average crawl response 754 ms, about 60 crawls a day. Next free site migration: 0021. Owner decisions pending: a Cloudflare CDN in front, buying .com/.in, Bing Webmaster import.
+
 ## 13. Execution order (next runs)
 
 1. Phase 0: backups, ops tables, monitoring and report email.
