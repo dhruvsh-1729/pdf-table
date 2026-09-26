@@ -1,4 +1,5 @@
 import { canonicalLanguageName, isKnownLanguage } from "@/lib/languages";
+import { normalizeSlug } from "@/lib/magazineUtils";
 
 const IGNORED_LANGUAGE_TOKENS = new Set(["various"]);
 
@@ -153,12 +154,26 @@ export async function ensureMagazineId(supabase: any, rawName: string): Promise<
   const { data: upserted, error: upsertError } = await supabase
     .from("magazines")
     .upsert([{ name }], { onConflict: "name" })
-    .select("id, name")
+    .select("id, name, slug")
     .single();
 
   if (upsertError) throw upsertError;
   const id = Number(upserted?.id);
   if (!Number.isFinite(id)) throw new Error("Failed to resolve magazine id.");
+
+  // The public site only links magazines that have a slug; magazines created
+  // here used to get none, which left their pages unreachable.
+  if (!upserted?.slug) {
+    const base = normalizeSlug(null, name);
+    const { error: slugError } = await supabase.from("magazines").update({ slug: base }).eq("id", id);
+    if (slugError) {
+      const { error: retryError } = await supabase
+        .from("magazines")
+        .update({ slug: `${base}-${id}` })
+        .eq("id", id);
+      if (retryError) console.warn(`Could not set a slug for magazine ${id}:`, retryError);
+    }
+  }
   return id;
 }
 
