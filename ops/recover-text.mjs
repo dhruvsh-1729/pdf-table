@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { db, trackRun, waitForHealthySite } from "./lib.mjs";
+import { textQuality } from "./pipeline/quality.mjs";
 
 const run = promisify(execFile);
 const args = Object.fromEntries(
@@ -25,15 +26,6 @@ const CONCURRENCY = Number(args.concurrency ?? 6);
 const MAX_OCR_PAGES = Number(args["max-pages"] ?? 80);
 const DRY = Boolean(args["dry-run"]);
 
-// Same rule as migration 020.
-export function textQuality(text) {
-  const t = (text ?? "").trim();
-  if (t.length < 300) return "missing";
-  const letters = (t.match(/[\p{L}ऀ-ॿ઀-૿]/gu) ?? []).length;
-  const visible = t.replace(/\s/g, "").length || 1;
-  if (letters / visible < 0.6) return "garbled";
-  return t.length < 2000 ? "partial" : "good";
-}
 const RANK = { missing: 0, garbled: 1, partial: 2, good: 3 };
 
 function tesseractLangs(languageLegacy) {
