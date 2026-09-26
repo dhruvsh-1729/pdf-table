@@ -14,45 +14,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: "Author IDs array is required" });
       }
 
-      // Get author names first for record deletion
-      const { data: authors, error: authorsError } = await supabase
-        .from("authors")
-        .select("id, name")
-        .in("id", authorIds);
-
-      if (authorsError) {
-        throw authorsError;
-      }
-
-      let totalDeletedRecords = 0;
-
-      // Delete records for each author
-      for (const author of authors) {
-        const { data: recordsData, error: recordsCountError } = await supabase
-          .from("records")
-          .select("id")
-          .contains("authors", `"${author.name}"`);
-
-        if (recordsCountError) {
-          console.error(`Error counting records for author ${author.name}:`, recordsCountError);
-          continue;
-        }
-
-        const recordCount = recordsData?.length || 0;
-        totalDeletedRecords += recordCount;
-
-        if (recordCount > 0) {
-          const { error: deleteRecordsError } = await supabase
-            .from("records")
-            .delete()
-            .contains("authors", `"${author.name}"`);
-
-          if (deleteRecordsError) {
-            console.error(`Error deleting records for author ${author.name}:`, deleteRecordsError);
-          }
-        }
-      }
-
+      // Deleting an author never deletes articles: their record_authors links
+      // cascade, and the articles stay (use Merge to fold a duplicate instead).
       // Delete authors
       const { data: deletedAuthors, error: deleteAuthorsError } = await supabase
         .from("authors")
@@ -69,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({
         message: "Authors deleted successfully",
         deletedAuthors: deletedAuthors?.length || 0,
-        deletedRecords: totalDeletedRecords,
+        deletedRecords: 0,
       });
     } catch (error) {
       console.error("Error in bulk delete:", error);

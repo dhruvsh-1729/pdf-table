@@ -4,6 +4,7 @@ import { GetServerSideProps } from "next";
 import { useRouter } from "next/router";
 import { createClient } from "@supabase/supabase-js";
 import ManagementPagination from "@/components/ManagementPagination";
+import MergeDialog from "@/components/MergeDialog";
 import {
   LoadingSpinner,
   Toast,
@@ -542,6 +543,7 @@ export default function TagsPage({ tags, total, currentPage, totalPages, pageSiz
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [deleteRecordCount, setDeleteRecordCount] = useState(0);
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
+  const [isMergeOpen, setIsMergeOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "warning"; visible: boolean }>({
     message: "",
     type: "success",
@@ -733,8 +735,25 @@ export default function TagsPage({ tags, total, currentPage, totalPages, pageSiz
         <BulkActions
           selectedTags={selectedTags}
           onBulkDelete={handleBulkDelete}
+          onMerge={() => setIsMergeOpen(true)}
           onClearSelection={() => setSelectedTags([])}
         />
+        {isMergeOpen && (
+          <MergeDialog
+            kind="tag"
+            items={selectedTags.map((id) => {
+              const found = tags.find((x) => x.id === id);
+              return { id, name: found ? String(found.name) : `#${id}`, count: found?.recordsCount };
+            })}
+            onClose={() => setIsMergeOpen(false)}
+            onMerged={(message) => {
+              setIsMergeOpen(false);
+              setSelectedTags([]);
+              showToast(message, "success");
+              setTimeout(() => window.location.reload(), 1200);
+            }}
+          />
+        )}
 
         {/* Filters */}
         <FiltersComponent filters={filters} onFiltersChange={handleFiltersChange} />

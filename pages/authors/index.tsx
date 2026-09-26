@@ -4,6 +4,7 @@ import { GetServerSideProps } from "next";
 import { useRouter } from "next/router";
 import { createClient } from "@supabase/supabase-js";
 import ManagementPagination from "@/components/ManagementPagination";
+import MergeDialog from "@/components/MergeDialog";
 import {
   LoadingSpinner,
   Toast,
@@ -614,6 +615,7 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, p
   const [editingAuthor, setEditingAuthor] = useState<Author | null>(null);
   const [deleteRecordCount, setDeleteRecordCount] = useState(0);
   const [selectedAuthors, setSelectedAuthors] = useState<number[]>([]);
+  const [isMergeOpen, setIsMergeOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "warning"; visible: boolean }>({
     message: "",
     type: "success",
@@ -725,7 +727,7 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, p
         const result = await response.json();
         setSelectedAuthors([]);
         showToast(
-          `Successfully deleted ${result.deletedAuthors} author(s) and ${result.deletedRecords} related record(s)!`,
+          `Deleted ${result.deletedAuthors} author(s). Their articles were kept.`,
           "success",
         );
         setTimeout(() => window.location.reload(), 1000);
@@ -805,8 +807,25 @@ export default function AuthorsPage({ authors, total, currentPage, totalPages, p
         <BulkActions
           selectedAuthors={selectedAuthors}
           onBulkDelete={handleBulkDelete}
+          onMerge={() => setIsMergeOpen(true)}
           onClearSelection={() => setSelectedAuthors([])}
         />
+        {isMergeOpen && (
+          <MergeDialog
+            kind="author"
+            items={selectedAuthors.map((id) => {
+              const found = authors.find((x) => x.id === id);
+              return { id, name: found ? String(found.name) : `#${id}`, count: found?.recordsCount };
+            })}
+            onClose={() => setIsMergeOpen(false)}
+            onMerged={(message) => {
+              setIsMergeOpen(false);
+              setSelectedAuthors([]);
+              showToast(message, "success");
+              setTimeout(() => window.location.reload(), 1200);
+            }}
+          />
+        )}
 
         {/* Filters */}
         <FiltersComponent filters={filters} onFiltersChange={handleFiltersChange} />

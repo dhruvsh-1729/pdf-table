@@ -542,10 +542,12 @@ const ExportImportActions = ({ onRefresh }: { onRefresh: () => void }) => {
 const BulkActions = ({
   selectedAuthors,
   onBulkDelete,
+  onMerge,
   onClearSelection,
 }: {
   selectedAuthors: number[];
   onBulkDelete: () => void;
+  onMerge?: () => void;
   onClearSelection: () => void;
 }) => {
   if (selectedAuthors.length === 0) return null;
@@ -558,6 +560,11 @@ const BulkActions = ({
           <button onClick={onClearSelection} className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800">
             Clear Selection
           </button>
+          {onMerge && selectedAuthors.length >= 2 && (
+            <button onClick={onMerge} className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">
+              Merge…
+            </button>
+          )}
           <button onClick={onBulkDelete} className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600">
             Delete Selected
           </button>
