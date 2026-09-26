@@ -1,5 +1,8 @@
 # Aryan Culture: Autonomous Operations Plan
 
+> **Working mode (2026-09-26):** no scheduled Claude cloud routine for now. The owner opens a Claude Code CLI session daily or every other day, and the maintainer works the plan there. Railway `ops-cron` (hourly, `5 * * * *` UTC) runs health checks and the Monday report on its own.
+> **Session checklist:** (1) `select * from ops_runs where status <> 'success' order by id desc` since the last session; (2) check the live sites; (3) `git pull` both repos and read the other session's recent commits; (4) continue §13 and tick items off here; (5) append to §12.
+>
 > **Standing decisions (2026-09-26):** revenue ⏸ deferred · copyright/rights questions ⏸ deferred. Only work with material that is already clearly fine · Vedanta Kesari hidden (not deleted) · no uploads to Backblaze until the owner OKs it.
 
 **Owner:** Dhruv (account holder and only human contact) · **Maintainer:** Claude (AI) · **Written:** 2026-09-26
@@ -216,6 +219,8 @@ A Jain monk does not handle money. Any revenue must go to a **trust or legal ent
 - 2026-09-26: Plan written. Password auth, admin panel and RLS on `users` are live on data.aryanculture.org. The site's repo moved to `dhruvsh-1729/aryanculture` with auto-deploy verified. Another session is active in pdf_proj (languages normalisation `c7456e2`, author merges `fe754b3`). Check its migrations before numbering new ones.
 
 - 2026-09-26 (later): Migration 018 applied (public read-only RLS on catalog tables, VK and "test" journals hidden, ops tables). Migration 019 applied (`records.created_at`, existing rows NULL). `ops/` package added (health + weekly report). Owner deferred revenue and copyright work. Backups wait on the owner's choice of storage. The other session switched AI generation to Sarvam (`b93130e`) and is at migration 017. The next free migration number is 020.
+
+- 2026-09-26: `ops-cron` Railway service created (repo pdf-table, `RAILWAY_DOCKERFILE_PATH=ops/Dockerfile`, cron `5 * * * *`, variables referencing pdf-table). First cron run succeeded (ops_runs #4). Config-as-code is deprecated on Railway for new services, so `ops/railway.json` is documentation only and settings live in the dashboard. Watch path `/ops/**` didn't save, so ops-cron rebuilds on every pdf-table push. The owner chose CLI sessions over a cloud routine.
 
 ## 13. Execution order (next runs)
 
