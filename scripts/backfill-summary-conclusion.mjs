@@ -5,7 +5,7 @@
  * Steps:
  *   1) For each record missing summary AND conclusion, ensure extracted_text is present
  *      (download PDF -> extract text with pdfjs).
- *   2) Generate summary + conclusion via DeepSeek (same prompts as API).
+ *   2) Generate summary + conclusion via Sarvam AI (same prompts as API).
  *   3) Update records table with extracted_text, summary, and conclusion.
  *
  * Usage:
@@ -27,16 +27,16 @@ const rootDir = path.resolve(__dirname, "..");
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").trim().replace(/\/+$/, "");
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
+const SARVAM_API_KEY = process.env.SARVAM_API_KEY;
+const SARVAM_BASE_URL = (process.env.SARVAM_BASE_URL || "https://api.sarvam.ai/v1").trim().replace(/\/+$/, "");
+const SARVAM_MODEL = process.env.SARVAM_MODEL?.trim() || "sarvam-105b";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
   process.exit(1);
 }
-if (!DEEPSEEK_API_KEY) {
-  console.error("Missing DEEPSEEK_API_KEY.");
+if (!SARVAM_API_KEY) {
+  console.error("Missing SARVAM_API_KEY.");
   process.exit(1);
 }
 
@@ -48,44 +48,44 @@ if (!process.env.UPLOADTHING_TOKEN) {
   console.warn("UPLOADTHING_TOKEN missing; will fall back to pdf_url only when possible.");
 }
 
-function extractDeepSeekErrorMessage(payload, status) {
+function extractAiErrorMessage(payload, status) {
   const message =
-    payload?.error?.message ||
-    payload?.message ||
-    payload?.error ||
-    `DeepSeek API request failed with status ${status}.`;
+    payload?.error?.message || payload?.message || payload?.error || `Sarvam AI request failed with status ${status}.`;
 
-  return typeof message === "string" && message.trim() ? message.trim() : `DeepSeek API request failed with status ${status}.`;
+  return typeof message === "string" && message.trim() ? message.trim() : `Sarvam AI request failed with status ${status}.`;
 }
 
-async function createDeepSeekChatCompletion({ messages, temperature, topP, maxTokens }) {
-  const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+// Same client as lib/aiText.ts: Sarvam chat completions with thinking off.
+async function createChatCompletion({ messages, temperature, topP, maxTokens }) {
+  const response = await fetch(`${SARVAM_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${DEEPSEEK_API_KEY.trim()}`,
+      "api-subscription-key": SARVAM_API_KEY.trim(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
+      model: SARVAM_MODEL,
       messages,
       temperature,
       top_p: topP,
       max_tokens: maxTokens,
+      reasoning_effort: null,
       stream: false,
     }),
   });
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(extractDeepSeekErrorMessage(payload, response.status));
+    throw new Error(extractAiErrorMessage(payload, response.status));
   }
 
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
-    throw new Error("DeepSeek API response was empty.");
+  const raw = payload?.choices?.[0]?.message?.content;
+  const content = typeof raw === "string" ? raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() : "";
+  if (!content) {
+    throw new Error("Sarvam AI response was empty.");
   }
 
-  return content.trim();
+  return content;
 }
 
 function getMagazineName(record) {
@@ -250,7 +250,7 @@ async function buildMessages(mode, text, title, name) {
 
 async function generateText(mode, text, title, name) {
   const messages = await buildMessages(mode, trimContext(text, mode === "summary" ? 9000 : 6000), title, name);
-  return createDeepSeekChatCompletion({
+  return createChatCompletion({
     messages,
     temperature: mode === "summary" ? 0.25 : 0.25,
     topP: 0.9,

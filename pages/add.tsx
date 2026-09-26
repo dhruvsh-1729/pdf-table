@@ -1455,7 +1455,7 @@ function Add() {
               <p className="text-xs font-semibold uppercase tracking-[0.25em] text-zinc-500">Workflow</p>
               <h1 className="text-2xl font-semibold text-zinc-900">Add Records and Manage AI Prompts</h1>
               <p className="mt-1 text-sm text-zinc-600">
-                Split PDFs into records, then manage the exact DeepSeek prompts used for record and split field generation.
+                Split PDFs into records, then manage the exact AI (Sarvam) prompts used for record and split field generation.
               </p>
             </div>
             <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-1">

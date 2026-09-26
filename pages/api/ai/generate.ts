@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { createDeepSeekChatCompletion, hasDeepSeekApiKey } from "@/lib/aiText";
+import { AI_KEY_MISSING_MESSAGE, createChatCompletion, hasAiApiKey } from "@/lib/aiText";
 import { buildStoredPromptMessages } from "@/lib/aiPromptStore";
 import { extractMagazineName } from "@/lib/recordRelations";
 
@@ -19,8 +19,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  if (!hasDeepSeekApiKey()) {
-    return res.status(500).json({ error: "DEEPSEEK_API_KEY is not configured on the server." });
+  if (!hasAiApiKey()) {
+    return res.status(500).json({ error: AI_KEY_MISSING_MESSAGE });
   }
 
   try {
@@ -57,7 +57,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    const content = await createDeepSeekChatCompletion({
+    const content = await createChatCompletion({
       messages,
       temperature: mode === "tags" ? 0.1 : 0.25,
       topP: 0.9,

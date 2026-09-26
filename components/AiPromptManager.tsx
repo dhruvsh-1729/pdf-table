@@ -127,7 +127,7 @@ export default function AiPromptManager({ canEdit }: AiPromptManagerProps) {
       <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
         <h2 className="text-xl font-semibold text-zinc-900">AI Prompt Management</h2>
         <p className="mt-2 text-sm text-zinc-600">
-          Edit the exact DeepSeek system and user prompts used for each record and split field. Required placeholders
+          Edit the exact AI (Sarvam) system and user prompts used for each record and split field. Required placeholders
           must stay in the user prompt.
         </p>
         {!canEdit && <p className="mt-2 text-sm font-medium text-amber-700">Admin access is required to edit prompts.</p>}
