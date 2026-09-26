@@ -1210,7 +1210,7 @@ function Add() {
             const createResp = await fetch(apiUrl("/api/tags"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name: tag }),
+              body: JSON.stringify({ name: tag, reuseExisting: true }),
             });
 
             if (createResp.status === 409) {
@@ -1273,7 +1273,7 @@ function Add() {
             const createResp = await fetch(apiUrl("/api/authors"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name: author }),
+              body: JSON.stringify({ name: author, reuseExisting: true }),
             });
 
             if (createResp.status === 409) {

@@ -3,6 +3,7 @@ import Papa from "papaparse";
 import formidable from "formidable";
 import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
+import { cleanEntityName, findByEntityName } from "@/lib/entityNames";
 
 // Disable body parser for file upload
 export const config = {
@@ -84,31 +85,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    // Prepare data for upsert (insert or update based on name uniqueness)
-    const authorsToUpsert = csvData.map((row) => ({
-      // Don't include id in upsert to let database generate it for new records
-      name: row.name.trim(),
-      description: row.description || null,
-      cover_url: row.cover_url || null,
-      national: row.national || null,
-      // Don't include created_at, let database handle it
-    }));
+    // Insert new authors; update the profile of ones that already exist
+    // (matched case-insensitively, like the authors_name_key_unique index).
+    let created = 0;
+    let updated = 0;
+    const failures: string[] = [];
+    for (const row of csvData) {
+      const name = cleanEntityName(row.name);
+      const fields = {
+        description: row.description || null,
+        cover_url: row.cover_url || null,
+        national: row.national || null,
+      };
+      try {
+        const existing = await findByEntityName(supabase, "authors", name);
+        if (existing) {
+          const { error } = await supabase.from("authors").update(fields).eq("id", existing.id);
+          if (error) throw error;
+          updated += 1;
+        } else {
+          const { error } = await supabase.from("authors").insert([{ name, ...fields }]);
+          if (error) throw error;
+          created += 1;
+        }
+      } catch (rowError: any) {
+        failures.push(`${name}: ${rowError?.message || rowError}`);
+      }
+    }
 
-    // Use upsert to handle duplicates based on name constraint
-    const { data: upsertedAuthors, error: upsertError } = await supabase
-      .from("authors")
-      .upsert(authorsToUpsert, {
-        onConflict: "name",
-        ignoreDuplicates: false,
-      })
-      .select();
-
-    if (upsertError) {
-      console.error("Database upsert error:", upsertError);
-      return res.status(500).json({
-        error: "Failed to import authors",
-        details: upsertError.message,
-      });
+    if (failures.length > 0 && created + updated === 0) {
+      return res.status(500).json({ error: "Failed to import authors", details: failures.slice(0, 20) });
     }
 
     // Clean up temporary file
@@ -120,8 +126,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       success: true,
-      message: `Successfully processed ${csvData.length} authors`,
-      imported: upsertedAuthors?.length || 0,
+      message: `Processed ${csvData.length} authors: ${created} created, ${updated} updated, ${failures.length} failed`,
+      imported: created + updated,
+      created,
+      updated,
+      failures: failures.slice(0, 20),
     });
   } catch (error) {
     console.error("Import error:", error);

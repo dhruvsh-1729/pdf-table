@@ -462,7 +462,7 @@ export default function Home() {
           const response = await fetch("/api/tags", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: tag.label }),
+            body: JSON.stringify({ name: tag.label, reuseExisting: true }),
           });
           if (!response.ok) throw new Error("Failed to create tag");
           const data = await response.json();
@@ -523,7 +523,7 @@ export default function Home() {
           const response = await fetch("/api/authors", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: author.label }),
+            body: JSON.stringify({ name: author.label, reuseExisting: true }),
           });
           if (!response.ok) throw new Error("Failed to create author");
           const data = await response.json();

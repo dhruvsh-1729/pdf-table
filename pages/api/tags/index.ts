@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { cleanEntityName, findByEntityName } from "@/lib/entityNames";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -24,17 +25,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } else if (req.method === "POST") {
     // Create new tag
     try {
-      const { name, important } = req.body as {
+      const { name, important, reuseExisting } = req.body as {
         name?: string;
         important?: boolean | null;
+        reuseExisting?: boolean;
       };
 
       if (!name) {
         return res.status(400).json({ message: "Name is required" });
       }
 
-      // Normalize the tag name (trim whitespace)
-      const normalizedName = name.trim();
+      // Normalize the tag name (NFC, collapse whitespace, trim)
+      const normalizedName = cleanEntityName(name);
 
       if (normalizedName.length === 0) {
         return res.status(400).json({ message: "Name cannot be empty" });
@@ -44,19 +46,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: "Name must be less than 100 characters" });
       }
 
-      // Enforce uniqueness without relying on DB constraint (not present in some envs)
-      const { data: existing, error: existingError } = await supabase
-        .from("tags")
-        .select("id")
-        .eq("name", normalizedName)
-        .limit(1);
-
-      if (existingError) {
-        throw existingError;
-      }
-
-      if (existing && existing.length > 0) {
-        return res.status(409).json({ message: "Tag name already exists" });
+      // Case-insensitive, like the tags_name_key_unique index (migration 014).
+      const existing = await findByEntityName(supabase, "tags", normalizedName);
+      if (existing) {
+        if (reuseExisting === true) return res.status(200).json(existing);
+        return res.status(409).json({ message: "Tag name already exists", existing });
       }
 
       const { data, error } = await supabase
@@ -71,6 +65,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .single();
 
       if (error) {
+        if (error.code === "23505") {
+          // Created concurrently by another request.
+          const raced = await findByEntityName(supabase, "tags", normalizedName);
+          if (raced && reuseExisting === true) return res.status(200).json(raced);
+          return res.status(409).json({ message: "Tag name already exists", existing: raced });
+        }
         throw error;
       }
 

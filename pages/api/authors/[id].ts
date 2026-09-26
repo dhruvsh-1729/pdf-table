@@ -60,7 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ? null
             : null;
 
-      const { data } = await supabase
+      const { data, error: updateError } = await supabase
         .from("authors")
         .update({
           name,
@@ -72,6 +72,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         })
         .eq("id", authorId)
         .select("id, name, description, cover_url, national, designation, short_name, created_at");
+
+      if (updateError) {
+        if (updateError.code === "23505") {
+          return res.status(409).json({ message: "Another author already has this name" });
+        }
+        throw updateError;
+      }
 
       if (!data || data.length === 0) {
         return res.status(404).json({ message: "Author not found" });
