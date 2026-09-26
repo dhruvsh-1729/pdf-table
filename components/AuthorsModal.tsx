@@ -1,4 +1,4 @@
-import { MouseEvent } from "react";
+import { MouseEvent, useState } from "react";
 import AsyncCreatableSelect from "react-select/async-creatable";
 import { UserIcon } from "@phosphor-icons/react";
 
@@ -21,9 +21,29 @@ export default function AuthorsModal({
   setSelectedAuthors,
   handleAuthorSubmit,
 }: AuthorsModalProps) {
+  const [markingUnsigned, setMarkingUnsigned] = useState(false);
   if (!authorsModalOpen) return null;
 
-  console.log({ selectedAuthors });
+  // "Unexhibited" is the archive's placeholder for unsigned items (news
+  // digests, contents pages, reviews). The public site hides it.
+  const isPlaceholder = (label: string) => /^unexhibited\b/i.test(label.trim());
+  const hasPlaceholder = selectedAuthors.some((a) => isPlaceholder(a.label));
+  const hasReal = selectedAuthors.some((a) => !isPlaceholder(a.label));
+
+  const markUnsigned = async () => {
+    setMarkingUnsigned(true);
+    try {
+      const res = await fetch("/api/authors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Unexhibited", reuseExisting: true }),
+      });
+      const author = await res.json();
+      if (res.ok && author?.id) setSelectedAuthors([{ label: "Unexhibited", value: author.id }]);
+    } finally {
+      setMarkingUnsigned(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -66,10 +86,27 @@ export default function AuthorsModal({
             onCreateOption={(inputValue) => {
               setSelectedAuthors([...selectedAuthors, { label: inputValue, value: Date.now() }]);
             }}
-            placeholder="Search or create authors"
+            placeholder="Search or create authors (English or हिन्दी)"
             isDisabled={loading}
             classNamePrefix="react-select"
           />
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <button
+              type="button"
+              onClick={() => void markUnsigned()}
+              disabled={loading || markingUnsigned}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              title="For unsigned items with no byline, e.g. news digests, contents pages, reviews"
+            >
+              {markingUnsigned ? "…" : "Mark as unsigned (no byline)"}
+            </button>
+            {hasPlaceholder && !hasReal && <span className="text-xs text-slate-500">Hidden on the public site</span>}
+          </div>
+          {hasPlaceholder && hasReal && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              This record has real authors, so the &ldquo;Unexhibited&rdquo; placeholder isn&apos;t needed; remove it.
+            </p>
+          )}
           <button
             type="button"
             onClick={handleAuthorSubmit}
