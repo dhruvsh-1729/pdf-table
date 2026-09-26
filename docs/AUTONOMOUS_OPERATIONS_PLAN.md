@@ -233,6 +233,11 @@ A Jain monk does not handle money. Any revenue must go to a **trust or legal ent
   - The other session (kkms-de) owns search, author pages, tags typeahead, `summary_hi` and the PWA. Its search migration is `024_full_text_search.sql`. **The next free migration number is 030.**
   - DeepSeek balance is negative (−$2.40); all AI now goes through Sarvam (`sarvam-105b`, `reasoning_effort: null`).
 
+- 2026-09-26 ~18:00 UTC: **Sarvam credits ran out (HTTP 402).** All AI work stopped: audit (1,005 ok / 337 flagged / 236 partial), regeneration (296 rewritten and published in total), and the other session's Hindi translation. Ingest job #1 (dry-run smoke test) was cancelled. **Before any AI job runs again, the owner must top up Sarvam.** Resume with `audit-summaries.mjs` (it skips audited records), then `regenerate-summaries.mjs`, then `classify-subjects.mjs`.
+  - Correction: `summaries`/`conclusions` hold the PREVIOUS text saved when a volunteer edits a record (pages/api/update-record.ts), so they are edit history, not reviews. `check_status='human_verified'` therefore means "a volunteer edited this summary". The site label and withholding rule were adjusted by the other session.
+  - ops-cron: Supabase's direct DB host is IPv6-only and Railway lacked outbound IPv6. Fixed by connecting through the IPv4 session pooler (`SUPABASE_DB_POOLER_HOST=aws-1-ap-south-1.pooler.supabase.com`, in `ops/pipeline/sql.mjs`); outbound IPv6 was also enabled. **Still to verify:** an end-to-end ingest job on Railway once Sarvam has credits (queue one with `payload.dry_run=true` first).
+  - Text recovery pass 1: 957/1000 improved. Pass 2 (OCR only) running. Next free migration number: 031 (the other session used 030 for `summary_hi`).
+
 ## 13. Execution order (next runs)
 
 1. Phase 0: backups, ops tables, monitoring and report email.
