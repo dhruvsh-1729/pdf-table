@@ -136,7 +136,7 @@ async function jobs() {
       const p = job.payload;
       const r = await ingestIssue({
         pdf: p.pdf_url, magazineId: p.magazine_id, volume: p.volume, number: p.number, date: p.date,
-        langs: p.langs || "eng", budgetInr: settings.budget_inr_per_job,
+        langs: p.langs || "eng", budgetInr: settings.budget_inr_per_job, dryRun: Boolean(p.dry_run),
       });
       await q`UPDATE public.jobs SET status = 'done', result = ${q.json({ summary: r.summary, report: r.details.report, usage: r.details.usage })},
               last_error = NULL, updated_at = now() WHERE id = ${job.id}`;
