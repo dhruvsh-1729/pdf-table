@@ -19,12 +19,13 @@ const tesseractTracingFiles = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  experimental: {
-    outputFileTracingIncludes: {
-      "/api/records/extracted-text": [...pdfjsTracingFiles, ...tesseractTracingFiles],
-      "/api/records/ocr": [...pdfjsTracingFiles, ...tesseractTracingFiles],
-    },
-  } as any,
+  // Top-level since Next 15 (it was ignored under `experimental`, so these
+  // files were not traced into the production build).
+  outputFileTracingIncludes: {
+    "/api/records/extracted-text": [...pdfjsTracingFiles, ...tesseractTracingFiles],
+    "/api/records/ocr": [...pdfjsTracingFiles, ...tesseractTracingFiles],
+    "/api/extract-text-file": [...pdfjsTracingFiles, ...tesseractTracingFiles],
+  },
 };
 
 export default nextConfig;
