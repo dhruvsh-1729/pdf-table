@@ -86,6 +86,13 @@ const Header = memo<HeaderProps>(
                 Review
               </button>
 
+              <button
+                onClick={() => router.push("/requests")}
+                className="px-3 py-1.5 text-sm font-bold text-black bg-sky-200 rounded-lg hover:shadow-md transition-all duration-200 whitespace-nowrap"
+              >
+                Requests
+              </button>
+
               {/* Add Record Button */}
               {access === "records" && (
                 <button
