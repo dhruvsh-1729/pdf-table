@@ -65,7 +65,11 @@ async function translateChunk(text) {
       const data = await res.json();
       if (typeof data.translated_text === "string" && data.translated_text.trim()) return data.translated_text.trim();
     } else if (res.status < 500 && res.status !== 429) {
-      throw new Error(`Sarvam ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const body = (await res.text()).slice(0, 200);
+      const err = new Error(`Sarvam ${res.status}: ${body}`);
+      // Out of credits / bad key: no point continuing with other records.
+      if (res.status === 401 || res.status === 402 || res.status === 403) err.fatal = true;
+      throw err;
     }
     await sleep(1500 * (attempt + 1));
   }
@@ -132,13 +136,15 @@ if (DRY) process.exit(0);
 
 let done = 0;
 let failed = 0;
+let stop = false;
 async function worker() {
-  while (queue.length) {
+  while (queue.length && !stop) {
     while (!(await siteIsHealthy())) {
       console.log("site slow; pausing 60s");
       await sleep(60000);
     }
     const r = queue.shift();
+    if (!r) break; // another worker took the last item while this one waited
     try {
       const [summaryHi, conclusionHi] = [await translate(r.summary), await translate(r.conclusion)];
       const { error } = await sb
@@ -157,6 +163,10 @@ async function worker() {
     } catch (err) {
       failed += 1;
       console.error(`record ${r.id}: ${err.message}`);
+      if (err.fatal) {
+        stop = true;
+        console.error("Stopping: Sarvam refused the request (credits/key). Re-run once resolved.");
+      }
     }
   }
 }

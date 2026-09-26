@@ -30,6 +30,7 @@ const Header = memo<HeaderProps>(
 
     const adminButtons = [
       { label: "Dashboard", path: "/dashboard", colors: "bg-blue-200" },
+      { label: "Quality", path: "/quality", colors: "bg-amber-200" },
       { label: "Magazines", path: "/magazines", colors: "bg-cyan-200" },
       { label: "Languages", path: "/languages", colors: "bg-teal-200" },
       { label: "Authors", path: "/authors", colors: "bg-green-200" },

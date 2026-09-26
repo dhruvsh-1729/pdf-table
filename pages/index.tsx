@@ -2,6 +2,7 @@
 import { useState, useEffect, ChangeEvent, MouseEvent, useMemo, useCallback, useRef } from "react";
 import { ColumnDef, ColumnFiltersState, SortingState } from "@tanstack/react-table";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import { debounce } from "lodash";
 import BugModal from "@/components/BugModal";
 import { MagicWand, Pencil, PencilCircleIcon, TagIcon } from "@phosphor-icons/react";
@@ -79,6 +80,31 @@ export default function Home() {
     pageSize: 20,
   });
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  // Extra record filters that aren't table columns (e.g. check_status,
+  // text_quality), usually opened from /quality via ?f={"key":"value"}.
+  const [extraFilters, setExtraFilters] = useState<Record<string, string>>({});
+  const extraFiltersRef = useRef<Record<string, string>>({});
+  extraFiltersRef.current = extraFilters;
+
+  useEffect(() => {
+    if (!router.isReady || typeof router.query.f !== "string") return;
+    try {
+      const parsed = JSON.parse(router.query.f);
+      if (parsed && typeof parsed === "object") {
+        setExtraFilters(Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v)])));
+      }
+    } catch {
+      // ignore malformed links
+    }
+  }, [router.isReady, router.query.f]);
+
+  const updateExtraFilters = (next: Record<string, string>) => {
+    setExtraFilters(next);
+    const query = { ...router.query };
+    if (Object.keys(next).length) query.f = JSON.stringify(next);
+    else delete query.f;
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+  };
   const [globalFilter, setGlobalFilter] = useState("");
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -137,8 +163,8 @@ export default function Home() {
       try {
         setTableLoading(true);
 
-        // Build filter object
-        const filterObj: Record<string, any> = {};
+        // Build filter object (quality filters first; table columns override)
+        const filterObj: Record<string, any> = { ...extraFiltersRef.current };
         filters.forEach((filter) => {
           filterObj[filter.id] = filter.value;
         });
@@ -225,6 +251,7 @@ export default function Home() {
     pagination.pageIndex,
     pagination.pageSize,
     columnFilters,
+    extraFilters,
     globalFilter,
     sorting,
     selectedEmail,
@@ -282,7 +309,10 @@ export default function Home() {
             ? sorting[0].id
             : "id",
       sortOrder: sorting.length > 0 ? (sorting[0].desc ? "desc" : "asc") : "desc",
-      filters: JSON.stringify(Object.fromEntries(columnFilters.map((f) => [f.id, f.value]))),
+      filters: JSON.stringify({
+        ...extraFiltersRef.current,
+        ...Object.fromEntries(columnFilters.map((f) => [f.id, f.value])),
+      }),
       globalFilter: globalFilter || "",
       email: selectedEmail || "",
       noCache: "true", // Force cache bypass
@@ -1479,6 +1509,70 @@ export default function Home() {
             setBugModalOpen={setBugModalOpen}
             exportToCSV={openExportModal}
           />
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm">
+            <span className="font-medium text-slate-600">Quality:</span>
+            <select
+              aria-label="Summary status"
+              value={extraFilters.check_status ?? ""}
+              onChange={(e) => {
+                const next = { ...extraFilters };
+                if (e.target.value) next.check_status = e.target.value;
+                else delete next.check_status;
+                updateExtraFilters(next);
+              }}
+              className="rounded-md border border-slate-200 px-2 py-1"
+            >
+              <option value="">Any summary status</option>
+              <option value="unchecked">Unchecked</option>
+              <option value="ai_audited">AI audited</option>
+              <option value="human_verified">Volunteer verified</option>
+              <option value="flagged">Flagged</option>
+            </select>
+            <select
+              aria-label="Text quality"
+              value={extraFilters.text_quality ?? ""}
+              onChange={(e) => {
+                const next = { ...extraFilters };
+                if (e.target.value) next.text_quality = e.target.value;
+                else delete next.text_quality;
+                updateExtraFilters(next);
+              }}
+              className="rounded-md border border-slate-200 px-2 py-1"
+            >
+              <option value="">Any text quality</option>
+              <option value="good">Good</option>
+              <option value="partial">Partial</option>
+              <option value="missing">Missing</option>
+              <option value="garbled">Garbled</option>
+            </select>
+            {Object.entries(extraFilters)
+              .filter(([k]) => k !== "check_status" && k !== "text_quality")
+              .map(([k, v]) => (
+                <span key={k} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-indigo-700">
+                  {k === "name" ? "Journal" : k}: {v === "__EMPTY__" ? "empty" : v === "__NONEMPTY__" ? "not empty" : v}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${k} filter`}
+                    onClick={() => {
+                      const next = { ...extraFilters };
+                      delete next[k];
+                      updateExtraFilters(next);
+                    }}
+                    className="ml-0.5 text-indigo-400 hover:text-indigo-700"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            {Object.keys(extraFilters).length > 0 && (
+              <button type="button" onClick={() => updateExtraFilters({})} className="text-slate-500 underline-offset-2 hover:underline">
+                Clear
+              </button>
+            )}
+            <Link href="/quality" className="ml-auto text-indigo-600 hover:underline">
+              Data quality overview →
+            </Link>
+          </div>
           <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-2xl border border-white/20 overflow-hidden">
             <ServerDataTable
               data={records}
