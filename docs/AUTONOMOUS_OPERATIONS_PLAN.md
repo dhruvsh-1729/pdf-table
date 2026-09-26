@@ -95,11 +95,11 @@ No human team is left. Maharaj saheb wants the project to keep going on its own.
 ## 4. Phase 1: Data integrity (the archive must be trustworthy before it grows)
 
 ### 4.1 Schema (additive migrations)
-- [ ] `records.publication_year int`, `publication_month int`, parsed from `timestamp`. Backfill and report records that fail to parse.
-- [ ] `records.record_type`: `article | book_review | editorial | notice | obituary | poem | news | index | other`. The AI classifies from title and text, and the site filters by it.
+- [x] `records.publication_year int`, `publication_month int`, parsed from `timestamp`. Backfill and report records that fail to parse.
+- [x] (title heuristics; AI refinement still open) `records.record_type`: `article | book_review | editorial | notice | obituary | poem | news | index | other`. The AI classifies from title and text, and the site filters by it.
 - [ ] Source and rights: `records.source_url` (publisher page), `records.hosted_pdf_url` (UploadThing, only if rights allow), `records.rights_status`. Migrate the VK HTML URLs out of `pdf_url` into `source_url`.
-- [ ] Provenance: `summary_origin` (`human|ai`), `summary_model`, `summary_prompt_version`, `summary_generated_at`, `check_status` (`human_verified|ai_audited|flagged|unchecked`), `audit_score`, `audit_notes`. Backfill: the 1,465 records in `summaries` → `human_verified`. Records with a creator email and no AI trace → `human` origin.
-- [ ] `records.text_quality`: `good | partial | missing | ocr_needed`, computed from length and script checks.
+- [x] Provenance: `summary_origin` (`human|ai`), `summary_model`, `summary_prompt_version`, `summary_generated_at`, `check_status` (`human_verified|ai_audited|flagged|unchecked`), `audit_score`, `audit_notes`. Backfill: the 1,465 records in `summaries` → `human_verified`. Records with a creator email and no AI trace → `human` origin.
+- [x] `records.text_quality`: `good | partial | missing | ocr_needed`, computed from length and script checks.
 
 ### 4.2 Text recovery
 - [x] **Vedanta Kesari hidden from the public site** (2026-09-26, migration 018: `magazines.is_active = false` plus RLS). Rows are kept in the DB and in the backup. Owner's direction: if it isn't allowed, remove it and focus on the other journals. **Do not spend effort on VK text recovery unless the owner reopens it.** Deleting permanently needs the owner's explicit OK.
@@ -127,7 +127,7 @@ No human team is left. Maharaj saheb wants the project to keep going on its own.
   - generate short, sourced author descriptions only from corpus evidence
 - [ ] Replace free tags with a **controlled vocabulary** of about 300–600 concepts. Map the existing 36.7k tags to it, drop single-use noise, and keep a cleaned `keywords` list per record for search.
 - [ ] Subjects: port the book-master subject suggester into pdf_proj. Classify the remaining ~27% of records and every new one.
-- [ ] Journals: fill in description, publisher, founding year, ISSN, language and website from public sources, with the source cited in `metadata.sources`. Delete the "test" journal.
+- [x] (10/13 journals; Jain Vidya, Hita-mita, Jnana Desana publisher unverifiable) Journals: fill in description, publisher, founding year, ISSN, language and website from public sources, with the source cited in `metadata.sources`. Delete the "test" journal.
 - [ ] Duplicate detection: same journal, volume, number and pages, or near-identical text.
 
 ## 5. Phase 2: Headless ingestion pipeline (replace the human in `/add`)
@@ -221,6 +221,17 @@ A Jain monk does not handle money. Any revenue must go to a **trust or legal ent
 - 2026-09-26 (later): Migration 018 applied (public read-only RLS on catalog tables, VK and "test" journals hidden, ops tables). Migration 019 applied (`records.created_at`, existing rows NULL). `ops/` package added (health + weekly report). Owner deferred revenue and copyright work. Backups wait on the owner's choice of storage. The other session switched AI generation to Sarvam (`b93130e`) and is at migration 017. The next free migration number is 020.
 
 - 2026-09-26: `ops-cron` Railway service created (repo pdf-table, `RAILWAY_DOCKERFILE_PATH=ops/Dockerfile`, cron `5 * * * *`, variables referencing pdf-table). First cron run succeeded (ops_runs #4). Config-as-code is deprecated on Railway for new services, so `ops/railway.json` is documentation only and settings live in the dashboard. Watch path `/ops/**` didn't save, so ops-cron rebuilds on every pdf-table push. The owner chose CLI sessions over a cloud routine.
+
+- 2026-09-26 night (autonomous run, owner asleep): backups taken before changes (`backups/supabase-full-20260926T152109Z.dump`). Migrations 020–029 applied:
+  - 020–022: quality, provenance, publication-year and text-source fields. 8,725/8,726 records are dated.
+  - 023: record_summary_history.
+  - 025/026: date and volume typo fixes.
+  - 027/028: stripped pasted ChatGPT debris ("file:///home/oai/share/…#:~:text=…") from 546 summaries and 299 conclusions, plus an auto-strip trigger.
+  - 029: sourced journal metadata.
+  Scripts in `ops/`: recover-text (pdftotext → Tesseract), audit-summaries (Sarvam, full text, validated with negative controls), regenerate-summaries (history kept, published only if the re-audit passes), classify-subjects. The site hides flagged summaries and labels each summary's review status (aryanculture 2e38999). `SESSION_SECRET` set on pdf-table.
+  - **Load incident:** 15:30 and 15:46–15:51 UTC, the site returned 500s. DB disk I/O was saturated (my audit reading full texts plus the other session's search backfill). All batch jobs now call `waitForHealthySite()` (pause 2 min when the homepage is slower than 2.5 s). Keep job concurrency ≤2 for DB-heavy readers.
+  - The other session (kkms-de) owns search, author pages, tags typeahead, `summary_hi` and the PWA. Its search migration is `024_full_text_search.sql`. **The next free migration number is 030.**
+  - DeepSeek balance is negative (−$2.40); all AI now goes through Sarvam (`sarvam-105b`, `reasoning_effort: null`).
 
 ## 13. Execution order (next runs)
 

@@ -64,3 +64,27 @@ export async function sendEmail(subject, html) {
 
 export const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// Load guard for batch jobs. The shared Supabase instance has little disk I/O headroom and the
+// public site's anon queries time out at 3s, so batch jobs wait while the site is slow.
+const HEALTH_URL = "https://aryanculture.org/";
+let lastCheck = 0;
+let lastHealthy = true;
+export async function waitForHealthySite({ maxLatencyMs = 2500, everyMs = 60_000, backoffMs = 120_000, log = console.log } = {}) {
+  for (;;) {
+    if (Date.now() - lastCheck < everyMs && lastHealthy) return;
+    const started = Date.now();
+    let ok = false;
+    try {
+      const res = await fetch(`${HEALTH_URL}?health=${started}`, { signal: AbortSignal.timeout(15_000) });
+      ok = res.ok && Date.now() - started <= maxLatencyMs;
+    } catch {
+      ok = false;
+    }
+    lastCheck = Date.now();
+    lastHealthy = ok;
+    if (ok) return;
+    log(`[load-guard] site slow/unhealthy (${Date.now() - started}ms); pausing ${backoffMs / 1000}s`);
+    await new Promise((r) => setTimeout(r, backoffMs));
+  }
+}

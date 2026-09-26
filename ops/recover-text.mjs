@@ -11,7 +11,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { db, trackRun } from "./lib.mjs";
+import { db, trackRun, waitForHealthySite } from "./lib.mjs";
 
 const run = promisify(execFile);
 const args = Object.fromEntries(
@@ -104,6 +104,7 @@ async function main() {
   let cursor = 0;
   async function worker() {
     while (cursor < targets.length) {
+      await waitForHealthySite();
       const record = targets[cursor++];
       try {
         const out = await extract(record);

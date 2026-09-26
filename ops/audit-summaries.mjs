@@ -7,7 +7,7 @@
 // The whole text is sent (up to 60k chars) so claims in the middle of an article are not misjudged.
 //
 //   node --env-file=../.env audit-summaries.mjs [--limit=N] [--budget-inr=300] [--concurrency=4] [--ids=..] [--dry-run]
-import { db, trackRun } from "./lib.mjs";
+import { db, trackRun, waitForHealthySite } from "./lib.mjs";
 import { AI_MODEL, BudgetExceeded, createAi, excerpt, parseJson } from "./ai.mjs";
 
 const args = Object.fromEntries(
@@ -118,6 +118,7 @@ async function main() {
 
   async function worker() {
     while (cursor < targets.length && !stats.stoppedForBudget && consecutiveFailures < 10) {
+      await waitForHealthySite();
       const id = targets[cursor++];
       try {
         const r = await loadRecord(id);

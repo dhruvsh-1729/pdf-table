@@ -7,7 +7,7 @@
 // (score >= 0.8, topic matches); otherwise the record stays flagged and hidden.
 //
 //   node --env-file=../.env regenerate-summaries.mjs [--limit=N] [--budget-inr=300] [--concurrency=3] [--include-partial] [--ids=..] [--dry-run]
-import { db, trackRun } from "./lib.mjs";
+import { db, trackRun, waitForHealthySite } from "./lib.mjs";
 import { AI_MODEL, BudgetExceeded, createAi, excerpt } from "./ai.mjs";
 
 process.env.AUDIT_NO_MAIN = "1";
@@ -126,6 +126,7 @@ async function main() {
   let cursor = 0;
   async function worker() {
     while (cursor < targets.length && !stats.stoppedForBudget) {
+      await waitForHealthySite();
       const id = targets[cursor++];
       try {
         const res = await regenerate(id);

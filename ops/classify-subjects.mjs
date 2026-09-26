@@ -5,7 +5,7 @@
 // ops_runs row so a run can be reversed.
 //
 //   node --env-file=../.env classify-subjects.mjs [--limit=N] [--budget-inr=100] [--concurrency=3] [--dry-run]
-import { db, trackRun } from "./lib.mjs";
+import { db, trackRun, waitForHealthySite } from "./lib.mjs";
 import { AI_MODEL, BudgetExceeded, createAi, parseJson } from "./ai.mjs";
 
 const args = Object.fromEntries(
@@ -59,6 +59,7 @@ Reply with JSON only: {"ids": [number, ...], "confidence": number between 0 and 
   let cursor = 0;
   async function worker() {
     while (cursor < todo.length && !stats.stoppedForBudget) {
+      await waitForHealthySite();
       const id = todo[cursor++];
       try {
         const { data: r, error } = await db
