@@ -111,13 +111,55 @@ async function report() {
   return { summary: `sent (${total} records, ${newRecords} new)`, details: { total, newRecords, byJob } };
 }
 
+// ------------------------------------------------------------------ jobs ----
+// Processes queued rows in `jobs` (currently type 'ingest_issue', queued from the data portal's
+// /admin/ingest page). Limits come from ops_settings.ingest: {max_jobs_per_run, budget_inr_per_job}.
+async function jobs() {
+  const { sql, closeSql } = await import("./pipeline/sql.mjs");
+  const settings = { max_jobs_per_run: 2, budget_inr_per_job: 60, ...(await getSetting("ingest", {})) };
+  const q = sql();
+  // Jobs stuck in 'running' for 3h (crashed runner) go back to the queue.
+  await q`UPDATE public.jobs SET status = 'queued', locked_by = NULL, locked_at = NULL, updated_at = now()
+          WHERE status = 'running' AND locked_at < now() - interval '3 hours'`;
+  const done = [];
+  const deadline = Date.now() + 45 * 60_000;
+  for (let i = 0; i < settings.max_jobs_per_run && Date.now() < deadline; i++) {
+    const [job] = await q`
+      UPDATE public.jobs SET status = 'running', locked_by = ${process.env.RAILWAY_SERVICE_NAME || "local"},
+        locked_at = now(), attempts = attempts + 1, updated_at = now()
+      WHERE id = (SELECT id FROM public.jobs WHERE status = 'queued' AND run_after <= now() AND type = 'ingest_issue'
+                  ORDER BY priority, id FOR UPDATE SKIP LOCKED LIMIT 1)
+      RETURNING *`;
+    if (!job) break;
+    try {
+      const { ingestIssue } = await import("./ingest-issue.mjs");
+      const p = job.payload;
+      const r = await ingestIssue({
+        pdf: p.pdf_url, magazineId: p.magazine_id, volume: p.volume, number: p.number, date: p.date,
+        langs: p.langs || "eng", budgetInr: settings.budget_inr_per_job,
+      });
+      await q`UPDATE public.jobs SET status = 'done', result = ${q.json({ summary: r.summary, report: r.details.report, usage: r.details.usage })},
+              last_error = NULL, updated_at = now() WHERE id = ${job.id}`;
+      done.push({ id: job.id, ok: true, summary: r.summary });
+    } catch (err) {
+      const retry = job.attempts < job.max_attempts;
+      await q`UPDATE public.jobs SET status = ${retry ? "queued" : "failed"}, last_error = ${String(err?.message || err).slice(0, 1000)},
+              run_after = now() + interval '1 hour', locked_by = NULL, updated_at = now() WHERE id = ${job.id}`;
+      done.push({ id: job.id, ok: false, error: String(err?.message || err), retry });
+    }
+  }
+  await closeSql();
+  if (!done.length) return { status: "skipped", summary: "no queued jobs" };
+  return { summary: `${done.filter((d) => d.ok).length}/${done.length} jobs done`, details: { done } };
+}
+
 // -------------------------------------------------------------- dispatch ----
-const JOBS = { health, report };
+const JOBS = { health, report, jobs };
 
 async function isDue(job) {
   const last = await lastRun(job);
   const age = last ? Date.now() - Date.parse(last.started_at) : Infinity;
-  if (job === "health") return true;
+  if (job === "health" || job === "jobs") return true;
   // Weekly report: Mondays from 03:00 UTC (08:30 IST), once.
   if (job === "report") {
     const now = new Date();

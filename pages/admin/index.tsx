@@ -90,9 +90,14 @@ export default function AdminPanel() {
               out everywhere.
             </p>
           </div>
+          <div className="flex gap-2">
+          <Link href="/admin/ingest" className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700">
+            Ingest an issue
+          </Link>
           <Link href="/" className="px-4 py-2 rounded-lg bg-white border border-gray-200 text-sm hover:bg-gray-100">
             ← Back to portal
           </Link>
+          </div>
         </div>
 
         {pendingCount > 0 && (

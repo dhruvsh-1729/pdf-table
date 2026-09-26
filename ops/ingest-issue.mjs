@@ -29,7 +29,6 @@ const args = Object.fromEntries(
     return [k, v.length ? v.join("=") : true];
   }),
 );
-const DRY = Boolean(args["dry-run"]);
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 async function loadPdf(src) {
@@ -51,8 +50,24 @@ async function splitPages(srcDoc, from, to) {
   return Buffer.from(await out.save());
 }
 
-async function main() {
-  for (const k of ["pdf", "magazine-id", "date"]) if (!args[k]) throw new Error(`--${k} is required`);
+/**
+ * opts: { pdf, magazineId, volume, number, date, langs, dryRun, out, budgetInr, includeFrontMatter }
+ * Returns { summary, details } (shape used by trackRun).
+ */
+export async function ingestIssue(opts) {
+  const args = {
+    pdf: opts.pdf,
+    "magazine-id": opts.magazineId,
+    volume: opts.volume ?? undefined,
+    number: opts.number ?? undefined,
+    date: opts.date,
+    langs: opts.langs,
+    out: opts.out,
+    "budget-inr": opts.budgetInr,
+    "include-front-matter": opts.includeFrontMatter,
+  };
+  const DRY = Boolean(opts.dryRun);
+  for (const k of ["pdf", "magazine-id", "date"]) if (!args[k]) throw new Error(`${k} is required`);
   const { data: magazine, error: magErr } = await db.from("magazines").select("id, name").eq("id", Number(args["magazine-id"])).single();
   if (magErr) throw magErr;
   const { data: subRows } = await db.from("subsubjects").select("id, name, subject_areas(name)").order("id");
@@ -161,7 +176,25 @@ async function main() {
   };
 }
 
-trackRun("ingest-issue", main, { actor: process.env.OPS_ACTOR || "manual" })
+const isCli = import.meta.url === `file://${process.argv[1]}`;
+if (isCli)
+  trackRun(
+    "ingest-issue",
+    () =>
+      ingestIssue({
+        pdf: args.pdf,
+        magazineId: args["magazine-id"],
+        volume: args.volume,
+        number: args.number,
+        date: args.date,
+        langs: args.langs,
+        dryRun: Boolean(args["dry-run"]),
+        out: args.out,
+        budgetInr: args["budget-inr"],
+        includeFrontMatter: Boolean(args["include-front-matter"]),
+      }),
+    { actor: process.env.OPS_ACTOR || "manual" },
+  )
   .then((r) => console.log(`[ingest] ${r.summary}`))
   .catch((err) => {
     console.error(err);
