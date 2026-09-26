@@ -37,14 +37,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const resolvedAllowOcr = disableOcr ? false : allowOcr;
     const pdfBytes = new Uint8Array(await fs.readFile(file.filepath));
 
-    const { text, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, language, {
+    const { text, detectedLanguage, usedOcr } = await extractTextFromBytes(pdfBytes, language, {
       allowOcr: resolvedAllowOcr,
       allowEmpty: true,
     });
 
     return res.status(200).json({
       text,
-      language: languageHint || language || null,
+      // Canonical name(s), e.g. "Hindi" — never a raw ISO code.
+      language: detectedLanguage,
       usedOcr: usedOcr || undefined,
       ocrDisabled: !resolvedAllowOcr || undefined,
     });

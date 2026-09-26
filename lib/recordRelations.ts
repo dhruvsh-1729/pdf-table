@@ -1,51 +1,4 @@
-const LANGUAGE_NAME_BY_TOKEN = new Map(
-  Object.entries({
-    afr: "Afrikaans",
-    afrikaans: "Afrikaans",
-    apabhramsa: "Apabhramsa",
-    apabhramsha: "Apabhramsa",
-    arabic: "Arabic",
-    assamese: "Assamese",
-    bengali: "Bengali",
-    bodo: "Bodo",
-    chinese: "Chinese",
-    dogri: "Dogri",
-    eng: "English",
-    english: "English",
-    french: "French",
-    german: "German",
-    gujarati: "Gujarati",
-    hau: "Hausa",
-    hausa: "Hausa",
-    hindi: "Hindi",
-    italian: "Italian",
-    kannada: "Kannada",
-    kashmiri: "Kashmiri",
-    konkani: "Konkani",
-    lin: "Lingala",
-    lingala: "Lingala",
-    maithili: "Maithili",
-    malayalam: "Malayalam",
-    manipuri: "Manipuri",
-    marathi: "Marathi",
-    nepali: "Nepali",
-    odia: "Odia",
-    oriya: "Odia",
-    pali: "Pali",
-    persian: "Persian",
-    prakrit: "Prakrit",
-    punjabi: "Punjabi",
-    sanskrit: "Sanskrit",
-    santhali: "Santhali",
-    sindhi: "Sindhi",
-    spanish: "Spanish",
-    tamil: "Tamil",
-    telugu: "Telugu",
-    urdu: "Urdu",
-    war: "Waray",
-    waray: "Waray",
-  }),
-);
+import { canonicalLanguageName, isKnownLanguage } from "@/lib/languages";
 
 const IGNORED_LANGUAGE_TOKENS = new Set(["various"]);
 
@@ -73,7 +26,7 @@ function splitByAndSafely(chunk: string): string[] {
   if (parts.length < 2) return [chunk];
   const allKnown = parts.every((part) => {
     const key = normalizeLanguageToken(part).toLowerCase();
-    return LANGUAGE_NAME_BY_TOKEN.has(key) || IGNORED_LANGUAGE_TOKENS.has(key);
+    return isKnownLanguage(key) || IGNORED_LANGUAGE_TOKENS.has(key);
   });
   return allKnown ? parts : [chunk];
 }
@@ -92,7 +45,7 @@ function canonicalizeLanguageToken(value: string): string | null {
 
   const key = normalized.toLowerCase();
   if (IGNORED_LANGUAGE_TOKENS.has(key)) return null;
-  return LANGUAGE_NAME_BY_TOKEN.get(key) || toTitleCase(normalized);
+  return canonicalLanguageName(key) || toTitleCase(normalized);
 }
 
 export function normalizeOptionalText(value: unknown): string | null {
@@ -209,36 +162,55 @@ export async function ensureMagazineId(supabase: any, rawName: string): Promise<
   return id;
 }
 
+/**
+ * Resolve language names to `languages.id`.
+ *
+ * Only two kinds of names are accepted: languages in the canonical registry
+ * (created on first use) and languages an admin already added to the table.
+ * Anything else — OCR noise, typos, "English and Applied Linguistics" — is
+ * dropped rather than becoming a new language row.
+ */
 async function ensureLanguageIds(supabase: any, names: string[]): Promise<Map<string, number>> {
-  const deduped = Array.from(
-    new Map(
+  const wanted = Array.from(
+    new Set(
       names
         .map((name) => normalizeOptionalText(name))
         .filter((name): name is string => Boolean(name))
-        .map((name) => [name.toLowerCase(), toTitleCase(name)]),
-    ).values(),
+        .map((name) => canonicalLanguageName(name) || name),
+    ),
   );
+  if (wanted.length === 0) return new Map();
 
-  if (deduped.length === 0) return new Map();
+  const loadExisting = async () => {
+    const { data, error } = await supabase.from("languages").select("id, name");
+    if (error) throw error;
+    const byName = new Map<string, number>();
+    for (const row of data || []) {
+      const name = normalizeOptionalText(row?.name);
+      const id = Number(row?.id);
+      if (name && Number.isFinite(id)) byName.set(name.toLowerCase(), id);
+    }
+    return byName;
+  };
 
-  const { error: upsertError } = await supabase.from("languages").upsert(
-    deduped.map((name) => ({ name })),
-    {
-      onConflict: "name",
-      ignoreDuplicates: true,
-    },
-  );
-  if (upsertError) throw upsertError;
-
-  const { data, error } = await supabase.from("languages").select("id, name").in("name", deduped);
-  if (error) throw error;
+  let existing = await loadExisting();
+  const missingKnown = wanted.filter((name) => !existing.has(name.toLowerCase()) && isKnownLanguage(name));
+  if (missingKnown.length > 0) {
+    const { error: upsertError } = await supabase
+      .from("languages")
+      .upsert(
+        missingKnown.map((name) => ({ name })),
+        { onConflict: "name", ignoreDuplicates: true },
+      );
+    if (upsertError) throw upsertError;
+    existing = await loadExisting();
+  }
 
   const out = new Map<string, number>();
-  for (const row of data || []) {
-    const name = normalizeOptionalText(row?.name);
-    const id = Number(row?.id);
-    if (!name || !Number.isFinite(id)) continue;
-    out.set(name.toLowerCase(), id);
+  for (const name of wanted) {
+    const id = existing.get(name.toLowerCase());
+    if (id) out.set(name.toLowerCase(), id);
+    else console.warn(`Ignoring unrecognised language "${name}".`);
   }
   return out;
 }
@@ -255,29 +227,72 @@ export async function syncRecordLanguages(
 
   const parsed = parseLanguageValues(rawLanguage || null);
   const languageIds = await ensureLanguageIds(supabase, parsed);
+  const accepted = parsed.filter((name) => languageIds.has(name.toLowerCase()));
 
   const { error: clearError } = await supabase.from("record_languages").delete().eq("record_id", numericRecordId);
   if (clearError) throw clearError;
 
-  if (parsed.length === 0) return [];
+  if (accepted.length > 0) {
+    const rows = accepted.map((name) => ({
+      record_id: numericRecordId,
+      language_id: languageIds.get(name.toLowerCase()) as number,
+    }));
+    const { error: insertError } = await supabase.from("record_languages").upsert(rows, {
+      onConflict: "record_id,language_id",
+      ignoreDuplicates: true,
+    });
+    if (insertError) throw insertError;
+  }
 
-  const rows = parsed
-    .map((name) => {
-      const languageId = languageIds.get(name.toLowerCase());
-      if (!languageId) return null;
-      return { record_id: numericRecordId, language_id: languageId };
-    })
-    .filter(Boolean) as Array<{ record_id: number; language_id: number }>;
+  // Keep the legacy display column canonical. Migration 012 also maintains it
+  // with a trigger; writing it here keeps databases without that trigger in step.
+  const { error: legacyError } = await supabase
+    .from("records")
+    .update({ language_legacy: formatLanguageLegacy(accepted) })
+    .eq("id", numericRecordId);
+  if (legacyError) throw legacyError;
 
-  if (rows.length === 0) return [];
+  return accepted;
+}
 
-  const { error: insertError } = await supabase.from("record_languages").upsert(rows, {
-    onConflict: "record_id,language_id",
-    ignoreDuplicates: true,
-  });
-  if (insertError) throw insertError;
+/**
+ * Validate a name typed into the language master / record language picker.
+ * Maps aliases to the canonical name ("hin" -> "Hindi") and rejects values
+ * that are really several languages ("English, Hindi") — those must be
+ * separate language rows linked individually.
+ */
+export function normalizeLanguageMasterName(raw: unknown): { name: string } | { error: string } {
+  if (typeof raw !== "string" || !raw.trim()) return { error: "Language name is required." };
+  const parsed = parseLanguageValues(raw);
+  if (parsed.length === 0) return { error: "Language name is required." };
+  if (parsed.length > 1) {
+    return { error: `"${raw.trim()}" contains several languages (${parsed.join(", ")}). Add each one separately.` };
+  }
+  return { name: parsed[0] };
+}
 
-  return parsed;
+/** Recompute `records.language_legacy` from the record's linked languages. */
+export async function refreshRecordLanguageLegacy(supabase: any, recordId: number): Promise<void> {
+  const { data, error } = await supabase
+    .from("record_languages")
+    .select("languages(name)")
+    .eq("record_id", recordId);
+  if (error) throw error;
+  const names = (data || [])
+    .map((row: any) => normalizeOptionalText(Array.isArray(row?.languages) ? row.languages[0]?.name : row?.languages?.name))
+    .filter(Boolean) as string[];
+  const { error: updateError } = await supabase
+    .from("records")
+    .update({ language_legacy: formatLanguageLegacy(names) })
+    .eq("id", recordId);
+  if (updateError) throw updateError;
+}
+
+/** Canonical `records.language_legacy` value — same format as the DB trigger. */
+export function formatLanguageLegacy(names: string[]): string | null {
+  const unique = Array.from(new Set(names.map((name) => canonicalLanguageName(name) || name)));
+  unique.sort((a, b) => a.localeCompare(b));
+  return unique.length ? unique.join(", ") : null;
 }
 
 export function withRecordLegacyShape<T extends Record<string, any>>(record: T): T & { name: string; language: string | null } {

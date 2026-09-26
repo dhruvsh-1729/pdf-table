@@ -21,6 +21,7 @@ const sqlSteps = [
   "009_extend_magazines.sql",
   "010_verify_magazines.sql",
   "011_create_ai_prompts.sql",
+  "012_normalize_languages.sql",
 ];
 
 function projectRefFromSupabaseUrl(url = "") {

@@ -2,6 +2,8 @@ import {
   extractLanguageDisplay,
   extractLanguageNames,
   extractMagazineName,
+  formatLanguageLegacy,
+  normalizeLanguageMasterName,
   normalizeOptionalText,
   parseLanguageValues,
   withRecordLegacyShape,
@@ -35,9 +37,35 @@ describe("recordRelations helpers", () => {
       ["Hindi`", ["Hindi"]],
       ["English, Sanskrit, various", ["English", "Sanskrit"]],
       ["afr, lin, war", ["Afrikaans", "Lingala", "Waray"]],
+      ["hin", ["Hindi"]],
+      ["Hin", ["Hindi"]],
+      ["eng", ["English"]],
+      ["guj, san", ["Gujarati", "Sanskrit"]],
       ["English and Applied Linguistics", ["English And Applied Linguistics"]],
     ])("parses %p -> %p", (input, expected) => {
       expect(parseLanguageValues(input as string | null | undefined)).toEqual(expected);
+    });
+  });
+
+  describe("normalizeLanguageMasterName", () => {
+    it("maps aliases to the canonical name", () => {
+      expect(normalizeLanguageMasterName("hin")).toEqual({ name: "Hindi" });
+      expect(normalizeLanguageMasterName("  sanskrit ")).toEqual({ name: "Sanskrit" });
+      expect(normalizeLanguageMasterName("tibetan")).toEqual({ name: "Tibetan" });
+    });
+
+    it("rejects combined languages and empty input", () => {
+      expect(normalizeLanguageMasterName("English, Hindi")).toHaveProperty("error");
+      expect(normalizeLanguageMasterName("English & Sanskrit")).toHaveProperty("error");
+      expect(normalizeLanguageMasterName("   ")).toHaveProperty("error");
+      expect(normalizeLanguageMasterName(undefined)).toHaveProperty("error");
+    });
+  });
+
+  describe("formatLanguageLegacy", () => {
+    it("builds a sorted, de-duplicated, canonical display string", () => {
+      expect(formatLanguageLegacy(["Sanskrit", "English", "eng"])).toBe("English, Sanskrit");
+      expect(formatLanguageLegacy([])).toBeNull();
     });
   });
 

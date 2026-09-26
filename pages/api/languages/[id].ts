@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeLanguageMasterName } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -7,26 +8,6 @@ function parseId(idValue: string | string[] | undefined) {
   if (!idValue || Array.isArray(idValue)) return null;
   const id = Number(idValue);
   return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-function normalizeWhitespace(value: string) {
-  return value.trim().replace(/\s+/g, " ");
-}
-
-function toTitleCase(value: string) {
-  return value
-    .toLowerCase()
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function normalizeLanguageName(value: unknown) {
-  if (typeof value !== "string") return "";
-  const normalized = normalizeWhitespace(value);
-  if (!normalized) return "";
-  return toTitleCase(normalized);
 }
 
 async function fetchLanguageById(languageId: number) {
@@ -73,10 +54,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ error: "Field 'name' is required." });
       }
 
-      const name = normalizeLanguageName(req.body?.name);
-      if (!name) {
-        return res.status(400).json({ error: "Language name is required." });
+      const normalized = normalizeLanguageMasterName(req.body?.name);
+      if ("error" in normalized) {
+        return res.status(400).json({ error: normalized.error });
       }
+      const { name } = normalized;
 
       const { data: existing, error: existingError } = await supabase
         .from("languages")

@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 import { invalidateRelationSnapshot } from "@/lib/recordRelationSnapshot";
+import { refreshRecordLanguageLegacy } from "@/lib/recordRelations";
 
 const supabase = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE_KEY || "");
 
@@ -66,6 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       );
 
       if (error) throw error;
+      await refreshRecordLanguageLegacy(supabase, recordId);
 
       invalidateRecordsCache();
       invalidateRelationSnapshot();
@@ -91,6 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         .in("language_id", languageIds);
 
       if (error) throw error;
+      await refreshRecordLanguageLegacy(supabase, recordId);
 
       invalidateRecordsCache();
       invalidateRelationSnapshot();

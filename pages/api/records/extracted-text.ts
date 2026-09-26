@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getUploadThingUrl } from "@/lib/uploadthing";
-import { extractLanguageDisplay, syncRecordLanguages } from "@/lib/recordRelations";
+import { extractLanguageDisplay, parseLanguageValues, syncRecordLanguages } from "@/lib/recordRelations";
+import { detectLanguageFromText, FRANC_LATIN_CANDIDATES, isKnownLanguage, tesseractCodeFor } from "@/lib/languages";
 import { invalidateRecordsCache } from "@/lib/recordsQueryCache";
 
 export const config = {
@@ -21,54 +22,6 @@ const MIN_VALID_LETTER_COUNT = 40;
 const OCR_SCALE = 2;
 const OCR_PAGE_LIMIT = 50;
 const TESSDATA_URL = "https://tessdata.projectnaptha.com/4.0.0";
-
-const LANGUAGE_ALIASES: Record<string, string> = {
-  en: "eng",
-  eng: "eng",
-  english: "eng",
-  es: "spa",
-  spa: "spa",
-  spanish: "spa",
-  sp: "spa",
-  fr: "fra",
-  fra: "fra",
-  fre: "fra",
-  french: "fra",
-  de: "deu",
-  deu: "deu",
-  ger: "deu",
-  german: "deu",
-  pt: "por",
-  por: "por",
-  portuguese: "por",
-  it: "ita",
-  ita: "ita",
-  italian: "ita",
-  hi: "hin",
-  hin: "hin",
-  hindi: "hin",
-  mr: "mar",
-  mar: "mar",
-  marathi: "mar",
-  bn: "ben",
-  ben: "ben",
-  bengali: "ben",
-  ta: "tam",
-  tam: "tam",
-  tamil: "tam",
-  te: "tel",
-  tel: "tel",
-  telugu: "tel",
-  gu: "guj",
-  guj: "guj",
-  gujarati: "guj",
-  ur: "urd",
-  urd: "urd",
-  urdu: "urd",
-  ar: "ara",
-  ara: "ara",
-  arabic: "ara",
-};
 
 let canvasModulePromise: Promise<typeof import("@napi-rs/canvas")> | null = null;
 let tesseractPromise: Promise<typeof import("tesseract.js")> | null = null;
@@ -297,45 +250,32 @@ async function renderPageToImage(page: any, canvasModule: typeof import("@napi-r
   return buffer;
 }
 
-function sanitizeLanguage(raw?: string | null) {
-  if (!raw) return null;
-  const lowered = raw.toLowerCase();
-  const candidates = lowered
-    .split(/[,/|;]+/g)
-    .flatMap((part) => part.split(/\s+/g))
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  for (const piece of candidates) {
-    const normalized = piece.replace(/[^a-z]/g, "");
-    if (!normalized) continue;
-    if (LANGUAGE_ALIASES[normalized]) return LANGUAGE_ALIASES[normalized];
-    if (/^[a-z]{3}$/i.test(normalized)) return normalized;
-  }
-
-  const fallback = lowered.replace(/[^a-z]/g, "");
-  if (LANGUAGE_ALIASES[fallback]) return LANGUAGE_ALIASES[fallback];
-  if (/^[a-z]{3}$/i.test(fallback)) return fallback;
-  return null;
+/** Tesseract language string ("eng", "hin+san") for a list of canonical language names. */
+function ocrLanguageFor(names: string[]): string {
+  const codes = Array.from(new Set(names.map((name) => tesseractCodeFor(name)).filter(Boolean)));
+  return codes.length ? codes.join("+") : DEFAULT_LANG;
 }
 
-async function detectLanguageHint(recordLanguage?: string | null, textSample?: string): Promise<string> {
-  const fromRecord = sanitizeLanguage(recordLanguage);
-  if (fromRecord) return fromRecord;
+/** Canonical language names the caller declared (e.g. the record's current languages). */
+function declaredLanguages(raw?: string | null): string[] {
+  return parseLanguageValues(raw || null).filter((name) => isKnownLanguage(name));
+}
 
-  const sample = (textSample || "").replace(/\s+/g, " ").trim();
-  if (sample.length >= 30) {
-    try {
-      const franc = await getFranc();
-      const guessed = franc(sample, { minLength: 20 });
-      const normalized = sanitizeLanguage(guessed);
-      if (normalized) return normalized;
-    } catch (error) {
-      console.warn("Language detection failed; falling back to default.", error);
-    }
+/**
+ * Detect a text's language as a canonical name ("Hindi", "English"), or null.
+ * franc is only consulted to tell Latin-script languages apart; on its own it
+ * mislabels Devanagari OCR output as Magahi/Bhojpuri/Nepali.
+ */
+async function detectLanguage(textSample?: string | null): Promise<string | null> {
+  let franc: ((text: string, opts?: any) => string) | null = null;
+  try {
+    franc = await getFranc();
+  } catch (error) {
+    console.warn("franc unavailable; assuming English for Latin-script text.", error);
   }
-
-  return DEFAULT_LANG;
+  return detectLanguageFromText(textSample, (sample) =>
+    franc ? franc(sample, { minLength: 20, only: FRANC_LATIN_CANDIDATES }) : null,
+  );
 }
 
 function hasMeaningfulText(text?: string | null) {
@@ -414,7 +354,9 @@ export async function extractTextFromBytes(
   let pdf: any | null = null;
   let finalText = "";
   let usedOcr = false;
-  let languageHint = language || DEFAULT_LANG;
+  const declared = declaredLanguages(language);
+  let languageHint = ocrLanguageFor(declared);
+  let detectedLanguage: string | null = declared.length ? declared.join(", ") : null;
   const allowOcr = opts?.allowOcr !== false;
   const allowEmpty = opts?.allowEmpty === true;
 
@@ -427,13 +369,16 @@ export async function extractTextFromBytes(
       console.warn("Primary text extraction failed; falling back to OCR.", error);
     }
 
-    languageHint = await detectLanguageHint(language, extractedText);
     finalText = extractedText;
+    if (!declared.length) {
+      detectedLanguage = await detectLanguage(extractedText);
+      if (detectedLanguage) languageHint = ocrLanguageFor([detectedLanguage]);
+    }
 
     if (!hasMeaningfulText(extractedText) && allowOcr) {
       finalText = await performOcrOnPdf(pdf, languageHint);
       usedOcr = true;
-      languageHint = await detectLanguageHint(language, finalText);
+      if (!declared.length) detectedLanguage = (await detectLanguage(finalText)) ?? detectedLanguage;
     }
   } finally {
     pdf?.cleanup?.();
@@ -443,12 +388,12 @@ export async function extractTextFromBytes(
   const sanitized = (finalText || "").replace(/\u0000/g, "").trim();
   if (!sanitized) {
     if (allowEmpty) {
-      return { text: "", languageHint, usedOcr };
+      return { text: "", languageHint, detectedLanguage, usedOcr };
     }
     throw new Error(allowOcr ? "Unable to extract text from this PDF." : "No extractable text found (OCR disabled).");
   }
 
-  return { text: sanitized, languageHint, usedOcr };
+  return { text: sanitized, languageHint, detectedLanguage, usedOcr };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ExtractedTextResponse>) {
@@ -503,13 +448,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const pdfBytes = new Uint8Array(await response.arrayBuffer());
     const currentLanguage = extractLanguageDisplay(record);
-    const { text: sanitized, languageHint, usedOcr } = await extractTextFromBytes(pdfBytes, currentLanguage);
+    const { text: sanitized, detectedLanguage, usedOcr } = await extractTextFromBytes(pdfBytes, currentLanguage);
 
     const updatePayload: Record<string, any> = { extracted_text: sanitized };
 
     await supabase.from("records").update(updatePayload).eq("id", recordId).throwOnError();
-    if (!currentLanguage && languageHint) {
-      await syncRecordLanguages(supabase, recordId, languageHint);
+    if (!currentLanguage && detectedLanguage) {
+      await syncRecordLanguages(supabase, recordId, detectedLanguage);
     }
 
     invalidateRecordsCache();
