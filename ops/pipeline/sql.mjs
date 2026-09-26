@@ -10,11 +10,16 @@ export function sql() {
   if (!url) throw new Error("SUPABASE_DB_URL is not set");
   const m = url.match(/^postgres(?:ql)?:\/\/([^:]+):(.*)@([^@/:]+):(\d+)\/([^?]+)/);
   if (!m) throw new Error("SUPABASE_DB_URL is not in the expected form");
+  // Railway has no outbound IPv6 by default and Supabase's direct host is IPv6-only, so services there
+  // connect through the IPv4 session pooler (SUPABASE_DB_POOLER_HOST, e.g. aws-1-ap-south-1.pooler.supabase.com).
+  const pooler = process.env.SUPABASE_DB_POOLER_HOST?.trim();
+  const ref = m[3].match(/^db\.([a-z0-9]+)\.supabase\.co$/)?.[1];
+  const viaPooler = Boolean(pooler && ref);
   client = postgres({
-    username: m[1],
+    username: viaPooler ? `${m[1]}.${ref}` : m[1],
     password: decodeURIComponent(m[2]),
-    host: m[3],
-    port: Number(m[4]),
+    host: viaPooler ? pooler : m[3],
+    port: viaPooler ? 5432 : Number(m[4]),
     database: m[5],
     ssl: "require",
     max: 3,
