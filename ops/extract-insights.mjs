@@ -5,7 +5,8 @@
 //   cited_works works the article cites (footnotes, bibliography, "see ..."),
 //   entities    people, places, works and groups the article discusses.
 // Nothing is stored on the model's word alone: a quote must be a substring of extracted_text (compared
-// letters-and-digits only, so OCR line breaks and punctuation don't matter), a cited work's opening words
+// letters-and-digits only, so OCR line breaks and punctuation don't matter; when the model silently fixed
+// OCR spelling, the source's own wording for the matching span is stored instead), a cited work's opening words
 // and every entity name must occur in the text. Rejected items go to record_insights.dropped for audit.
 //
 //   node --env-file=../.env extract-insights.mjs [--limit=N] [--budget-inr=300] [--concurrency=2] [--ids=..] [--redo] [--dry-run]
@@ -63,14 +64,61 @@ export function entityKey(name) {
 
 const tidy = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
+// Find the passage in the source text that a model quote came from, tolerating OCR fixes the model
+// made (a few changed words). Returns the source's OWN wording for that span, or null when fewer than
+// 85% of the quote's words line up in order.
+export function locateQuote(quote, fullText, tokens) {
+  const q = quote.split(/\s+/).map(squash).filter(Boolean);
+  if (q.length < 12) return null;
+  const starts = new Set();
+  for (let lead = 0; lead < 3; lead++) for (const i of tokens.index.get(q[lead]) ?? []) starts.add(Math.max(0, i - lead));
+  let best = null;
+  for (const s0 of starts) {
+    let i = s0, matched = 0, last = -1;
+    for (let j = 0; j < q.length && i < tokens.keys.length; j++) {
+      // Allow one inserted/removed word on either side.
+      if (tokens.keys[i] === q[j]) { matched++; last = i; i++; }
+      else if (tokens.keys[i + 1] === q[j]) { matched++; last = i + 1; i += 2; }
+      else if (tokens.keys[i] === q[j + 1]) continue; // model added a word: skip it in the quote
+      else i++; // changed word: skip it in both
+    }
+    if (last >= s0 && (!best || matched > best.matched)) best = { matched, from: s0, to: last };
+  }
+  if (!best || best.matched / q.length < 0.85 || best.to - best.from + 1 > q.length * 1.25) return null;
+  const start = tokens.list[best.from].index;
+  const end = tokens.list[best.to].index + tokens.list[best.to][0].length;
+  return fullText.slice(start, end).replace(/\s+/g, " ").trim();
+}
+
+function tokenize(fullText) {
+  const list = [...String(fullText).matchAll(/\S+/g)];
+  const keys = list.map((m) => squash(m[0]));
+  const index = new Map();
+  keys.forEach((k, i) => {
+    if (!k) return;
+    if (!index.has(k)) index.set(k, []);
+    index.get(k).push(i);
+  });
+  return { list, keys, index };
+}
+
 export function verify(raw, fullText) {
   const hay = squash(fullText);
+  let tokens = null;
   const dropped = { quotes: [], cited_works: [], entities: [] };
   const quotes = [];
   for (const q of Array.isArray(raw.quotes) ? raw.quotes : []) {
-    const text = tidy(q?.text);
+    let text = tidy(q?.text);
+    let key = squash(text);
+    if (!hay.includes(key)) {
+      tokens ??= tokenize(fullText);
+      const source = locateQuote(text, fullText, tokens);
+      if (source) {
+        text = source;
+        key = squash(source);
+      }
+    }
     const words = text.split(" ").length;
-    const key = squash(text);
     if (words >= 12 && words <= 80 && key.length >= 40 && hay.includes(key) && !quotes.some((x) => squash(x.text) === key)) {
       const translation = tidy(q?.translation);
       quotes.push(translation ? { text, translation } : { text });
