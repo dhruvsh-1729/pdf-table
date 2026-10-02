@@ -39,6 +39,7 @@ From the article text below, return JSON with exactly these keys:
 }
 
 Rules:
+- Output compact JSON on as few lines as possible.
 - quotes: 2 or 3 passages of 15–60 words that state the article's key claims or findings, copied EXACTLY character for character from the text (same spelling, same script). Pick clean sentences, not garbled OCR, headings, footnotes or bibliography lines. "translation" is an English translation only if the quote is not in English, otherwise "".
 - cited_works: up to 12 works the article cites as sources (footnotes, references, bibliography, "cf."/"see" mentions), each written as it appears in the text (author and title, plus edition/page if given). [] if there are none.
 - entities: up to 15 that the article actually discusses (not passing mentions): historical or religious persons (not the article's own author), places, texts/inscriptions/works, and groups (dynasties, sects, orders, communities). Use the spelling found in the text.
@@ -145,11 +146,33 @@ export function verify(raw, fullText) {
   return { quotes: quotes.slice(0, 3), cited_works: cited.slice(0, 12), entities: entities.slice(0, 15), dropped };
 }
 
+// The reply is occasionally cut off at the token limit; keep the complete items before the cut.
+export function parseLenient(reply) {
+  try {
+    return parseJson(reply);
+  } catch (err) {
+    const start = reply.indexOf("{");
+    if (start < 0) throw err;
+    const body = reply.slice(start);
+    for (let cut = body.lastIndexOf("}"); cut > 0; cut = body.lastIndexOf("}", cut - 1)) {
+      const head = body.slice(0, cut + 1);
+      for (const tail of ["]}", "}", "]}]}", "\"]}"]) {
+        try {
+          return JSON.parse(head + tail);
+        } catch {
+          /* try the next closing */
+        }
+      }
+    }
+    throw err;
+  }
+}
+
 async function loadTargets() {
   const done = new Set();
   if (!args.redo) {
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await db.from("record_insights").select("record_id").range(from, from + 999);
+      const { data, error } = await db.from("record_insights").select("record_id").neq("status", "failed").range(from, from + 999);
       if (error) throw error;
       data.forEach((r) => done.add(r.record_id));
       if (data.length < 1000) break;
@@ -203,9 +226,9 @@ async function processOne(id) {
       { role: "system", content: SYSTEM },
       { role: "user", content: prompt(r.title_name || "Untitled", excerpt(fullText, 16000)) },
     ],
-    { maxTokens: 1600 },
+    { maxTokens: 3000 },
   );
-  const out = verify(parseJson(reply), fullText);
+  const out = verify(parseLenient(reply), fullText);
   if (!DRY) {
     const { error: upErr } = await db.from("record_insights").upsert({
       record_id: id,
